@@ -4,6 +4,7 @@ import xarray
 from dask.distributed import wait
 from uuid import uuid4
 from shutil import rmtree
+from os.path import isfile
 
 
 class GenerationConfig:
@@ -106,24 +107,11 @@ class GenerationConfig:
 
 
 def generate_timeseries(client, output_dir, group, batch_paths):
+    logs = []
     output_dir.mkdir(parents=True, exist_ok=True)
     history_zarr_path = f"{output_dir}/tmp_hs_store.zarr"
 
     history_concat = xarray.open_mfdataset(batch_paths, parallel=True).chunk(dict(time=5))
-
-    target_chunk_size = 250*(1024**2)
-    for variable in history_concat:
-        time_chunk_size = 1
-        if "time" in history_concat[variable].dims:
-            time_size = 1
-            for index, dim in enumerate(history_concat[variable].dims):
-                if dim == "time":
-                    time_size = history_concat[variable].shape[index]
-            smallest_time_chunk = history_concat[variable].nbytes / time_size
-            if smallest_time_chunk <= 2*target_chunk_size:
-                time_chunk_size = int(target_chunk_size / smallest_time_chunk)
-        history_concat[variable] = history_concat[variable].chunk(dict(time=time_chunk_size))
-    history_concat.to_zarr(history_zarr_path, mode="w", consolidated=True)
 
     dt = history_concat.time.values[1] - history_concat.time.values[0]
     if dt.days == 0:
@@ -141,16 +129,44 @@ def generate_timeseries(client, output_dir, group, batch_paths):
         if "cell_methods" not in history_concat[variable].attrs:
             attribute_variables.append(variable)
 
+    config_tuples = []
+    for variable in list(history_concat.variables):
+        if variable not in attribute_variables:
+            output_path = f"{output_dir}/{group}.{variable}.{time_start}.{time_end}.nc"
+            if not isfile(output_path):
+                config_tuples.append((
+                    history_zarr_path,
+                    [variable],
+                    output_path,
+                    uuid4())
+                )
+            else:
+                logs.append("Skipping file because it already exists (assuming integrity checks were done already): ")
+                logs.append(f"\t '{output_path}'")
+
+    if len(config_tuples) == 0:
+        logs.append("Skipping group because all timeseries files already exists (assuming integrity checks were done already): ")
+        logs.append(f"\t '{group}'")
+        return logs
+
+    target_chunk_size = 250*(1024**2)
+    for variable in history_concat:
+        time_chunk_size = 1
+        if "time" in history_concat[variable].dims:
+            time_size = 1
+            for index, dim in enumerate(history_concat[variable].dims):
+                if dim == "time":
+                    time_size = history_concat[variable].shape[index]
+            smallest_time_chunk = history_concat[variable].nbytes / time_size
+            if smallest_time_chunk <= 2*target_chunk_size:
+                time_chunk_size = int(target_chunk_size / smallest_time_chunk)
+        history_concat[variable] = history_concat[variable].chunk(dict(time=time_chunk_size))
+    history_concat.to_zarr(history_zarr_path, mode="w", consolidated=True)
+
     def export_dataset(config_tuple):
         zarr_path, variables, output_path, uid = config_tuple
         xarray.open_zarr(zarr_path)[variables].to_netcdf(output_path, mode="w")
         return uid
-
-    config_tuples = [(history_zarr_path,
-                      [variable],
-                      f"{output_dir}/{group}.{variable}.{time_start}.{time_end}.nc",
-                      uuid4())
-                     for variable in list(history_concat.variables) if variable not in attribute_variables]
 
     futures = client.map(export_dataset, config_tuples)
 
@@ -176,3 +192,4 @@ def generate_timeseries(client, output_dir, group, batch_paths):
 
     rmtree(history_zarr_path)
     client.amm.start()
+    return logs
