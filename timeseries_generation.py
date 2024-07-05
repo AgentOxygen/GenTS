@@ -1,6 +1,9 @@
 import numpy as np
 from pathlib import Path
 import xarray
+from dask.distributed import wait
+from uuid import uuid4
+from shutil import rmtree
 
 
 class GenerationConfig:
@@ -100,3 +103,76 @@ class GenerationConfig:
 
         batches.sort(key=lambda entry: len(entry[2]))
         return batches
+
+
+def generate_timeseries(client, output_dir, group, batch_paths):
+    output_dir.mkdir(parents=True, exist_ok=True)
+    history_zarr_path = f"{output_dir}/tmp_hs_store.zarr"
+
+    history_concat = xarray.open_mfdataset(batch_paths, parallel=True).chunk(dict(time=5))
+
+    target_chunk_size = 250*(1024**2)
+    for variable in history_concat:
+        time_chunk_size = 1
+        if "time" in history_concat[variable].dims:
+            time_size = 1
+            for index, dim in enumerate(history_concat[variable].dims):
+                if dim == "time":
+                    time_size = history_concat[variable].shape[index]
+            smallest_time_chunk = history_concat[variable].nbytes / time_size
+            if smallest_time_chunk <= 2*target_chunk_size:
+                time_chunk_size = int(target_chunk_size / smallest_time_chunk)
+        history_concat[variable] = history_concat[variable].chunk(dict(time=time_chunk_size))
+    history_concat.to_zarr(history_zarr_path, mode="w", consolidated=True)
+
+    dt = history_concat.time.values[1] - history_concat.time.values[0]
+    if dt.days == 0:
+        time_str_format = "%Y-%m-%d-%H"
+    elif 30 > dt.days > 0:
+        time_str_format = "%Y-%m-%d"
+    else:
+        time_str_format = "%Y-%m"
+
+    time_start = history_concat.time.values[0].strftime(time_str_format)
+    time_end = history_concat.time.values[-1].strftime(time_str_format)
+
+    attribute_variables = []
+    for variable in list(history_concat.variables):
+        if "cell_methods" not in history_concat[variable].attrs:
+            attribute_variables.append(variable)
+
+    def export_dataset(config_tuple):
+        zarr_path, variables, output_path, uid = config_tuple
+        xarray.open_zarr(zarr_path)[variables].to_netcdf(output_path, mode="w")
+        return uid
+
+    config_tuples = [(history_zarr_path,
+                      [variable],
+                      f"{output_dir}/{group}.{variable}.{time_start}.{time_end}.nc",
+                      uuid4())
+                     for variable in list(history_concat.variables) if variable not in attribute_variables]
+
+    futures = client.map(export_dataset, config_tuples)
+
+    attrs_ds = xarray.open_zarr(history_zarr_path)[attribute_variables].compute()
+
+    for task in futures:
+        wait(task)
+        task.release()
+    client.amm.stop()
+    scatted_attrs = client.scatter(attrs_ds, broadcast=True)
+
+    def add_descriptive_variables(path_ds_tuple):
+        ds, path = path_ds_tuple
+        ds.to_netcdf(path, mode="a")
+
+    path_tuples = [(scatted_attrs, f"{output_dir}/{group}.{variable}.{time_start}.{time_end}.nc") for variable in list(history_concat.variables) if variable not in attribute_variables]
+    futures = client.map(add_descriptive_variables, path_tuples)
+
+    for task in futures:
+        wait(task)
+        task.release()
+    scatted_attrs.release()
+
+    rmtree(history_zarr_path)
+    client.amm.start()
