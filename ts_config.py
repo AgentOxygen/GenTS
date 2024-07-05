@@ -91,7 +91,8 @@ class GenerationConfig:
         for case_dir in self.case_comp_hist_dir_paths:
             for component_dir in self.case_comp_hist_dir_paths[case_dir]:
                 for group in self.case_comp_hist_dir_paths[case_dir][component_dir]:
-                    output_dir = Path(str(self.output_timeseries_path) + "/" + case_dir.name + str(component_dir).split(str(case_dir))[1])
+                    output_dir = str(self.output_timeseries_path) + "/" + case_dir.name + str(component_dir).split(str(case_dir))[1]
+                    output_dir = Path(output_dir.replace(self.history_dir_name, "tseries"))
                     file_paths = np.array(self.case_comp_hist_dir_paths[case_dir][component_dir][group])
                     interm_size = interm_sizes[case_dir][component_dir][group]
                     for batch_paths in np.array_split(file_paths, np.ceil(file_paths.size / interm_size)):
