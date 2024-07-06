@@ -111,7 +111,7 @@ def generate_timeseries(client, output_dir, group, batch_paths):
     output_dir.mkdir(parents=True, exist_ok=True)
     history_zarr_path = f"{output_dir}/tmp_hs_store.zarr"
 
-    history_concat = xarray.open_mfdataset(batch_paths, parallel=True).chunk(dict(time=5))
+    history_concat = xarray.open_mfdataset(batch_paths, parallel=True, decode_cf=False)
 
     dt = history_concat.time.values[1] - history_concat.time.values[0]
     if dt.days == 0:
@@ -160,7 +160,7 @@ def generate_timeseries(client, output_dir, group, batch_paths):
             smallest_time_chunk = history_concat[variable].nbytes / time_size
             if smallest_time_chunk <= 2*target_chunk_size:
                 time_chunk_size = int(target_chunk_size / smallest_time_chunk)
-        history_concat[variable] = history_concat[variable].chunk(dict(time=time_chunk_size))
+            history_concat[variable] = history_concat[variable].chunk(dict(time=time_chunk_size))
     history_concat.to_zarr(history_zarr_path, mode="w", consolidated=True)
 
     def export_dataset(config_tuple):
