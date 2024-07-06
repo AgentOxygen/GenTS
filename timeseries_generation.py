@@ -196,3 +196,8 @@ def generate_timeseries(client, output_dir, group, batch_paths):
     rmtree(history_zarr_path)
     client.amm.start()
     return logs
+
+
+def generate_timeseries_batches(batches):
+    for client, output_dir, group, batch_paths in batches:
+        generate_timeseries(client, output_dir, group, batch_paths)
