@@ -198,9 +198,12 @@ def generate_timeseries(client, output_dir, group, batch_paths):
     return logs
 
 
-def generate_timeseries_batches(client, batches):
+def generate_timeseries_batches(client, batches, verbose=False):
     for output_dir, group, batch_paths in batches:
-        print(f"Generating timeseries datasets for '{group}':")
+        print(f"\nGenerating timeseries datasets for '{group}'")
         logs = generate_timeseries(client, output_dir, group, batch_paths)
-        for log in logs:
-            print(f"\t{log}")
+        print(" ... done!")
+        if verbose:
+            print("[Verbose=True, Logs]")
+            for log in logs:
+                print(f"\t{log}")
