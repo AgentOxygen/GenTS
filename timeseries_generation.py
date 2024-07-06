@@ -5,7 +5,9 @@ from dask.distributed import wait
 from uuid import uuid4
 from shutil import rmtree
 from os.path import isfile
+from os import listdir
 import warnings
+from time import time
 
 
 class GenerationConfig:
@@ -200,10 +202,29 @@ def generate_timeseries(client, output_dir, group, batch_paths):
 
 def generate_timeseries_batches(client, batches, verbose=False):
     for output_dir, group, batch_paths in batches:
-        print(f"\nGenerating timeseries datasets for '{group}'")
+        print(f"\nGenerating timeseries datasets for '{group}'", end="")
+        start = time()
         logs = generate_timeseries(client, output_dir, group, batch_paths)
-        print(" ... done!")
+        print(f" ... done! {round(time() - start, 2)}s")
         if verbose:
-            print("[Verbose=True, Logs]")
+            print(f"\t[Verbose=True, {len(logs)} log messages]")
             for log in logs:
                 print(f"\t{log}")
+
+
+def check_batch_integrity(batches):
+    for output_dir in np.unique([batch[0] for batch in batches]):
+        print(f"Attempting to read datasets in '{output_dir}'... ")
+        failed_paths = []
+        size = 0
+        for file_name in listdir(f"{output_dir}/"):
+            if ".nc" in file_name:
+                try:
+                    ds = xarray.open_dataset(f"{output_dir}/{file_name}")
+                    size += ds.nbytes / 1024**3
+                except ValueError:
+                    failed_paths.append(f"{output_dir}/{file_name}")
+        print(f"\tnetCDF files found: {len(listdir(f"{output_dir}"))} [{round(size, 2)} GB]")
+        print(f"\tFailed to open: {len(failed_paths)}")
+        for path in failed_paths:
+            print(f"\t\t{path}")
