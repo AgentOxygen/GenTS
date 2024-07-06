@@ -113,7 +113,7 @@ def generate_timeseries(client, output_dir, group, batch_paths):
     history_zarr_path = f"{output_dir}/tmp_hs_store.zarr"
 
     with warnings.catch_warnings(action="ignore"):
-        history_concat = xarray.open_mfdataset(batch_paths, parallel=True, decode_cf=False)
+        history_concat = xarray.open_mfdataset(batch_paths, parallel=True, decode_cf=True)
 
     dt = history_concat.time.values[1] - history_concat.time.values[0]
     if dt.days == 0:
@@ -198,8 +198,8 @@ def generate_timeseries(client, output_dir, group, batch_paths):
     return logs
 
 
-def generate_timeseries_batches(batches):
-    for client, output_dir, group, batch_paths in batches:
+def generate_timeseries_batches(client, batches):
+    for output_dir, group, batch_paths in batches:
         print(f"Generating timeseries datasets for '{group}':")
         logs = generate_timeseries(client, output_dir, group, batch_paths)
         for log in logs:
