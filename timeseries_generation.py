@@ -5,6 +5,7 @@ from dask.distributed import wait
 from uuid import uuid4
 from shutil import rmtree
 from os.path import isfile
+import warnings
 
 
 class GenerationConfig:
@@ -111,7 +112,8 @@ def generate_timeseries(client, output_dir, group, batch_paths):
     output_dir.mkdir(parents=True, exist_ok=True)
     history_zarr_path = f"{output_dir}/tmp_hs_store.zarr"
 
-    history_concat = xarray.open_mfdataset(batch_paths, parallel=True, decode_cf=False)
+    with warnings.catch_warnings(action="ignore"):
+        history_concat = xarray.open_mfdataset(batch_paths, parallel=True, decode_cf=False)
 
     dt = history_concat.time.values[1] - history_concat.time.values[0]
     if dt.days == 0:
@@ -161,7 +163,8 @@ def generate_timeseries(client, output_dir, group, batch_paths):
             if smallest_time_chunk <= 2*target_chunk_size:
                 time_chunk_size = int(target_chunk_size / smallest_time_chunk)
             history_concat[variable] = history_concat[variable].chunk(dict(time=time_chunk_size))
-    history_concat.to_zarr(history_zarr_path, mode="w", consolidated=True)
+    with warnings.catch_warnings(action="ignore"):
+        history_concat.to_zarr(history_zarr_path, mode="w", consolidated=True)
 
     def export_dataset(config_tuple):
         zarr_path, variables, output_path, uid = config_tuple
