@@ -200,4 +200,7 @@ def generate_timeseries(client, output_dir, group, batch_paths):
 
 def generate_timeseries_batches(batches):
     for client, output_dir, group, batch_paths in batches:
-        generate_timeseries(client, output_dir, group, batch_paths)
+        print(f"Generating timeseries datasets for '{group}':")
+        logs = generate_timeseries(client, output_dir, group, batch_paths)
+        for log in logs:
+            print(f"\t{log}")
