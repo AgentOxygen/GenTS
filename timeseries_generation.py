@@ -4,7 +4,7 @@ import xarray
 from dask.distributed import wait
 from uuid import uuid4
 from shutil import rmtree
-from os.path import isfile
+from os.path import isfile, getsize
 from os import listdir
 import warnings
 from time import time
@@ -77,8 +77,7 @@ class GenerationConfig:
                 self.group_nbytes[case_dir][component_dir] = {}
                 for group in self.case_comp_hist_dir_paths[case_dir][component_dir]:
                     paths = self.case_comp_hist_dir_paths[case_dir][component_dir][group]
-                    sample_ds = xarray.open_dataset(paths[0], chunks=dict(time=-1))
-                    self.group_nbytes[case_dir][component_dir][group] = int(sample_ds.nbytes) * len(paths)
+                    self.group_nbytes[case_dir][component_dir][group] = int(getsize(paths[0])) * len(paths)
                     del sample_ds
 
     def fit_interm_timeseries_to_memory(self, memory_per_node_gb=150):
