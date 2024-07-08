@@ -224,7 +224,7 @@ def check_batch_integrity(batches):
                     size += ds.nbytes / 1024**3
                 except ValueError:
                     failed_paths.append(f"{output_dir}/{file_name}")
-        print(f"\tnetCDF files found: {len(listdir(f"{output_dir}"))} [{round(size, 2)} GB]")
+        print(f"\tnetCDF files found: {len(listdir(output_dir))} [{round(size, 2)} GB]")
         print(f"\tFailed to open: {len(failed_paths)}")
         for path in failed_paths:
             print(f"\t\t{path}")
