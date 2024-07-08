@@ -78,7 +78,6 @@ class GenerationConfig:
                 for group in self.case_comp_hist_dir_paths[case_dir][component_dir]:
                     paths = self.case_comp_hist_dir_paths[case_dir][component_dir][group]
                     self.group_nbytes[case_dir][component_dir][group] = int(getsize(paths[0])) * len(paths)
-                    del sample_ds
 
     def fit_interm_timeseries_to_memory(self, memory_per_node_gb=150):
         interm_sizes = {}
