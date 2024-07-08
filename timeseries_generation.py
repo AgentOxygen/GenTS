@@ -201,11 +201,11 @@ def generate_timeseries(client, output_dir, group, batch_paths):
 
 
 def generate_timeseries_batches(client, batches, verbose=False):
-    for output_dir, group, batch_paths in batches:
+    for index, (output_dir, group, batch_paths) in enumerate(batches):
         print(f"\nGenerating timeseries datasets for '{group}'", end="")
         start = time()
         logs = generate_timeseries(client, output_dir, group, batch_paths)
-        print(f" ... done! {round(time() - start, 2)}s")
+        print(f" ... done! {round(time() - start, 2)}s ({index}/{len(batches)})")
         if verbose:
             print(f"\t[Verbose=True, {len(logs)} log messages]")
             for log in logs:
