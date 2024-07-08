@@ -107,7 +107,9 @@ class GenerationConfig:
         return batches
 
 
-def generate_timeseries(client, output_dir, group, batch_paths):
+def generate_timeseries(client, output_dir, group, batch_paths, overwrite=False):
+    if client.amm.running():
+        client.amm.stop()
     logs = []
     output_dir.mkdir(parents=True, exist_ok=True)
     history_zarr_path = f"{output_dir}/tmp_hs_store.zarr"
@@ -135,7 +137,7 @@ def generate_timeseries(client, output_dir, group, batch_paths):
     for variable in list(history_concat.variables):
         if variable not in attribute_variables:
             output_path = f"{output_dir}/{group}.{variable}.{time_start}.{time_end}.nc"
-            if not isfile(output_path):
+            if not isfile(output_path) or overwrite:
                 config_tuples.append((
                     history_zarr_path,
                     [variable],
@@ -178,7 +180,6 @@ def generate_timeseries(client, output_dir, group, batch_paths):
     for task in futures:
         wait(task)
         task.release()
-    client.amm.stop()
     scatted_attrs = client.scatter(attrs_ds, broadcast=True)
 
     def add_descriptive_variables(path_ds_tuple):
@@ -198,12 +199,12 @@ def generate_timeseries(client, output_dir, group, batch_paths):
     return logs
 
 
-def generate_timeseries_batches(client, batches, verbose=False):
+def generate_timeseries_batches(client, batches, verbose=False, overwrite=False):
     for index, (output_dir, group, batch_paths) in enumerate(batches):
         print(f"\nGenerating timeseries datasets for '{group}'", end="")
         start = time()
-        logs = generate_timeseries(client, output_dir, group, batch_paths)
-        print(f" ... done! {round(time() - start, 2)}s ({index}/{len(batches)})")
+        logs = generate_timeseries(client, output_dir, group, batch_paths, overwrite=overwrite)
+        print(f" ... done! {round(time() - start, 2)}s ({index+1}/{len(batches)})")
         if verbose:
             print(f"\t[Verbose=True, {len(logs)} log messages]")
             for log in logs:
