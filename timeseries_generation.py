@@ -62,8 +62,9 @@ class TSGenerationConfig:
                 parent_output = parent_output.replace(f"/{keyword}", f"/{directory_name_swaps[keyword]}")
 
             self.ts_output_groups[parent_output] = prefix_groups
+            self.output_orders = self.get_output_orders()
 
-    def get_output_templates(self):
+    def get_output_orders(self):
         templates = []
         for parent_directory in self.ts_output_groups:
             for prefix in self.ts_output_groups[parent_directory]:
