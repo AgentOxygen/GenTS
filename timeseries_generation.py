@@ -11,12 +11,22 @@ from difflib import SequenceMatcher
 
 
 class TSGenerationConfig:
-    def __init__(self, input_head_dir, output_head_dir, directory_name_swaps={}, timestep_directory_names={}):
+    def __init__(self, input_head_dir, output_head_dir, directory_name_swaps={}, timestep_directory_names={}, directory_name_exclusions=[]):
         input_head_dir = Path(input_head_dir)
         output_head_dir = Path(output_head_dir)
 
-        netcdf_paths = sorted(input_head_dir.rglob("*.nc"))
+        netcdf_paths = []
+        for path in sorted(input_head_dir.rglob("*.nc")):
+            exclude = False
+            directory_names = [directory.name for directory in sorted(path.parents)]
 
+            for exclusion in directory_name_exclusions:
+                if exclusion in directory_names:
+                    exclude = True
+
+            if not exclude:
+                netcdf_paths.append(path)
+        
         parent_directories = {}
         for path in netcdf_paths:
             if path.parent in parent_directories:
