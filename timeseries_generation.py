@@ -108,14 +108,11 @@ class GenerationConfig:
 
 
 def generate_timeseries(client, output_dir, group, batch_paths, overwrite=False):
-    if client.amm.running():
-        client.amm.stop()
     logs = []
     output_dir.mkdir(parents=True, exist_ok=True)
-    history_zarr_path = f"{output_dir}/tmp_hs_store.zarr"
 
     with warnings.catch_warnings(action="ignore"):
-        history_concat = xarray.open_mfdataset(batch_paths, parallel=True, decode_cf=True, data_vars ="minimal")
+        history_concat = xarray.open_mfdataset(batch_paths, parallel=True, decode_cf=True, data_vars="minimal", chunks={}, combine='nested', concat_dim="time")
 
     dt = history_concat.time.values[1] - history_concat.time.values[0]
     if dt.days == 0:
@@ -139,8 +136,7 @@ def generate_timeseries(client, output_dir, group, batch_paths, overwrite=False)
             output_path = f"{output_dir}/{group}.{variable}.{time_start}.{time_end}.nc"
             if not isfile(output_path) or overwrite:
                 config_tuples.append((
-                    history_zarr_path,
-                    [variable],
+                    history_concat[[variable]],
                     output_path,
                     uuid4())
                 )
@@ -165,21 +161,22 @@ def generate_timeseries(client, output_dir, group, batch_paths, overwrite=False)
             if smallest_time_chunk <= 2*target_chunk_size:
                 time_chunk_size = int(target_chunk_size / smallest_time_chunk)
             history_concat[variable] = history_concat[variable].chunk(dict(time=time_chunk_size))
-    with warnings.catch_warnings(action="ignore"):
-        history_concat.to_zarr(history_zarr_path, mode="w", consolidated=True)
 
     def export_dataset(config_tuple):
-        zarr_path, variables, output_path, uid = config_tuple
-        xarray.open_zarr(zarr_path)[variables].to_netcdf(output_path, mode="w")
+        ds, output_path, uid = config_tuple
+        ds.to_netcdf(output_path, mode="w")
         return uid
 
     futures = client.map(export_dataset, config_tuples)
 
-    attrs_ds = xarray.open_zarr(history_zarr_path)[attribute_variables].compute()
+    attrs_ds = history_concat[attribute_variables].compute()
 
     for task in futures:
         wait(task)
         task.release()
+
+    if client.amm.running():
+        client.amm.stop()
     scatted_attrs = client.scatter(attrs_ds, broadcast=True)
 
     def add_descriptive_variables(path_ds_tuple):
@@ -192,10 +189,10 @@ def generate_timeseries(client, output_dir, group, batch_paths, overwrite=False)
     for task in futures:
         wait(task)
         task.release()
-    scatted_attrs.release()
 
-    rmtree(history_zarr_path)
+    scatted_attrs.release()
     client.amm.start()
+
     return logs
 
 
