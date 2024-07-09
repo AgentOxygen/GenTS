@@ -3,113 +3,64 @@ from pathlib import Path
 import xarray
 from dask.distributed import wait
 from uuid import uuid4
-from shutil import rmtree
-from os.path import isfile, getsize
+from os.path import isfile
 from os import listdir
 import warnings
 from time import time
+from difflib import SequenceMatcher
 
 
-class GenerationConfig:
-    def __build_groups(self, hist_dir_path, date_index, delimiter="."):
-        paths = [path for path in hist_dir_path.iterdir()]
-        files = [path.name for path in hist_dir_path.iterdir()]
-        files_parsed = np.array([file.split(delimiter) for file in files])
+class TSGenerationConfig:
+    def __init__(self, input_head_dir, output_head_dir, directory_name_swaps={}, timestep_directory_names={}):
+        input_head_dir = Path(input_head_dir)
+        output_head_dir = Path(output_head_dir)
 
-        if date_index < 0:
-            date_index = files_parsed.shape[1] + date_index
+        netcdf_paths = sorted(input_head_dir.rglob("*.nc"))
 
-        prefix = ""
-        sequence_identifiers = []
-        for sequence_index in range(files_parsed.shape[1]):
-            uniques = np.unique(files_parsed[:, sequence_index])
-            if sequence_index != date_index and uniques.size > 1:
-                sequence_identifiers.append((sequence_index, uniques))
-            elif uniques.size == 1:
-                if uniques[0] != "nc":
-                    prefix += uniques[0] + delimiter
-
-        groups = {}
-        for index in range(len(files)):
-            group_identifier = prefix
-            for sequence_index, identifier in sequence_identifiers:
-                group_identifier += files_parsed[index][sequence_index]
-            if group_identifier in groups:
-                groups[group_identifier].append(paths[index])
+        parent_directories = {}
+        for path in netcdf_paths:
+            if path.parent in parent_directories:
+                parent_directories[path.parent].append(path)
             else:
-                groups[group_identifier] = [paths[index]]
+                parent_directories[path.parent] = [path]
 
-        return groups
+        self.ts_output_groups = {}
+        for parent in parent_directories:
+            match_index = np.inf
+            for path in parent_directories[parent][1:]:
+                longest_match = SequenceMatcher(None, parent_directories[parent][0].name, path.name).find_longest_match()
+                if longest_match.size < match_index and longest_match.a == 0:
+                    match_index = longest_match.size
 
-    def __init__(self, case_dir_paths, output_timeseries_path):
-        self.input_case_dir_paths = [Path(str(path)) for path in case_dir_paths]
-        for case_path in self.input_case_dir_paths:
-            assert case_path.exists()
-            assert not case_path.is_file()
+            prefix_groups = {}
+            for path in parent_directories[parent]:
+                prefix = path.name[:match_index] + path.name[match_index:].split(".")[0]
+                if prefix.split(".")[-1] in timestep_directory_names:
+                    prefix = timestep_directory_names[prefix.split(".")[-1]] + "/" + prefix + "."
 
-        self.output_dir_path = Path(str(output_timeseries_path))
-        assert self.output_dir_path.exists()
-        assert not self.output_dir_path.is_file()
+                if prefix in prefix_groups:
+                    prefix_groups[prefix].append(path)
+                else:
+                    prefix_groups[prefix] = [path]
 
-        self.output_timeseries_path = output_timeseries_path
-        self.case_names = [path.name for path in self.input_case_dir_paths]
-        self.possible_components = [
-            "atm", "ocn", "lnd", "esp", "glc", "rof", "wav", "ice"
-        ]
-        self.history_dir_name = "hist"
+            parent_output = str(output_head_dir) + str(parent).split(str(input_head_dir))[1]
+            for keyword in directory_name_swaps:
+                parent_output = parent_output.replace(f"/{keyword}", f"/{directory_name_swaps[keyword]}")
 
-        self.case_comp_hist_dir_paths = {}
-        for case in self.input_case_dir_paths:
-            comp_paths = {}
-            for comp_path in case.iterdir():
-                if comp_path.name in self.possible_components:
-                    for sub_directory in comp_path.iterdir():
-                        if sub_directory.name == self.history_dir_name:
-                            comp_paths[sub_directory] = self.__build_groups(sub_directory, date_index=-2)
-                            break
-            self.case_comp_hist_dir_paths[case] = comp_paths
+            self.ts_output_groups[parent_output] = prefix_groups
 
-        print("Sampling dataset metadata from each case group to estimate total size in memory (this may take some time)...")
-        self.group_nbytes = {}
-        for case_dir in self.case_comp_hist_dir_paths:
-            self.group_nbytes[case_dir] = {}
-            for component_dir in self.case_comp_hist_dir_paths[case_dir]:
-                self.group_nbytes[case_dir][component_dir] = {}
-                for group in self.case_comp_hist_dir_paths[case_dir][component_dir]:
-                    paths = self.case_comp_hist_dir_paths[case_dir][component_dir][group]
-                    self.group_nbytes[case_dir][component_dir][group] = int(getsize(paths[0])) * len(paths)
+    def get_output_templates(self):
+        templates = []
+        for parent_directory in self.ts_output_groups:
+            for prefix in self.ts_output_groups[parent_directory]:
+                templates.append((f"{parent_directory}/{prefix}", self.ts_output_groups[parent_directory][prefix]))
 
-    def fit_interm_timeseries_to_memory(self, memory_per_node_gb=150):
-        interm_sizes = {}
-        for case_dir in self.group_nbytes:
-            interm_sizes[case_dir] = {}
-            for component_dir in self.group_nbytes[case_dir]:
-                interm_sizes[case_dir][component_dir] = {}
-                for group in self.group_nbytes[case_dir][component_dir]:
-                    total_size = (self.group_nbytes[case_dir][component_dir][group] / 1024**3)
-                    num_files = len(self.case_comp_hist_dir_paths[case_dir][component_dir][group])
-                    interm_sizes[case_dir][component_dir][group] = int(min(num_files / (total_size / memory_per_node_gb), num_files))
-        return interm_sizes
-
-    def get_timeseries_batches(self, interm_sizes):
-        batches = []
-        for case_dir in self.case_comp_hist_dir_paths:
-            for component_dir in self.case_comp_hist_dir_paths[case_dir]:
-                for group in self.case_comp_hist_dir_paths[case_dir][component_dir]:
-                    output_dir = str(self.output_timeseries_path) + "/" + case_dir.name + str(component_dir).split(str(case_dir))[1]
-                    output_dir = Path(output_dir.replace(self.history_dir_name, "tseries"))
-                    file_paths = np.array(self.case_comp_hist_dir_paths[case_dir][component_dir][group])
-                    interm_size = interm_sizes[case_dir][component_dir][group]
-                    for batch_paths in np.array_split(file_paths, np.ceil(file_paths.size / interm_size)):
-                        batches.append((output_dir, group, batch_paths))
-
-        batches.sort(key=lambda entry: len(entry[2]))
-        return batches
+        return templates
 
 
-def generate_timeseries(client, output_dir, group, batch_paths, overwrite=False):
+def generate_timeseries(client, output_template, batch_paths, overwrite=False):
     logs = []
-    output_dir.mkdir(parents=True, exist_ok=True)
+    Path(output_template).parent.mkdir(parents=True, exist_ok=True)
 
     with warnings.catch_warnings(action="ignore"):
         history_concat = xarray.open_mfdataset(batch_paths, parallel=True, decode_cf=True, data_vars="minimal", chunks={}, combine='nested', concat_dim="time")
@@ -133,7 +84,7 @@ def generate_timeseries(client, output_dir, group, batch_paths, overwrite=False)
     config_tuples = []
     for variable in list(history_concat.variables):
         if variable not in attribute_variables:
-            output_path = f"{output_dir}/{group}.{variable}.{time_start}.{time_end}.nc"
+            output_path = f"{output_template}{variable}.{time_start}.{time_end}.nc"
             if not isfile(output_path) or overwrite:
                 config_tuples.append((
                     history_concat[[variable]],
@@ -146,7 +97,7 @@ def generate_timeseries(client, output_dir, group, batch_paths, overwrite=False)
 
     if len(config_tuples) == 0:
         logs.append("Skipping group because all timeseries files already exists (assuming integrity checks were done already): ")
-        logs.append(f"\t '{group}'")
+        logs.append(f"\t '{output_template}'")
         return logs
 
     target_chunk_size = 250*(1024**2)
@@ -183,7 +134,7 @@ def generate_timeseries(client, output_dir, group, batch_paths, overwrite=False)
         ds, path = path_ds_tuple
         ds.to_netcdf(path, mode="a")
 
-    path_tuples = [(scatted_attrs, f"{output_dir}/{group}.{variable}.{time_start}.{time_end}.nc") for variable in list(history_concat.variables) if variable not in attribute_variables]
+    path_tuples = [(scatted_attrs, f"{output_template}{variable}.{time_start}.{time_end}.nc") for variable in list(history_concat.variables) if variable not in attribute_variables]
     futures = client.map(add_descriptive_variables, path_tuples)
 
     for task in futures:
@@ -197,10 +148,10 @@ def generate_timeseries(client, output_dir, group, batch_paths, overwrite=False)
 
 
 def generate_timeseries_batches(client, batches, verbose=False, overwrite=False):
-    for index, (output_dir, group, batch_paths) in enumerate(batches):
-        print(f"\nGenerating timeseries datasets for '{group}'", end="")
+    for index, (output_template, paths) in enumerate(batches):
+        print(f"\nGenerating timeseries datasets for '{output_template}'", end="")
         start = time()
-        logs = generate_timeseries(client, output_dir, group, batch_paths, overwrite=overwrite)
+        logs = generate_timeseries(client, output_template, paths, overwrite=overwrite)
         print(f" ... done! {round(time() - start, 2)}s ({index+1}/{len(batches)})")
         if verbose:
             print(f"\t[Verbose=True, {len(logs)} log messages]")
