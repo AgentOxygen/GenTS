@@ -3,7 +3,7 @@ from pathlib import Path
 import xarray
 from dask.distributed import wait
 from uuid import uuid4
-from os.path import isfile
+from os.path import isfile, getsize
 from os import listdir
 import warnings
 from time import time
@@ -30,7 +30,7 @@ class TSGenerationConfig:
 
             if not exclude:
                 netcdf_paths.append(path)
-        
+
         parent_directories = {}
         for path in netcdf_paths:
             if path.parent in parent_directories:
@@ -71,6 +71,29 @@ class TSGenerationConfig:
                 templates.append((f"{parent_directory}/{prefix}", self.ts_output_groups[parent_directory][prefix]))
 
         return templates
+
+    def create_order_batches(self):
+        orders = []
+        for index, (template, paths) in enumerate(self.output_orders):
+            num_output_files = len(xarray.open_dataset(paths[0], decode_cf=False).variables)
+            estimated_total_file_size = sum([getsize(path) for path in paths])
+
+            orders.append((index, len(paths), num_output_files, int(estimated_total_file_size / (10*1024**3))))
+
+        order_specs = np.array(orders, dtype=[('order_index', int), ('num_inputs', int), ('num_outputs', int), ('est_total_size', int)])
+        order_specs = np.sort(order_specs, order=["num_outputs", "est_total_size"])
+
+        unique_output_sizes = np.unique([order[2] for order in order_specs])
+        batches = {}
+        for size in unique_output_sizes:
+            for order_spec in order_specs:
+                if order_spec[2] == size:
+                    if size in batches:
+                        batches[size].append(self.output_orders[order_spec[0]])
+                    else:
+                        batches[size] = [self.output_orders[order_spec[0]]]
+
+        return batches
 
 
 def generate_timeseries(client, output_template, batch_paths, overwrite=False):
@@ -160,6 +183,83 @@ def generate_timeseries(client, output_template, batch_paths, overwrite=False):
     client.amm.start()
 
     return logs
+
+
+def write_bulk_timeseries(client, paths, output_template, overwrite=False):
+    read_futures = client.map(xarray.open_dataset, paths)
+    
+    def expand_dataset(ds):
+        ds_expanded = np.empty(len(ds.variables), dtype=type(ds))
+        for index, variable in enumerate(ds.variables):
+            ds_expanded[index] = ds[[variable]]
+        return ds_expanded
+    
+    expand_futures = client.map(expand_dataset, futures)
+    
+    variable_expands = np.array(client.gather(expand_futures)).T
+    
+    del expand_futures
+    del read_futures
+    
+    def concat_and_output_datasets(datasets, output_template_path="", overwrite_ds=False):
+        ds = xarray.concat(datasets, dim="time", data_vars="minimal")
+        if "time" in ds:
+            dt = ds.time.values[1] - ds.time.values[0]
+            if dt.days == 0:
+                time_str_format = "%Y-%m-%d-%H"
+            elif 30 > dt.days > 0:
+                time_str_format = "%Y-%m-%d"
+            else:
+                time_str_format = "%Y-%m"
+        
+            time_start = ds.time.values[0].strftime(time_str_format)
+            time_end = ds.time.values[-1].strftime(time_str_format)
+    
+            output_path = f"{output_template}{list(ds.variables)[0]}.{time_start}.{time_end}.nc"
+        else:
+            output_path = f"{output_template}{list(ds.variables)[0]}.no_time_dim.nc"
+
+        if overwrite_ds and isfile(output_path):
+            remove(output_path)
+            
+        if overwrite_ds or not isfile(output_path):
+            ds.to_netcdf(output_path, mode="w")
+
+        return (output_path, len(ds.dims))
+    
+    concat_expands = client.map(concat_and_output_datasets, variable_expands, output_template_path=output_template, overwrite_ds=overwrite)
+    
+    paths_and_dims_written = client.gather(concat_expands)
+    for future in concat_expands:
+        future.release()
+
+    del concat_expands
+
+    small_dataset_paths = [path for path, dim_size in paths_and_dims_written if ".no_time_dim.nc" in path or dim_size <= 1 or ".time_bnds." in path]
+    small_datasets_merged = xarray.merge([xarray.open_dataset(path) for path in small_dataset_paths])
+    
+    client.amm.stop()
+    
+    ds_to_add = client.scatter(small_datasets_merged, broadcast=True)
+    
+    def append_dataset(ds, path):
+        ## Does this need a check before adding if file was already appended after restart?
+        ds.to_netcdf(path, mode="a")
+        return True
+    
+    ds_paths = [path for path, dim_size in paths_and_dims_written if path not in small_dataset_paths]
+    addition_futures = client.map(append_dataset, [ds_to_add]*len(ds_paths), ds_paths)
+    
+    completed = client.gather(addition_futures)
+    del ds_to_add
+    del addition_futures
+    
+    client.amm.start()
+
+    for path in small_dataset_paths:
+        remove(path)
+    
+    return paths_and_dims_written
 
 
 def generate_timeseries_batches(client, batches, verbose=False, overwrite=False):
