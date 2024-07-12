@@ -4,7 +4,7 @@ import xarray
 from dask.distributed import wait
 from uuid import uuid4
 from os.path import isfile, getsize
-from os import listdir
+from os import listdir, remove
 import warnings
 from time import time
 from difflib import SequenceMatcher
@@ -96,177 +96,87 @@ class TSGenerationConfig:
         return batches
 
 
-def generate_timeseries(client, output_template, batch_paths, overwrite=False):
-    logs = []
+def generate_timeseries(client, history_paths, output_template, overwrite=False, workers=[]):
     Path(output_template).parent.mkdir(parents=True, exist_ok=True)
+    init_ds = client.submit(xarray.open_dataset, history_paths[0], chunks={}, decode_cf=False, workers=workers).result()
+    ds_variables = list(init_ds.variables)
 
-    with warnings.catch_warnings(action="ignore"):
-        history_concat = xarray.open_mfdataset(batch_paths, parallel=True, decode_cf=True, data_vars="minimal", chunks={}, combine='nested', concat_dim="time")
+    output_variables = []
+    output_variables_drops = []
+    auxillary_variables = []
+    for target_variable in ds_variables:
+        dim_coords = np.unique(list(init_ds[target_variable].coords) + list(init_ds[target_variable].dims))
+        if len(dim_coords) > 1 and "time" in dim_coords and "nbnd" not in dim_coords and "chars" not in dim_coords:
+            output_variables.append(target_variable)
+            output_variables_drops.append([variable for variable in ds_variables if variable not in dim_coords and variable != target_variable])
+        else:
+            auxillary_variables.append(target_variable)
 
-    dt = history_concat.time.values[1] - history_concat.time.values[0]
-    if dt.days == 0:
-        time_str_format = "%Y-%m-%d-%H"
-    elif 30 > dt.days > 0:
-        time_str_format = "%Y-%m-%d"
-    else:
-        time_str_format = "%Y-%m"
+    def export_dataset(variable, variables_to_drop, paths, output_template, overwrite=False):
+        ds = xarray.open_mfdataset(paths,
+                                   decode_cf=True,
+                                   parallel=True,
+                                   data_vars="minimal",
+                                   concat_dim="time",
+                                   combine="nested",
+                                   drop_variables=variables_to_drop)
+        dt = ds.time.values[1] - ds.time.values[0]
+        if dt.days == 0:
+            time_str_format = "%Y-%m-%d-%H"
+        elif 30 > dt.days > 0:
+            time_str_format = "%Y-%m-%d"
+        else:
+            time_str_format = "%Y-%m"
 
-    time_start = history_concat.time.values[0].strftime(time_str_format)
-    time_end = history_concat.time.values[-1].strftime(time_str_format)
+        time_start = ds.time.values[0].strftime(time_str_format)
+        time_end = ds.time.values[-1].strftime(time_str_format)
+        output_path = f"{output_template}{variable}.{time_start}.{time_end}.nc"
+        if not isfile(output_path):
+            ds.to_netcdf(output_path, mode="w")
+        elif overwrite:
+            remove(output_path)
+            ds.to_netcdf(output_path, mode="w")
 
-    attribute_variables = []
-    for variable in list(history_concat.variables):
-        if "cell_methods" not in history_concat[variable].attrs:
-            attribute_variables.append(variable)
+        return output_path
 
-    config_tuples = []
-    for variable in list(history_concat.variables):
-        if variable not in attribute_variables:
-            output_path = f"{output_template}{variable}.{time_start}.{time_end}.nc"
-            if not isfile(output_path) or overwrite:
-                config_tuples.append((
-                    history_concat[[variable]],
-                    output_path,
-                    uuid4())
-                )
-            else:
-                logs.append("Skipping file because it already exists (assuming integrity checks were done already): ")
-                logs.append(f"\t '{output_path}'")
+    export_futures = client.map(export_dataset,
+                                output_variables,
+                                output_variables_drops,
+                                paths=history_paths,
+                                output_template=output_template,
+                                overwrite=overwrite)
+    export_paths = client.gather(export_futures)
+    del export_futures
 
-    if len(config_tuples) == 0:
-        logs.append("Skipping group because all timeseries files already exists (assuming integrity checks were done already): ")
-        logs.append(f"\t '{output_template}'")
-        return logs
-
-    target_chunk_size = 250*(1024**2)
-    for variable in history_concat:
-        time_chunk_size = 1
-        if "time" in history_concat[variable].dims:
-            time_size = 1
-            for index, dim in enumerate(history_concat[variable].dims):
-                if dim == "time":
-                    time_size = history_concat[variable].shape[index]
-            smallest_time_chunk = history_concat[variable].nbytes / time_size
-            if smallest_time_chunk <= 2*target_chunk_size:
-                time_chunk_size = int(target_chunk_size / smallest_time_chunk)
-            history_concat[variable] = history_concat[variable].chunk(dict(time=time_chunk_size))
-
-    def export_dataset(config_tuple):
-        ds, output_path, uid = config_tuple
-        ds.to_netcdf(output_path, mode="w")
-        return uid
-
-    futures = client.map(export_dataset, config_tuples)
-
-    attrs_ds = history_concat[attribute_variables].compute()
-
-    for task in futures:
-        wait(task)
-        task.release()
+    attrs_ds = xarray.open_mfdataset(history_paths,
+                                     decode_cf=False,
+                                     parallel=True,
+                                     data_vars="minimal",
+                                     concat_dim="time",
+                                     combine="nested",
+                                     drop_variables=[v for v in ds_variables if v not in auxillary_variables]).compute()
 
     if client.amm.running():
         client.amm.stop()
     scatted_attrs = client.scatter(attrs_ds, broadcast=True)
 
-    def add_descriptive_variables(path_ds_tuple):
-        ds, path = path_ds_tuple
+    def add_aux_variables(path, ds):
         ds.to_netcdf(path, mode="a")
 
-    path_tuples = [(scatted_attrs, f"{output_template}{variable}.{time_start}.{time_end}.nc") for variable in list(history_concat.variables) if variable not in attribute_variables]
-    futures = client.map(add_descriptive_variables, path_tuples)
-
-    for task in futures:
-        wait(task)
-        task.release()
+    aux_futures = client.map(add_aux_variables, export_paths, [scatted_attrs]*len(export_paths))
+    client.gather(aux_futures)
 
     scatted_attrs.release()
     client.amm.start()
 
-    return logs
-
-
-def write_bulk_timeseries(client, paths, output_template, overwrite=False):
-    read_futures = client.map(xarray.open_dataset, paths)
-    
-    def expand_dataset(ds):
-        ds_expanded = np.empty(len(ds.variables), dtype=type(ds))
-        for index, variable in enumerate(ds.variables):
-            ds_expanded[index] = ds[[variable]]
-        return ds_expanded
-    
-    expand_futures = client.map(expand_dataset, futures)
-    
-    variable_expands = np.array(client.gather(expand_futures)).T
-    
-    del expand_futures
-    del read_futures
-    
-    def concat_and_output_datasets(datasets, output_template_path="", overwrite_ds=False):
-        ds = xarray.concat(datasets, dim="time", data_vars="minimal")
-        if "time" in ds:
-            dt = ds.time.values[1] - ds.time.values[0]
-            if dt.days == 0:
-                time_str_format = "%Y-%m-%d-%H"
-            elif 30 > dt.days > 0:
-                time_str_format = "%Y-%m-%d"
-            else:
-                time_str_format = "%Y-%m"
-        
-            time_start = ds.time.values[0].strftime(time_str_format)
-            time_end = ds.time.values[-1].strftime(time_str_format)
-    
-            output_path = f"{output_template}{list(ds.variables)[0]}.{time_start}.{time_end}.nc"
-        else:
-            output_path = f"{output_template}{list(ds.variables)[0]}.no_time_dim.nc"
-
-        if overwrite_ds and isfile(output_path):
-            remove(output_path)
-            
-        if overwrite_ds or not isfile(output_path):
-            ds.to_netcdf(output_path, mode="w")
-
-        return (output_path, len(ds.dims))
-    
-    concat_expands = client.map(concat_and_output_datasets, variable_expands, output_template_path=output_template, overwrite_ds=overwrite)
-    
-    paths_and_dims_written = client.gather(concat_expands)
-    for future in concat_expands:
-        future.release()
-
-    del concat_expands
-
-    small_dataset_paths = [path for path, dim_size in paths_and_dims_written if ".no_time_dim.nc" in path or dim_size <= 1 or ".time_bnds." in path]
-    small_datasets_merged = xarray.merge([xarray.open_dataset(path) for path in small_dataset_paths])
-    
-    client.amm.stop()
-    
-    ds_to_add = client.scatter(small_datasets_merged, broadcast=True)
-    
-    def append_dataset(ds, path):
-        ## Does this need a check before adding if file was already appended after restart?
-        ds.to_netcdf(path, mode="a")
-        return True
-    
-    ds_paths = [path for path, dim_size in paths_and_dims_written if path not in small_dataset_paths]
-    addition_futures = client.map(append_dataset, [ds_to_add]*len(ds_paths), ds_paths)
-    
-    completed = client.gather(addition_futures)
-    del ds_to_add
-    del addition_futures
-    
-    client.amm.start()
-
-    for path in small_dataset_paths:
-        remove(path)
-    
-    return paths_and_dims_written
+    return True
 
 
 def generate_timeseries_batches(client, batches, verbose=False, overwrite=False):
     for index, (output_template, paths) in enumerate(batches):
         print(f"\nGenerating timeseries datasets for '{output_template}'", end="")
         start = time()
-        logs = generate_timeseries(client, output_template, paths, overwrite=overwrite)
+        logs = generate_timeseries(client, paths, output_template, overwrite=overwrite)
         print(f" ... done! {round(time() - start, 2)}s ({index+1}/{len(batches)})")
         if verbose:
             print(f"\t[Verbose=True, {len(logs)} log messages]")
@@ -290,3 +200,86 @@ def check_batch_integrity(batches):
         print(f"\tFailed to open: {len(failed_paths)}")
         for path in failed_paths:
             print(f"\t\t{path}")
+
+
+def unstable_generate_timeseries(client, history_paths, output_template, overwrite=False):
+    # Unstable because if you don't chunk the reads, its super fast but blows up memory
+    # If you do chunk, you lose the advantage of the serial per-worker open dataset calls because the latency is so high (I think)
+    # And sometimes it will just hang for no reason :)
+    Path(output_template).parent.mkdir(parents=True, exist_ok=True)
+    init_ds = client.submit(xarray.open_dataset, history_paths[0], chunks={}, decode_cf=False).result()
+    ds_variables = list(init_ds.variables)
+
+    output_variables = []
+    output_variables_drops = []
+    auxillary_variables = []
+    auxillary_variables_drops = []
+
+    for target_variable in ds_variables:
+        dim_coords = np.unique(list(init_ds[target_variable].coords) + list(init_ds[target_variable].dims))
+        if len(dim_coords) > 1 and "time" in dim_coords and "nbnd" not in dim_coords and "chars" not in dim_coords:
+            output_variables.append(target_variable)
+            output_variables_drops.append([variable for variable in ds_variables if variable not in dim_coords and variable != target_variable])
+        else:
+            auxillary_variables.append(target_variable)
+            auxillary_variables_drops.append([variable for variable in ds_variables if variable not in dim_coords and variable != target_variable])
+
+    def export_base_timeseries(variable, variables_to_drop, paths, output_template, overwrite=False):
+        ds = xarray.concat([xarray.open_dataset(path)[[variable]] for path in paths], dim="time", data_vars="minimal") #load vs dont load chunks here
+        dt = ds.time.values[1] - ds.time.values[0]
+        if dt.days == 0:
+            time_str_format = "%Y-%m-%d-%H"
+        elif 30 > dt.days > 0:
+            time_str_format = "%Y-%m-%d"
+        else:
+            time_str_format = "%Y-%m"
+
+        time_start = ds.time.values[0].strftime(time_str_format)
+        time_end = ds.time.values[-1].strftime(time_str_format)
+        output_path = f"{output_template}{variable}.{time_start}.{time_end}.nc"
+        if not isfile(output_path):
+            ds.to_netcdf(output_path, mode="w", unlimited_dims=["time"])
+            return output_path
+        elif overwrite:
+            remove(output_path)
+            ds.to_netcdf(output_path, mode="w", unlimited_dims=["time"])
+            return output_path
+
+        return None
+
+    export_futures = client.map(export_base_timeseries,
+                                output_variables,
+                                output_variables_drops,
+                                paths=history_paths,
+                                output_template=output_template,
+                                overwrite=overwrite)
+    export_paths = []
+    for future in export_futures:
+        path = future.result()
+        if path is not None:
+            export_paths.append(path)
+
+    def get_aux_ds(variable, paths):
+        ds = xarray.concat([xarray.open_dataset(path)[[variable]] for path in paths], dim="time", data_vars="minimal")
+        return ds
+
+    aux_futures = client.map(get_aux_ds, auxillary_variables, paths=history_paths)
+    aux_datasets = []
+    for future in aux_futures:
+        aux_datasets.append(future.result())
+    aux_ds = xarray.merge(aux_datasets)
+
+    scattered_aux = client.scatter(aux_ds, broadcast=True)
+
+    def append_aux_variables(path, ds):
+        ds.to_netcdf(path, mode="a")
+        return path
+
+    aux_futures = client.map(append_aux_variables, export_paths, ds=scattered_aux)
+    appended_datasets_paths = []
+    for future in aux_futures:
+        appended_datasets_paths.append(future.result())
+
+    scattered_aux.release()
+
+    return appended_datasets_paths
