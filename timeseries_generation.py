@@ -1,15 +1,10 @@
 import numpy as np
 from pathlib import Path
-import xarray
-from dask.distributed import wait
-from uuid import uuid4
-from os.path import isfile, getsize
-from os import listdir, remove
-import warnings
-from time import time
+from dask import delayed
 from difflib import SequenceMatcher
 import netCDF4
 import cftime
+import subprocess
 
 
 class TimeSeriesOrder:
@@ -19,14 +14,40 @@ class TimeSeriesOrder:
 
         full_ds = netCDF4.MFDataset(self.__history_files_paths, check=False, aggdim="time")
         self.__variables = list(full_ds.variables)
+        self.__global_attrs = {key: getattr(full_ds, key) for key in full_ds.ncattrs()}
         self.__primary_variables = []
+        self.__primary_variables_dims = []
+        self.__primary_variables_attrs = []
+        self.__primary_variables_typecodes = []
+        self.__primary_variables_shapes = []
         self.__auxillary_variables = []
+        self.__auxillary_variables_dims = []
+        self.__auxillary_variables_attrs = []
+        self.__auxillary_variables_typecodes = []
+        self.__auxillary_variables_shapes = []
         for var_index, target_variable in enumerate(self.__variables):
             dim_coords = np.unique(list(full_ds[target_variable].dimensions))
+
+            attrs = {}
+            if type(full_ds[target_variable]) is netCDF4._netCDF4._Variable:
+                for key in full_ds[target_variable].ncattrs():
+                    attrs[key] = full_ds[target_variable].__getattr__(key)
+            else:
+                for key in full_ds[target_variable].ncattrs():
+                    attrs[key] = full_ds[target_variable].getncattr(key)
+
             if len(dim_coords) > 1 and "time" in dim_coords and "nbnd" not in dim_coords and "chars" not in dim_coords:
                 self.__primary_variables.append(target_variable)
+                self.__primary_variables_dims.append(full_ds[target_variable].dimensions)
+                self.__primary_variables_attrs.append(attrs)
+                self.__primary_variables_typecodes.append(full_ds[target_variable].dtype)
+                self.__primary_variables_shapes.append(full_ds[target_variable].shape)
             else:
                 self.__auxillary_variables.append(target_variable)
+                self.__auxillary_variables_dims.append(full_ds[target_variable].dimensions)
+                self.__auxillary_variables_attrs.append(attrs)
+                self.__auxillary_variables_typecodes.append(full_ds[target_variable].dtype)
+                self.__auxillary_variables_shapes.append(full_ds[target_variable].shape)
 
         self.__time_raw = full_ds["time"][:]
         self.__time_units = full_ds["time"].units
@@ -47,8 +68,23 @@ class TimeSeriesOrder:
         self.__chunk_year_length = None
         self.generateOutputs()
 
+    def getOutputPathTemplate(self):
+        return self.__output_path_template
+
+    def getPrimaryVariablesTuples(self):
+        return self.__primary_variables, self.__primary_variables_dims, self.__primary_variables_attrs, self.__primary_variables_typecodes, self.__primary_variables_shapes
+
+    def getAuxillaryVariablesTuples(self):
+        return self.__auxillary_variables, self.__auxillary_variables_dims, self.__auxillary_variables_attrs, self.__auxillary_variables_typecodes, self.__auxillary_variables_shapes
+
+    def getGlobalAttributes(self):
+        return self.__global_attrs
+
     def getIndices(self):
         return self.__time_path_indices
+
+    def getTimeStrings(self):
+        return self.__time[0].strftime(self.__time_str_format), self.__time[-1].strftime(self.__time_str_format)
 
     def indexTimestampsToPaths(self, paths, concat_times):
         index_to_path = []
@@ -127,6 +163,47 @@ class TimeSeriesOrder:
         else:
             return f"hour_{int(dt_hrs)}"
 
+    def generateTimeseries(self):
+        hist_ds = netCDF4.MFDataset(self.getAllHistoryFilePaths(), aggdim="time")
+
+        global_attrs = self.getGlobalAttributes()
+        start_timestr, end_timestr = self.getTimeStrings()
+
+        for var_index in range(len(self.__primary_variables)):
+            variable = self.__primary_variables[var_index]
+            dims = self.__primary_variables_dims[var_index]
+            attrs = self.__primary_variables_attrs[var_index]
+            dtype = self.__primary_variables_typecodes[var_index]
+            shape = self.__primary_variables_shapes[var_index]
+
+            ts_ds = netCDF4.Dataset(f"{self.getOutputPathTemplate()}{variable}.{start_timestr}.{end_timestr}.nc", mode="w")
+            ts_ds.setncatts(global_attrs)
+
+            for dim_index, dim in enumerate(dims):
+                if dim == "time":
+                    ts_ds.createDimension(dim, None)
+                else:
+                    ts_ds.createDimension(dim, shape[dim_index])
+
+            var_data = ts_ds.createVariable(variable, dtype, dims)
+            ts_ds[variable].setncatts(attrs)
+            # This is the chunk-writing loop, bulk of computation occurs here
+            for i in range(hist_ds[variable].shape[0]):
+                var_data[i] = hist_ds[variable][i]
+
+            for aux_index, aux_variable in enumerate(self.__auxillary_variables):
+                for dim_index, dim in enumerate(self.__auxillary_variables_dims[aux_index]):
+                    if dim not in ts_ds.dimensions:
+                        ts_ds.createDimension(dim, self.__auxillary_variables_shapes[aux_index][dim_index])
+                aux_var_data = ts_ds.createVariable(aux_variable, self.__auxillary_variables_typecodes[aux_index], self.__auxillary_variables_dims[aux_index])
+                ts_ds[aux_variable].setncatts(self.__auxillary_variables_attrs[aux_index])
+                # This is the chunk-writing loop for axuillary variables. We can't necessarily assume time is the first index,
+                # this might be a performance issue, but if auxillary variables are small I wouldn't expect much
+                aux_var_data[:] = hist_ds[aux_variable][:]
+
+            ts_ds.close()
+        hist_ds.close()
+
 
 class TimeSeriesConfig:
     def __init__(self, input_head_dir, output_head_dir, directory_name_swaps={}, timestep_directory_names={}, file_name_exclusions=[], directory_name_exclusions=[]):
@@ -184,153 +261,17 @@ class TimeSeriesConfig:
         self.ts_orders = []
         for parent_directory in self.ts_output_groups:
             for prefix in self.ts_output_groups[parent_directory]:
-                print(f"{parent_directory}/{prefix}")
                 self.ts_orders.append(TimeSeriesOrder(f"{parent_directory}/{prefix}", self.ts_output_groups[parent_directory][prefix]))
 
+    def generateAllTimeseries(self):
+        return [delayed(order.generateTimeseries)() for order in self.ts_orders]
 
+    def generateAllTimeseriesNCO(self):
+        def execute_ncrcat_cmd(cmd):
+            return subprocess.run([cmd], shell=True)
 
-def generate_timeseries(client, output_template, hist_paths, overwrite=False):
-    logs = []
-    Path(output_template).parent.mkdir(parents=True, exist_ok=True)
-
-    with warnings.catch_warnings(action="ignore"):
-        history_concat = xarray.open_mfdataset(hist_paths, parallel=True, decode_cf=True, data_vars="minimal", chunks={}, combine='nested', concat_dim="time")
-
-    dt = history_concat.time.values[1] - history_concat.time.values[0]
-    if dt.days == 0:
-        time_str_format = "%Y-%m-%d-%H"
-    elif 30 > dt.days > 0:
-        time_str_format = "%Y-%m-%d"
-    else:
-        time_str_format = "%Y-%m"
-
-    time_start = history_concat.time.values[0].strftime(time_str_format)
-    time_end = history_concat.time.values[-1].strftime(time_str_format)
-
-    variables = list(history_concat.variables)
-    primary_variables = []
-    auxillary_variables = []
-    for var_index, target_variable in enumerate(variables):
-        dim_coords = np.unique(list(history_concat[target_variable].coords) + list(history_concat[target_variable].dims))
-        if len(dim_coords) > 1 and "time" in dim_coords and "nbnd" not in dim_coords and "chars" not in dim_coords:
-            primary_variables.append(target_variable)
-        else:
-            auxillary_variables.append(target_variable)
-
-    variable_datasets = []
-    variable_output_paths = []
-    for variable in list(history_concat.variables):
-        if variable not in auxillary_variables:
-            output_path = f"{output_template}{variable}.{time_start}.{time_end}.nc"
-            if not isfile(output_path) or overwrite:
-                variable_datasets.append(history_concat[[variable]])
-                variable_output_paths.append(output_path)
-            else:
-                logs.append("Skipping file because it already exists (assuming integrity checks were done already): ")
-                logs.append(f"\t '{output_path}'")
-
-    if len(variable_datasets) == 0:
-        logs.append("Skipping group because all timeseries files already exists (assuming integrity checks were done already): ")
-        logs.append(f"\t '{output_template}'")
-        return logs
-
-    def export_dataset(ds, output_path):
-        ds.to_netcdf(output_path, mode="w")
-        return output_path
-
-    export_futures = client.map(export_dataset, variable_datasets, variable_output_paths)
-    export_paths = client.gather(export_futures)
-
-    aux_ds = history_concat[auxillary_variables].compute()
-
-    if client.amm.running():
-        client.amm.stop()
-    scattered_aux = client.scatter(aux_ds, broadcast=True)
-
-    def add_auxillary_variables(output_path, ds):
-        ds.to_netcdf(output_path, mode="a")
-        return output_path
-
-    futures = client.map(add_auxillary_variables, export_paths, ds=aux_ds)
-    appended_paths = client.gather(futures)
-
-    scattered_aux.release()
-    client.amm.start()
-
-    return logs
-
-
-def generate_timeseries_serial(history_file_paths, output_template, overwrite=False):
-    history_datasets = np.empty(len(history_file_paths), dtype=xarray.Dataset)
-    for hist_index in range(len(history_file_paths)):
-        history_datasets[hist_index] = xarray.open_dataset(history_file_paths[hist_index], chunks={})
-
-    concat_ds = xarray.concat(history_datasets, dim="time", data_vars="minimal", coords="minimal")
-
-    variables = list(history_datasets[0].variables)
-    primary_variables = []
-    auxillary_variables = []
-    for var_index, target_variable in enumerate(variables):
-        dim_coords = np.unique(list(history_datasets[0][target_variable].coords) + list(history_datasets[0][target_variable].dims))
-        if len(dim_coords) > 1 and "time" in dim_coords and "nbnd" not in dim_coords and "chars" not in dim_coords:
-            primary_variables.append(target_variable)
-        else:
-            auxillary_variables.append(target_variable)
-
-    dt = concat_ds.time.values[1] - concat_ds.time.values[0]
-    if dt.days == 0:
-        time_str_format = "%Y-%m-%d-%H"
-    elif 30 > dt.days > 0:
-        time_str_format = "%Y-%m-%d"
-    else:
-        time_str_format = "%Y-%m"
-
-    time_start = concat_ds.time.values[0].strftime(time_str_format)
-    time_end = concat_ds.time.values[-1].strftime(time_str_format)
-
-    aux_dataset = concat_ds[auxillary_variables]
-
-    output_paths = []
-    for variable in (primary_variables):
-        output_path = f"{output_template}{variable}.{time_start}.{time_end}.nc"
-        if isfile(output_path) and overwrite:
-            remove(output_path)
-        elif isfile(output_path):
-            continue
-
-        output_paths.append(output_path)
-
-        output_ts = xarray.merge([aux_dataset, concat_ds[[variable]]])
-        output_ts.to_netcdf(output_path)
-
-    return output_paths
-
-
-def generate_timeseries_batches(client, batches, verbose=False, overwrite=False):
-    for index, (output_template, paths) in enumerate(batches):
-        print(f"\nGenerating timeseries datasets for '{output_template}'", end="")
-        start = time()
-        logs = generate_timeseries(client, output_template, paths, overwrite=overwrite)
-        print(f" ... done! {round(time() - start, 2)}s ({index+1}/{len(batches)})")
-        if verbose:
-            print(f"\t[Verbose=True, {len(logs)} log messages]")
-            for log in logs:
-                print(f"\t{log}")
-
-
-def check_batch_integrity(batches):
-    for output_dir in np.unique([batch[0] for batch in batches]):
-        print(f"Attempting to read datasets in '{output_dir}'... ")
-        failed_paths = []
-        size = 0
-        for file_name in listdir(f"{output_dir}/"):
-            if ".nc" in file_name:
-                try:
-                    ds = xarray.open_dataset(f"{output_dir}/{file_name}")
-                    size += ds.nbytes / 1024**3
-                except ValueError:
-                    failed_paths.append(f"{output_dir}/{file_name}")
-        print(f"\tnetCDF files found: {len(listdir(output_dir))} [{round(size, 2)} GB]")
-        print(f"\tFailed to open: {len(failed_paths)}")
-        for path in failed_paths:
-            print(f"\t\t{path}")
+        cmd_strs = []
+        for order in self.ts_orders:
+            for cmd_str in order.getCommandStrings():
+                cmd_strs.append(cmd_str)
+        return [delayed(execute_ncrcat_cmd)(cmd_str) for cmd in cmd_strs]
