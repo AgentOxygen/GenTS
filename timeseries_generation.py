@@ -20,11 +20,11 @@ class TimeSeriesOrder:
         self.__primary_variables_attrs = []
         self.__primary_variables_typecodes = []
         self.__primary_variables_shapes = []
-        self.__auxillary_variables = []
-        self.__auxillary_variables_dims = []
-        self.__auxillary_variables_attrs = []
-        self.__auxillary_variables_typecodes = []
-        self.__auxillary_variables_shapes = []
+        self.__auxiliary_variables = []
+        self.__auxiliary_variables_dims = []
+        self.__auxiliary_variables_attrs = []
+        self.__auxiliary_variables_typecodes = []
+        self.__auxiliary_variables_shapes = []
         for var_index, target_variable in enumerate(self.__variables):
             dim_coords = np.unique(list(full_ds[target_variable].dimensions))
 
@@ -43,11 +43,11 @@ class TimeSeriesOrder:
                 self.__primary_variables_typecodes.append(full_ds[target_variable].dtype)
                 self.__primary_variables_shapes.append(full_ds[target_variable].shape)
             else:
-                self.__auxillary_variables.append(target_variable)
-                self.__auxillary_variables_dims.append(full_ds[target_variable].dimensions)
-                self.__auxillary_variables_attrs.append(attrs)
-                self.__auxillary_variables_typecodes.append(full_ds[target_variable].dtype)
-                self.__auxillary_variables_shapes.append(full_ds[target_variable].shape)
+                self.__auxiliary_variables.append(target_variable)
+                self.__auxiliary_variables_dims.append(full_ds[target_variable].dimensions)
+                self.__auxiliary_variables_attrs.append(attrs)
+                self.__auxiliary_variables_typecodes.append(full_ds[target_variable].dtype)
+                self.__auxiliary_variables_shapes.append(full_ds[target_variable].shape)
 
         self.__time_raw = full_ds["time"][:]
         self.__time_units = full_ds["time"].units
@@ -74,8 +74,8 @@ class TimeSeriesOrder:
     def getPrimaryVariablesTuples(self):
         return self.__primary_variables, self.__primary_variables_dims, self.__primary_variables_attrs, self.__primary_variables_typecodes, self.__primary_variables_shapes
 
-    def getAuxillaryVariablesTuples(self):
-        return self.__auxillary_variables, self.__auxillary_variables_dims, self.__auxillary_variables_attrs, self.__auxillary_variables_typecodes, self.__auxillary_variables_shapes
+    def getauxiliaryVariablesTuples(self):
+        return self.__auxiliary_variables, self.__auxiliary_variables_dims, self.__auxiliary_variables_attrs, self.__auxiliary_variables_typecodes, self.__auxiliary_variables_shapes
 
     def getGlobalAttributes(self):
         return self.__global_attrs
@@ -118,7 +118,7 @@ class TimeSeriesOrder:
 
         for start_time, end_time, paths in input_hist_file_tuples:
             for variable in self.__primary_variables:
-                self.__ts_output_tuples.append((self.__auxillary_variables + [variable], self.__output_path_template, start_time, end_time, paths))
+                self.__ts_output_tuples.append((self.__auxiliary_variables + [variable], self.__output_path_template, start_time, end_time, paths))
 
     def getCommandStrings(self):
         cmds = []
@@ -169,6 +169,7 @@ class TimeSeriesOrder:
         global_attrs = self.getGlobalAttributes()
         start_timestr, end_timestr = self.getTimeStrings()
 
+        paths = []
         for var_index in range(len(self.__primary_variables)):
             variable = self.__primary_variables[var_index]
             dims = self.__primary_variables_dims[var_index]
@@ -176,7 +177,14 @@ class TimeSeriesOrder:
             dtype = self.__primary_variables_typecodes[var_index]
             shape = self.__primary_variables_shapes[var_index]
 
-            ts_ds = netCDF4.Dataset(f"{self.getOutputPathTemplate()}{variable}.{start_timestr}.{end_timestr}.nc", mode="w")
+            hist_ds[variable].set_auto_mask(False)
+            hist_ds[variable].set_auto_scale(False)
+            hist_ds[variable].set_always_mask(False)
+
+            variable_ts_output_path = f"{self.getOutputPathTemplate()}.{variable}.{start_timestr}.{end_timestr}.nc"
+            paths.append(variable_ts_output_path)
+            ts_ds = netCDF4.Dataset(variable_ts_output_path,
+                                    mode="w")
             ts_ds.setncatts(global_attrs)
 
             for dim_index, dim in enumerate(dims):
@@ -186,23 +194,37 @@ class TimeSeriesOrder:
                     ts_ds.createDimension(dim, shape[dim_index])
 
             var_data = ts_ds.createVariable(variable, dtype, dims)
+
+            var_data.set_auto_mask(False)
+            var_data.set_auto_scale(False)
+            var_data.set_always_mask(False)
+
             ts_ds[variable].setncatts(attrs)
             # This is the chunk-writing loop, bulk of computation occurs here
-            for i in range(hist_ds[variable].shape[0]):
-                var_data[i] = hist_ds[variable][i]
-
-            for aux_index, aux_variable in enumerate(self.__auxillary_variables):
-                for dim_index, dim in enumerate(self.__auxillary_variables_dims[aux_index]):
-                    if dim not in ts_ds.dimensions:
-                        ts_ds.createDimension(dim, self.__auxillary_variables_shapes[aux_index][dim_index])
-                aux_var_data = ts_ds.createVariable(aux_variable, self.__auxillary_variables_typecodes[aux_index], self.__auxillary_variables_dims[aux_index])
-                ts_ds[aux_variable].setncatts(self.__auxillary_variables_attrs[aux_index])
-                # This is the chunk-writing loop for axuillary variables. We can't necessarily assume time is the first index,
-                # this might be a performance issue, but if auxillary variables are small I wouldn't expect much
-                aux_var_data[:] = hist_ds[aux_variable][:]
+            time_chunk_size = 1
+            for i in range(0, hist_ds[variable].shape[0], time_chunk_size):
+                if i + time_chunk_size > hist_ds[variable].shape[0]:
+                    time_chunk_size =  hist_ds[variable].shape[0] - i
+                var_data[i:i + time_chunk_size] = hist_ds[variable][i:i + time_chunk_size]
 
             ts_ds.close()
+
+        aux_variable_data_tmp = {}
+        for aux_variable in self.__auxiliary_variables:
+            aux_variable_data_tmp[aux_variable] = hist_ds[aux_variable][:]
         hist_ds.close()
+
+        for path in paths:
+            var_ds = netCDF4.Dataset(path, mode="a")
+
+            for aux_index, aux_variable in enumerate(self.__auxiliary_variables):
+                for dim_index, dim in enumerate(self.__auxiliary_variables_dims[aux_index]):
+                    if dim not in var_ds.dimensions:
+                        var_ds.createDimension(dim, self.__auxiliary_variables_shapes[aux_index][dim_index])
+                aux_var_data = var_ds.createVariable(aux_variable, self.__auxiliary_variables_typecodes[aux_index], self.__auxiliary_variables_dims[aux_index])
+                var_ds[aux_variable].setncatts(self.__auxiliary_variables_attrs[aux_index])
+                aux_var_data[:] = aux_variable_data_tmp[aux_variable]
+            var_ds.close()
 
 
 class TimeSeriesConfig:
