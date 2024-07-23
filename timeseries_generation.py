@@ -5,12 +5,15 @@ from difflib import SequenceMatcher
 import netCDF4
 import cftime
 import subprocess
+from os.path import isfile
+from os import remove
 
 
 class TimeSeriesOrder:
-    def __init__(self, output_path_template, history_file_paths):
+    def __init__(self, output_path_template, history_file_paths, overwrite=True):
         self.__output_path_template = output_path_template
         self.__history_files_paths = history_file_paths
+        self.overwrite = overwrite
 
         full_ds = netCDF4.MFDataset(self.__history_files_paths, check=False, aggdim="time")
         self.__variables = list(full_ds.variables)
@@ -182,6 +185,9 @@ class TimeSeriesOrder:
             hist_ds[variable].set_always_mask(False)
 
             variable_ts_output_path = f"{self.getOutputPathTemplate()}.{variable}.{start_timestr}.{end_timestr}.nc"
+            if self.overwrite and isfile(variable_ts_output_path):
+                remove(variable_ts_output_path)
+
             paths.append(variable_ts_output_path)
             ts_ds = netCDF4.Dataset(variable_ts_output_path,
                                     mode="w")
