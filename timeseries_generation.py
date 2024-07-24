@@ -1,7 +1,6 @@
 import numpy as np
 from pathlib import Path
 from dask import delayed
-from difflib import SequenceMatcher
 import netCDF4
 import cftime
 import subprocess
@@ -54,7 +53,8 @@ class TimeSeriesOrder:
 
         self.__time_raw = full_ds["time"][:]
         self.__time_units = full_ds["time"].units
-        self.__time = cftime.num2date(self.__time_raw, self.__time_units)
+        self.__calendar = full_ds["time"].calendar
+        self.__time = cftime.num2date(self.__time_raw, self.__time_units, calendar=self.__calendar)
         full_ds.close()
 
         self.__history_file_times = []
@@ -234,7 +234,57 @@ class TimeSeriesOrder:
 
 
 class TimeSeriesConfig:
-    def __init__(self, input_head_dir, output_head_dir, directory_name_swaps={}, timestep_directory_names={}, file_name_exclusions=[], directory_name_exclusions=[]):
+
+    def generateReflectiveOutputDirectory(input_head, output_head, parent_dir, swaps={}):
+        raw_sub_dir = str(parent_dir).split(str(input_head))[-1]
+    
+        raw_sub_dir_parsed = raw_sub_dir.split("/")
+        
+        for key in swaps:
+            for index in range(len(raw_sub_dir_parsed)):
+                if raw_sub_dir_parsed[index] == key:
+                    raw_sub_dir_parsed[index] = swaps[key]
+                    break
+        output_dir = str(output_head) + "/"
+        for dir in raw_sub_dir_parsed:
+            output_dir += dir + "/"
+        return output_dir
+    
+    def solveForGroupsLeftToRight(file_names, delimiter="."):
+        varying_parsed_names = [str(name).split(delimiter) for name in file_names]
+    
+        lengths = {}
+        for parsed in varying_parsed_names:
+            if len(parsed) in lengths:
+                lengths[len(parsed)].append(parsed)
+            else:
+                lengths[len(parsed)] = [parsed]
+    
+        groups = []
+        for l in lengths:
+            parsed_names = np.array(lengths[l])
+        
+            unique_strs = []
+            for i in range(parsed_names.shape[1]):
+                unique_strs.append(np.unique(parsed_names[:, i]))
+        
+            common_str = ""
+            for index in range(len(unique_strs)):
+                if len(unique_strs[index]) == 1:
+                    if unique_strs[index][0] != "nc":
+                        common_str += unique_strs[index][0] + delimiter
+                else:
+                    break
+        
+            if len(unique_strs[index]) != len(parsed_names):
+                for group in unique_strs[index]:
+                    groups.append(common_str + group + delimiter)
+            else:
+                groups.append(common_str)
+        return groups
+
+    
+    def __init__(self, input_head_dir, output_head_dir, directory_name_swaps={}, file_name_exclusions=[], directory_name_exclusions=["rest", "logs"]):
         input_head_dir = Path(input_head_dir)
         output_head_dir = Path(output_head_dir)
 
@@ -261,45 +311,40 @@ class TimeSeriesConfig:
             else:
                 parent_directories[path.parent] = [path]
 
-        self.ts_output_groups = {}
+        self.ts_order_parameters = []
         for parent in parent_directories:
-            match_index = np.inf
-            for path in parent_directories[parent][1:]:
-                longest_match = SequenceMatcher(None, parent_directories[parent][0].name, path.name).find_longest_match()
-                if longest_match.size < match_index and longest_match.a == 0:
-                    match_index = longest_match.size
+            groups = TimeSeriesConfig.solveForGroupsLeftToRight([path.name for path in parent_directories[parent]])
 
-            prefix_groups = {}
+            group_to_history_paths = {group: [] for group in groups}
             for path in parent_directories[parent]:
-                prefix = path.name[:match_index] + path.name[match_index:].split(".")[0]
-                if prefix.split(".")[-1] in timestep_directory_names:
-                    prefix = timestep_directory_names[prefix.split(".")[-1]] + "/" + prefix + "."
+                for group in groups:
+                    if group in str(path.name):
+                        group_to_history_paths[group].append(path)
 
-                if prefix in prefix_groups:
-                    prefix_groups[prefix].append(path)
-                else:
-                    prefix_groups[prefix] = [path]
-
-            parent_output = str(output_head_dir) + str(parent).split(str(input_head_dir))[1]
-            for keyword in directory_name_swaps:
-                parent_output = parent_output.replace(f"/{keyword}", f"/{directory_name_swaps[keyword]}")
-
-            self.ts_output_groups[parent_output] = prefix_groups
-
+            group_output_dir = TimeSeriesConfig.generateReflectiveOutputDirectory(input_head_dir, output_head_dir, parent, swaps=directory_name_swaps)
+            for group in group_to_history_paths:
+                self.ts_order_parameters.append((Path(group_output_dir + "/" + group), group_to_history_paths[group]))
+        
         self.ts_orders = []
-        for parent_directory in self.ts_output_groups:
-            for prefix in self.ts_output_groups[parent_directory]:
-                self.ts_orders.append(TimeSeriesOrder(f"{parent_directory}/{prefix}", self.ts_output_groups[parent_directory][prefix]))
+        for output_dir_path, input_hist_paths in self.ts_order_parameters:
+            if len(input_hist_paths) <= 1:
+                print(f"NOTE: Only one history file detected, skipping: '{input_hist_paths}'")
+                # Maybe write a single timeseries dataset for each variable in this case?
+            output_dir_path.parent.mkdir(parents=True, exist_ok=True)
+            self.ts_orders.append(delayed(TimeSeriesOrder)(output_dir_path, input_hist_paths))
+    
+    def getOrders(self):
+        return self.ts_orders
+    
+    def generateAllTimeseries(self, orders):
+        return [delayed(order.generateTimeseries)() for order in orders]
 
-    def generateAllTimeseries(self):
-        return [delayed(order.generateTimeseries)() for order in self.ts_orders]
-
-    def generateAllTimeseriesNCO(self):
+    def generateAllTimeseriesNCO(self, orders):
         def execute_ncrcat_cmd(cmd):
             return subprocess.run([cmd], shell=True)
 
         cmd_strs = []
-        for order in self.ts_orders:
+        for order in orders:
             for cmd_str in order.getCommandStrings():
                 cmd_strs.append(cmd_str)
         return [delayed(execute_ncrcat_cmd)(cmd_str) for cmd in cmd_strs]
