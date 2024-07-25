@@ -1,20 +1,28 @@
 import numpy as np
 from pathlib import Path
 from dask import delayed
+from difflib import SequenceMatcher
 import netCDF4
 import cftime
 import subprocess
 from os.path import isfile
 from os import remove
+from time import time
 
 
 class TimeSeriesOrder:
     def __init__(self, output_path_template, history_file_paths, overwrite=True):
-        self.__output_path_template = output_path_template
+        start = time()
         self.__history_files_paths = history_file_paths
         self.overwrite = overwrite
 
-        full_ds = netCDF4.MFDataset(self.__history_files_paths, check=False, aggdim="time")
+        print("Gathering future MFDataset metadata...", end="")
+        try:
+            full_ds = netCDF4.MFDataset(self.__history_files_paths, check=False, aggdim="time")
+        except KeyError:
+            msg = str(history_file_paths[0].parent) + "/" + str(output_path_template.name) + "*"
+            raise KeyError(f"Variables or dimensions are not consistent for all history files under the following directory and prefix: {msg}")
+        print(" Done.", end="")
         self.__variables = list(full_ds.variables)
         self.__global_attrs = {key: getattr(full_ds, key) for key in full_ds.ncattrs()}
         self.__primary_variables = []
@@ -51,28 +59,26 @@ class TimeSeriesOrder:
                 self.__auxiliary_variables_typecodes.append(full_ds[target_variable].dtype)
                 self.__auxiliary_variables_shapes.append(full_ds[target_variable].shape)
 
-        self.__time_raw = full_ds["time"][:]
         self.__time_units = full_ds["time"].units
         self.__calendar = full_ds["time"].calendar
-        self.__time = cftime.num2date(self.__time_raw, self.__time_units, calendar=self.__calendar)
+        self.__time_start = cftime.num2date(full_ds["time"][0], units=self.__time_units, calendar=self.__calendar)
+        self.__time_end = cftime.num2date(full_ds["time"][-1], units=self.__time_units, calendar=self.__calendar)
+        self.__cftime_step = cftime.num2date(full_ds["time"][1], units=self.__time_units, calendar=self.__calendar) - self.__time_start
         full_ds.close()
 
-        self.__history_file_times = []
-        for path in history_file_paths:
-            ds = netCDF4.Dataset(path)
-            self.__history_file_times.append(ds["time"][:])
-            ds.close()
-
-        self.__time_path_indices = self.indexTimestampsToPaths(self.__history_files_paths, self.__time_raw)
         self.__time_step = self.getTimeStep()
         self.__time_str_format = self.getTimeStrFormat(self.__time_step)
-        self.__history_file_groupings = []
         self.__ts_output_tuples = []
-        self.__chunk_year_length = None
-        self.generateOutputs()
 
+        self.__output_path_template = Path(f"{output_path_template.parent}/{self.__time_step}/{output_path_template.name}")
+        self.__output_path_template.parent.mkdir(parents=True, exist_ok=True)
+
+        print(f" Output Directory Created: {self.getOutputPathTemplate()} ({round(time() - start, 2)}s)")
+        for variable in self.__primary_variables:
+            self.__ts_output_tuples.append((self.__auxiliary_variables + [variable], self.__output_path_template, self.__time_start, self.__time_end, self.__history_files_paths))
+    
     def getOutputPathTemplate(self):
-        return self.__output_path_template
+        return str(self.__output_path_template)
 
     def getPrimaryVariablesTuples(self):
         return self.__primary_variables, self.__primary_variables_dims, self.__primary_variables_attrs, self.__primary_variables_typecodes, self.__primary_variables_shapes
@@ -87,41 +93,7 @@ class TimeSeriesOrder:
         return self.__time_path_indices
 
     def getTimeStrings(self):
-        return self.__time[0].strftime(self.__time_str_format), self.__time[-1].strftime(self.__time_str_format)
-
-    def indexTimestampsToPaths(self, paths, concat_times):
-        index_to_path = []
-        for index in range(len(concat_times)):
-            path_index = None
-            for times in self.__history_file_times:
-                if concat_times[index] in times:
-                    path_index = index
-                    break
-            index_to_path.append(path_index)
-        return index_to_path
-
-    def generateOutputs(self):
-        ts_slices = []
-        yr_start = 0
-        if self.__chunk_year_length is not None:
-            for index in range(len(self.__time)):
-                if self.__time[index].year >= self.__time[yr_start].year + self.__chunk_year_length:
-                    ts_slices.append((yr_start, index))
-                    yr_start = index
-        else:
-            ts_slices.append((0, len(self.__time)))
-
-        input_hist_file_tuples = []
-        for start_index, end_index in ts_slices:
-            path_start_index = self.__time_path_indices[start_index]
-            path_end_index = self.__time_path_indices[end_index-1]
-            input_hist_file_tuples.append((self.__time[start_index], self.__time[end_index-1], self.__history_files_paths[path_start_index:path_end_index]))
-
-        self.__history_file_groupings = input_hist_file_tuples
-
-        for start_time, end_time, paths in input_hist_file_tuples:
-            for variable in self.__primary_variables:
-                self.__ts_output_tuples.append((self.__auxiliary_variables + [variable], self.__output_path_template, start_time, end_time, paths))
+        return self.__time_start.strftime(self.__time_str_format), self.__time_end.strftime(self.__time_str_format)
 
     def getCommandStrings(self):
         cmds = []
@@ -156,15 +128,15 @@ class TimeSeriesOrder:
         return time_str_format
 
     def getTimeStep(self):
-        dt_hrs = (self.__time[1] - self.__time[0]).total_seconds() / 60 / 60
+        dt_hrs = (self.__cftime_step).total_seconds() / 60 / 60
         if dt_hrs >= 24*365:
-            return f"year_{int(dt_hrs / (24*365))}"
-        elif 24*31 >= dt_hrs >= 24*30:
-            return f"month_{int(dt_hrs / (24*30))}"
+            return f"year_{int(np.ceil(dt_hrs / (24*365)))}"
+        elif dt_hrs >= 24*28:
+            return f"month_{int(np.ceil(dt_hrs / (24*30)))}"
         elif dt_hrs >= 24:
-            return f"day_{int(dt_hrs / (24))}"
+            return f"day_{int(np.ceil(dt_hrs / (24)))}"
         else:
-            return f"hour_{int(dt_hrs)}"
+            return f"hour_{int(np.ceil(dt_hrs))}"
 
     def generateTimeseries(self):
         hist_ds = netCDF4.MFDataset(self.getAllHistoryFilePaths(), aggdim="time")
@@ -184,7 +156,7 @@ class TimeSeriesOrder:
             hist_ds[variable].set_auto_scale(False)
             hist_ds[variable].set_always_mask(False)
 
-            variable_ts_output_path = f"{self.getOutputPathTemplate()}.{variable}.{start_timestr}.{end_timestr}.nc"
+            variable_ts_output_path = f"{self.getOutputPathTemplate()}{variable}.{start_timestr}.{end_timestr}.nc"
             if self.overwrite and isfile(variable_ts_output_path):
                 remove(variable_ts_output_path)
 
@@ -315,23 +287,42 @@ class TimeSeriesConfig:
         for parent in parent_directories:
             groups = TimeSeriesConfig.solveForGroupsLeftToRight([path.name for path in parent_directories[parent]])
 
+            conflicts = {}
+
+            for group in groups:
+                for comparable_group in groups:
+                    if group != comparable_group and group in comparable_group:
+                        if group in conflicts:
+                            conflicts[group].append(comparable_group)
+                        else:
+                            conflicts[group] = [comparable_group]
+            
             group_to_history_paths = {group: [] for group in groups}
             for path in parent_directories[parent]:
                 for group in groups:
                     if group in str(path.name):
-                        group_to_history_paths[group].append(path)
+                        if group in conflicts:
+                            conflict = False
+                            for conflict_group in conflicts[group]:
+                                if conflict_group in str(path.name):
+                                    conflict = True
+                                    break
+                            if not conflict:
+                                group_to_history_paths[group].append(path)
+                        else:
+                            group_to_history_paths[group].append(path)
 
             group_output_dir = TimeSeriesConfig.generateReflectiveOutputDirectory(input_head_dir, output_head_dir, parent, swaps=directory_name_swaps)
             for group in group_to_history_paths:
+                if len(group_to_history_paths[group]) <= 1:
+                    print(f"NOTE: Only one history file detected, skipping: '{group_to_history_paths[group]}'")
+                    continue
+                    # Maybe write a single timeseries dataset for each variable in this case?
                 self.ts_order_parameters.append((Path(group_output_dir + "/" + group), group_to_history_paths[group]))
         
         self.ts_orders = []
         for output_dir_path, input_hist_paths in self.ts_order_parameters:
-            if len(input_hist_paths) <= 1:
-                print(f"NOTE: Only one history file detected, skipping: '{input_hist_paths}'")
-                # Maybe write a single timeseries dataset for each variable in this case?
-            output_dir_path.parent.mkdir(parents=True, exist_ok=True)
-            self.ts_orders.append(delayed(TimeSeriesOrder)(output_dir_path, input_hist_paths))
+            self.ts_orders.append(TimeSeriesOrder(output_dir_path, input_hist_paths))
     
     def getOrders(self):
         return self.ts_orders
