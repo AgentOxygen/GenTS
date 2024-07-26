@@ -207,6 +207,19 @@ class TimeSeriesOrder:
 
 class TimeSeriesConfig:
 
+    def generateAllTimeseries(orders):
+        return [delayed(order.generateTimeseries)() for order in orders]
+
+    def generateAllTimeseriesNCO(orders):
+        def execute_ncrcat_cmd(cmd):
+            return subprocess.run([cmd], shell=True)
+
+        cmd_strs = []
+        for order in orders:
+            for cmd_str in order.getCommandStrings():
+                cmd_strs.append(cmd_str)
+        return [delayed(execute_ncrcat_cmd)(cmd_str) for cmd in cmd_strs]
+    
     def getYearFromDataset(path):
         ds = netCDF4.Dataset(path, mode="r")
         if "time" not in ds.dimensions:
@@ -347,7 +360,7 @@ class TimeSeriesConfig:
             slices = []
             last_slice_yr = 0
             for index in range(len(years)):
-                if years[index] % time_slice_size_yrs == 0 and years[index] != last_slice_yr:
+                if years[index] % self.__chunk_size_yrs == 0 and years[index] != last_slice_yr:
                     if len(slices) == 0:
                         slices.append((0, index))
                     else:
@@ -360,34 +373,17 @@ class TimeSeriesConfig:
     def getChunkSizeYrs(self):
         return self.__chunk_size_yrs
     
-    def getOrders(self):
+    def getOrders(self, dask=False):
         self.ts_orders = []
         if self.getChunkSizeYrs() is None:
-            for output_dir_path, input_hist_paths in self.ts_order_parameters_unchunked:
-                self.ts_orders.append(TimeSeriesOrder(output_dir_path, input_hist_paths))
+            parameters = self.ts_order_parameters_unchunked
         else:
-            for output_dir_path, input_hist_paths in self.ts_order_parameters_chunked:
+            parameters = self.ts_order_parameters_chunked
+
+        for output_dir_path, input_hist_paths in parameters:
+            if dask:
+                self.ts_orders.append(delayed(TimeSeriesOrder)(output_dir_path, input_hist_paths))
+            else:
                 self.ts_orders.append(TimeSeriesOrder(output_dir_path, input_hist_paths))
         
         return self.ts_orders
-    
-    def generateAllTimeseries(self, orders):
-        return [delayed(order.generateTimeseries)() for order in orders]
-
-    def generateAllTimeseriesNCO(self, orders):
-        def execute_ncrcat_cmd(cmd):
-            return subprocess.run([cmd], shell=True)
-
-        cmd_strs = []
-        for order in orders:
-            for cmd_str in order.getCommandStrings():
-                cmd_strs.append(cmd_str)
-        return [delayed(execute_ncrcat_cmd)(cmd_str) for cmd in cmd_strs]
-
-config_gen = TimeSeriesConfig(
-    "/glade/derecho/scratch/nanr/archive/b.e21.B1850cmip6.f09_g17.DAMIP-ssp245-vlc.001/",
-    "/glade/derecho/scratch/ccummins/ts_output/b.e21.B1850cmip6.f09_g17.DAMIP-ssp245-vlc.001/",
-    directory_name_swaps={
-        "hist": "proc/tseries"
-    },
-    file_name_exclusions=[".once.nc"])
