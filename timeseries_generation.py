@@ -256,7 +256,7 @@ class TimeSeriesConfig:
         return groups
 
     
-    def __init__(self, input_head_dir, output_head_dir, directory_name_swaps={}, file_name_exclusions=[], directory_name_exclusions=["rest", "logs"]):
+    def __init__(self, input_head_dir, output_head_dir, directory_name_swaps={}, file_name_exclusions=[], directory_name_exclusions=["rest", "logs"], time_slice_size_yrs=None):
         input_head_dir = Path(input_head_dir)
         output_head_dir = Path(output_head_dir)
 
@@ -283,7 +283,7 @@ class TimeSeriesConfig:
             else:
                 parent_directories[path.parent] = [path]
 
-        self.ts_order_parameters = []
+        ts_order_parameters_unsliced = []
         for parent in parent_directories:
             groups = TimeSeriesConfig.solveForGroupsLeftToRight([path.name for path in parent_directories[parent]])
 
@@ -318,7 +318,37 @@ class TimeSeriesConfig:
                     print(f"NOTE: Only one history file detected, skipping: '{group_to_history_paths[group]}'")
                     continue
                     # Maybe write a single timeseries dataset for each variable in this case?
-                self.ts_order_parameters.append((Path(group_output_dir + "/" + group), group_to_history_paths[group]))
+                ts_order_parameters_unsliced.append((Path(group_output_dir + "/" + group), group_to_history_paths[group]))
+
+        self.ts_order_parameters = []
+        if time_slice_size_yrs is None:
+            self.ts_order_parameters = ts_order_parameters_unsliced
+        else:
+            for output_dir_path, paths in ts_order_parameters_unsliced:
+                times = []
+                calendar = None
+                units = None
+                for path in paths:
+                    ds = netCDF4.Dataset(path, mode="r", keepweakref=True)
+                    if calendar is None or units is None:
+                        calendar = ds["time"].calendar
+                        units = ds["time"].units
+                    times.append(ds["time"][0])
+                    ds.close()
+                years = [ts.year for ts in cftime.num2date(times, units=units, calendar=calendar)]
+            
+                slices = []
+                last_slice_yr = 0
+                for index in range(len(years)):
+                    if years[index] % time_slice_size_yrs == 0 and years[index] != last_slice_yr:
+                        if len(slices) == 0:
+                            slices.append((0, index))
+                        else:
+                            slices.append((slices[-1][1], index))
+                        last_slice_yr = years[index]
+            
+                for start, end in slices:
+                    self.ts_order_parameters.append((output_dir_path, paths[start:end]))
         
         self.ts_orders = []
         for output_dir_path, input_hist_paths in self.ts_order_parameters:
