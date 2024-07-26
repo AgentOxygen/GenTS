@@ -207,6 +207,12 @@ class TimeSeriesOrder:
 
 class TimeSeriesConfig:
 
+    def getYearFromDataset(path):
+        ds = netCDF4.Dataset(path, mode="r")
+        if "time" not in ds.dimensions:
+            raise KeyError(f"'time' dimension not found in dataset: {path}")
+        return [path, cftime.num2date(ds["time"][0], units=ds["time"].units, calendar=ds["time"].calendar).year]
+    
     def generateReflectiveOutputDirectory(input_head, output_head, parent_dir, swaps={}):
         raw_sub_dir = str(parent_dir).split(str(input_head))[-1]
     
@@ -256,11 +262,11 @@ class TimeSeriesConfig:
         return groups
 
     
-    def __init__(self, input_head_dir, output_head_dir, directory_name_swaps={}, file_name_exclusions=[], directory_name_exclusions=["rest", "logs"], time_slice_size_yrs=None):
+    def __init__(self, input_head_dir, output_head_dir, directory_name_swaps={}, file_name_exclusions=[], directory_name_exclusions=["rest", "logs"]):
         input_head_dir = Path(input_head_dir)
         output_head_dir = Path(output_head_dir)
 
-        netcdf_paths = []
+        self.__netcdf_paths = []
         for path in sorted(input_head_dir.rglob("*.nc")):
             exclude = False
             for exclusion in file_name_exclusions:
@@ -274,16 +280,19 @@ class TimeSeriesConfig:
                     exclude = True
 
             if not exclude:
-                netcdf_paths.append(path)
+                self.__netcdf_paths.append(path)
 
         parent_directories = {}
-        for path in netcdf_paths:
+        for path in self.__netcdf_paths:
             if path.parent in parent_directories:
                 parent_directories[path.parent].append(path)
             else:
                 parent_directories[path.parent] = [path]
 
-        ts_order_parameters_unsliced = []
+        self.ts_order_parameters_unchunked = []
+        self.ts_order_parameters_chunked = None
+        self.__paths_to_years = None
+        self.__chunk_size_yrs = None
         for parent in parent_directories:
             groups = TimeSeriesConfig.solveForGroupsLeftToRight([path.name for path in parent_directories[parent]])
 
@@ -318,43 +327,48 @@ class TimeSeriesConfig:
                     print(f"NOTE: Only one history file detected, skipping: '{group_to_history_paths[group]}'")
                     continue
                     # Maybe write a single timeseries dataset for each variable in this case?
-                ts_order_parameters_unsliced.append((Path(group_output_dir + "/" + group), group_to_history_paths[group]))
+                self.ts_order_parameters_unchunked.append((Path(group_output_dir + "/" + group), group_to_history_paths[group]))
 
-        self.ts_order_parameters = []
-        if time_slice_size_yrs is None:
-            self.ts_order_parameters = ts_order_parameters_unsliced
-        else:
-            for output_dir_path, paths in ts_order_parameters_unsliced:
-                times = []
-                calendar = None
-                units = None
-                for path in paths:
-                    ds = netCDF4.Dataset(path, mode="r", keepweakref=True)
-                    if calendar is None or units is None:
-                        calendar = ds["time"].calendar
-                        units = ds["time"].units
-                    times.append(ds["time"][0])
-                    ds.close()
-                years = [ts.year for ts in cftime.num2date(times, units=units, calendar=calendar)]
+    def mapHistoryFileTimestampYears(self, paths_years):
+        self.__paths_to_years = {path: year for path, year in paths_years}
+
+    def getHistoryFileYears(self):
+        return [delayed(TimeSeriesConfig.getYearFromDataset)(path) for path in self.__netcdf_paths]
+    
+    def chunkOutputByYear(self, chunk_size_years):
+        self.__chunk_size_yrs = chunk_size_years
+        if self.__paths_to_years is None:
+            self.mapHistoryFileTimestampYears([TimeSeriesConfig.getYearFromDataset(path) for path in self.__netcdf_paths])
+
+        self.ts_order_parameters_chunked = []
+        for output_dir_path, paths in self.ts_order_parameters_unchunked:
+            years = [self.__paths_to_years[path] for path in paths]
             
-                slices = []
-                last_slice_yr = 0
-                for index in range(len(years)):
-                    if years[index] % time_slice_size_yrs == 0 and years[index] != last_slice_yr:
-                        if len(slices) == 0:
-                            slices.append((0, index))
-                        else:
-                            slices.append((slices[-1][1], index))
-                        last_slice_yr = years[index]
-            
-                for start, end in slices:
-                    self.ts_order_parameters.append((output_dir_path, paths[start:end]))
+            slices = []
+            last_slice_yr = 0
+            for index in range(len(years)):
+                if years[index] % time_slice_size_yrs == 0 and years[index] != last_slice_yr:
+                    if len(slices) == 0:
+                        slices.append((0, index))
+                    else:
+                        slices.append((slices[-1][1], index))
+                    last_slice_yr = years[index]
         
-        self.ts_orders = []
-        for output_dir_path, input_hist_paths in self.ts_order_parameters:
-            self.ts_orders.append(TimeSeriesOrder(output_dir_path, input_hist_paths))
+            for start, end in slices:
+                self.ts_order_parameters_chunked.append((output_dir_path, paths[start:end]))
+    
+    def getChunkSizeYrs(self):
+        return self.__chunk_size_yrs
     
     def getOrders(self):
+        self.ts_orders = []
+        if self.getChunkSizeYrs() is None:
+            for output_dir_path, input_hist_paths in self.ts_order_parameters_unchunked:
+                self.ts_orders.append(TimeSeriesOrder(output_dir_path, input_hist_paths))
+        else:
+            for output_dir_path, input_hist_paths in self.ts_order_parameters_chunked:
+                self.ts_orders.append(TimeSeriesOrder(output_dir_path, input_hist_paths))
+        
         return self.ts_orders
     
     def generateAllTimeseries(self, orders):
@@ -369,3 +383,11 @@ class TimeSeriesConfig:
             for cmd_str in order.getCommandStrings():
                 cmd_strs.append(cmd_str)
         return [delayed(execute_ncrcat_cmd)(cmd_str) for cmd in cmd_strs]
+
+config_gen = TimeSeriesConfig(
+    "/glade/derecho/scratch/nanr/archive/b.e21.B1850cmip6.f09_g17.DAMIP-ssp245-vlc.001/",
+    "/glade/derecho/scratch/ccummins/ts_output/b.e21.B1850cmip6.f09_g17.DAMIP-ssp245-vlc.001/",
+    directory_name_swaps={
+        "hist": "proc/tseries"
+    },
+    file_name_exclusions=[".once.nc"])
