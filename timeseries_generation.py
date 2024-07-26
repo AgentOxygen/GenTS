@@ -132,7 +132,7 @@ class TimeSeriesOrder:
         if dt_hrs >= 24*365:
             return f"year_{int(np.ceil(dt_hrs / (24*365)))}"
         elif dt_hrs >= 24*28:
-            return f"month_{int(np.ceil(dt_hrs / (24*30)))}"
+            return f"month_{int(np.ceil(dt_hrs / (24*31)))}"
         elif dt_hrs >= 24:
             return f"day_{int(np.ceil(dt_hrs / (24)))}"
         else:
