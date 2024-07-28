@@ -157,8 +157,23 @@ class TimeSeriesOrder:
             hist_ds[variable].set_always_mask(False)
 
             variable_ts_output_path = f"{self.getOutputPathTemplate()}{variable}.{start_timestr}.{end_timestr}.nc"
-            if self.overwrite and isfile(variable_ts_output_path):
-                remove(variable_ts_output_path)
+            if isfile(variable_ts_output_path):
+                try:
+                    tmp_ds = netCDF4.Dataset(variable_ts_output_path, mode="r")
+                    assert "time" in tmp_ds.variables
+                    assert variable in tmp_ds.variables
+                    assert tmp_ds["time"].shape == hist_ds["time"].shape
+                    assert tmp_ds[variable].shape == hist_ds[variable].shape
+                    for aux_variable in self.__auxiliary_variables:
+                        assert aux_variable in tmp_ds.variables
+                    tmp_ds.close()
+                except AssertionError:
+                    self.overwrite = True
+
+                if self.overwrite:
+                    remove(variable_ts_output_path)
+                else:
+                    continue
 
             paths.append(variable_ts_output_path)
             ts_ds = netCDF4.Dataset(variable_ts_output_path,
@@ -358,7 +373,7 @@ class TimeSeriesConfig:
             years = [self.__paths_to_years[path] for path in paths]
             
             slices = []
-            last_slice_yr = 0
+            last_slice_yr = years[0]
             for index in range(len(years)):
                 if years[index] % self.__chunk_size_yrs == 0 and years[index] != last_slice_yr:
                     if len(slices) == 0:
