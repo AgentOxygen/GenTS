@@ -3,8 +3,9 @@ from pathlib import Path
 from dask import delayed
 import netCDF4
 import cftime
-from os.path import isfile
+from os.path import isfile, getsize
 from os import remove, listdir
+from shutil import move
 from time import time
 import dask.distributed
 from os import rmdir
@@ -116,6 +117,7 @@ def getHistoryFileMetaData(hs_file_path):
     meta = {}
     ds = netCDF4.Dataset(hs_file_path, mode="r")
 
+    meta["file_size"] = getsize(hs_file_path)
     meta["variables"] = list(ds.variables)
     meta["global_attrs"] = {key: getattr(ds, key) for key in ds.ncattrs()}
     meta["variable_meta"] = {}
@@ -148,7 +150,7 @@ def getHistoryFileMetaData(hs_file_path):
     return meta
 
 
-def expandDataset(input_ds_path, output_ds_dir, suffix="", overwrite=False):
+def expandDataset(input_ds_path, output_ds_dir, suffix="", overwrite=False, local_storage=None):
     ds = netCDF4.Dataset(input_ds_path, mode="r")
     ds.set_auto_mask(False)
     ds.set_auto_scale(False)
@@ -156,6 +158,7 @@ def expandDataset(input_ds_path, output_ds_dir, suffix="", overwrite=False):
 
     global_attrs = {key: getattr(ds, key) for key in ds.ncattrs()}
     output_paths = []
+    local_paths = []
 
     for target_variable in ds.variables:
         if target_variable == "time":
@@ -170,7 +173,13 @@ def expandDataset(input_ds_path, output_ds_dir, suffix="", overwrite=False):
             else:
                 continue
 
-        ts_ds = netCDF4.Dataset(output_path, format="NETCDF3_CLASSIC", mode="w")
+        if local_storage is None:
+            ts_ds = netCDF4.Dataset(output_path, format="NETCDF3_CLASSIC", mode="w")
+        else:
+            local_path = local_storage / f"{target_variable}{suffix}.nc"
+            ts_ds = netCDF4.Dataset(local_path, format="NETCDF3_CLASSIC", mode="w")
+            local_paths.append((local_path, output_path))
+
         ts_ds.setncatts(global_attrs)
 
         for variable in ["time", target_variable]:
@@ -193,13 +202,21 @@ def expandDataset(input_ds_path, output_ds_dir, suffix="", overwrite=False):
                     attrs[key] = ds[variable].getncattr(key)
             ts_ds[variable].setncatts(attrs)
 
+            # if len(ds[variable].shape) > 0:
+            #     time_chunk_size = 1
+            #     for i in range(0, ds[variable].shape[0], time_chunk_size):
+            #         if i + time_chunk_size > ds[variable].shape[0]:
+            #             time_chunk_size = ds[variable].shape[0] - i
+            #         var_data[i:i + time_chunk_size] = ds[variable][i:i + time_chunk_size]
             if len(ds[variable].shape) > 0:
-                time_chunk_size = 1
-                for i in range(0, ds[variable].shape[0], time_chunk_size):
-                    if i + time_chunk_size > ds[variable].shape[0]:
-                        time_chunk_size = ds[variable].shape[0] - i
-                    var_data[i:i + time_chunk_size] = ds[variable][i:i + time_chunk_size]
+                var_data[:] = ds[variable][:]
         ts_ds.close()
+
+    if local_storage is not None:
+        for local_path, output_path in local_paths:
+            move(local_path, output_path)
+            if isfile(local_path):
+                remove(local_path)
     return output_paths
 
 
@@ -335,9 +352,14 @@ def addAuxiliaryVariables(auxiliary_paths, primary_paths, delete_auxiliary_conca
 
 
 class ModelOutputDatabase:
-    def __init__(self, hf_head_dir, ts_head_dir, dir_name_swaps={}, file_exclusions=[], dir_exclusions=["rest", "logs"]):
+    def __init__(self, hf_head_dir, ts_head_dir, dir_name_swaps={}, file_exclusions=[], dir_exclusions=["rest", "logs"], local_storage=None):
         self.__hf_head_dir = Path(hf_head_dir)
         self.__ts_head_dir = Path(ts_head_dir)
+        if local_storage is None:
+            self.__local_storage = None
+        else:
+            self.__local_storage = Path(local_storage)
+        self.__total_size = 0
 
         self.__history_file_paths = []
         for path in sorted(self.__hf_head_dir.rglob("*.nc")):
@@ -354,11 +376,13 @@ class ModelOutputDatabase:
 
             if not exclude:
                 self.__history_file_paths.append(path)
-
         self.__timeseries_group_paths = generateTimeSeriesGroupPaths(self.__history_file_paths, hf_head_dir, ts_head_dir, dir_name_swaps=dir_name_swaps)
 
     def getHistoryFileMetaData(self, history_file_path):
         return self.__history_file_metas[history_file_path]
+
+    def getTotalFileSize(self):
+        return self.__total_size
 
     def getTimeSeriesGroups(self):
         return self.__timeseries_group_paths
@@ -380,7 +404,10 @@ class ModelOutputDatabase:
                 break
 
         times.sort()
-        return (times[1] - times[0]).total_seconds() / 60 / 60
+        if len(times) == 1:
+            return 0
+        else:
+            return (times[1] - times[0]).total_seconds() / 60 / 60
 
     def getTimeStepStr(self, hf_paths):
         if "time_period_freq" in self.__history_file_metas[hf_paths[0]]["global_attrs"]:
@@ -429,6 +456,9 @@ class ModelOutputDatabase:
             new_timeseries_group_paths[new_path_template] = hs_file_paths
         self.__timeseries_group_paths = new_timeseries_group_paths
 
+        for meta in metas:
+            self.__total_size += meta["file_size"]
+
     def run_serial(self):
         pass
 
@@ -444,19 +474,25 @@ class ModelOutputDatabase:
         timestep_output_dirs = []
         suffixes = []
         overwrites = []
+        local_storages = []
         for template_path in self.__timeseries_group_paths:
             timestep_strfrmt = self.getTimeStepStrFormat(template_path.parent.name)
             for hf_path in self.__timeseries_group_paths[template_path]:
                 hf_paths.append(hf_path)
                 overwrites.append(overwrite_expands)
+                local_storages.append(self.__local_storage)
                 timestep_output_dirs.append(template_path)
                 time = self.getHistoryFileMetaData(hf_path)["time"][0]
                 if time is None:
                     suffixes.append(".None")
                 else:
                     suffixes.append("." + time.strftime(timestep_strfrmt))
-        expand_futures = client.map(expandDataset, hf_paths, timestep_output_dirs, suffixes, overwrites)
+        expand_futures = client.map(expandDataset, hf_paths, timestep_output_dirs, suffixes, overwrites, local_storages)
         expanded_paths_grouped = client.gather(expand_futures)
+        # expanded_paths_grouped = []
+        # for future in expand_futures:
+        #     expanded_paths_grouped.append(future.result())
+        #     future.release()
 
         expanded_to_hf_map = {}
         timestep_variable_map = {}
