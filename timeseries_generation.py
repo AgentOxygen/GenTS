@@ -3,12 +3,10 @@ from pathlib import Path
 from dask import delayed
 import netCDF4
 import cftime
-from os.path import isfile, getsize
-from os import remove, listdir
-from shutil import move
 from time import time
+from os.path import isfile, getsize
+from os import remove
 import dask.distributed
-from os import rmdir
 
 
 def generateReflectiveOutputDirectory(input_head, output_head, parent_dir, swaps={}):
@@ -150,215 +148,131 @@ def getHistoryFileMetaData(hs_file_path):
     return meta
 
 
-def expandDataset(input_ds_path, output_ds_dir, suffix="", overwrite=False, local_storage=None):
-    ds = netCDF4.Dataset(input_ds_path, mode="r")
-    ds.set_auto_mask(False)
-    ds.set_auto_scale(False)
-    ds.set_always_mask(False)
-
-    global_attrs = {key: getattr(ds, key) for key in ds.ncattrs()}
-    output_paths = []
-    local_paths = []
-
-    for target_variable in ds.variables:
-        if target_variable == "time":
-            continue
-
-        output_path = output_ds_dir / target_variable / f"{target_variable}{suffix}.nc"
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_paths.append(output_path)
-        if isfile(output_path):
-            if overwrite:
-                remove(output_path)
+def getYearSlices(years, slice_length):
+    slices = []
+    last_slice_yr = years[0]
+    for index in range(len(years)):
+        if years[index] % slice_length == 0 and years[index] != last_slice_yr:
+            if len(slices) == 0:
+                slices.append((0, index))
             else:
-                continue
-
-        if local_storage is None:
-            ts_ds = netCDF4.Dataset(output_path, format="NETCDF3_CLASSIC", mode="w")
-        else:
-            local_path = local_storage / f"{target_variable}{suffix}.nc"
-            ts_ds = netCDF4.Dataset(local_path, format="NETCDF3_CLASSIC", mode="w")
-            local_paths.append((local_path, output_path))
-
-        ts_ds.setncatts(global_attrs)
-
-        for variable in ["time", target_variable]:
-            for dim_index, dim in enumerate(ds[variable].dimensions):
-                if dim not in ts_ds.dimensions:
-                    if dim == "time":
-                        ts_ds.createDimension(dim, None)
-                    else:
-                        ts_ds.createDimension(dim, ds[variable].shape[dim_index])
-            var_data = ts_ds.createVariable(variable, ds[variable].dtype, ds[variable].dimensions)
-            var_data.set_auto_mask(False)
-            var_data.set_auto_scale(False)
-            var_data.set_always_mask(False)
-
-            attrs = {}
-            for key in ds[variable].ncattrs():
-                if type(ds[variable]) is netCDF4._netCDF4._Variable:
-                    attrs[key] = ds[variable].__getattr__(key)
-                else:
-                    attrs[key] = ds[variable].getncattr(key)
-            ts_ds[variable].setncatts(attrs)
-
-            # if len(ds[variable].shape) > 0:
-            #     time_chunk_size = 1
-            #     for i in range(0, ds[variable].shape[0], time_chunk_size):
-            #         if i + time_chunk_size > ds[variable].shape[0]:
-            #             time_chunk_size = ds[variable].shape[0] - i
-            #         var_data[i:i + time_chunk_size] = ds[variable][i:i + time_chunk_size]
-            if len(ds[variable].shape) > 0:
-                var_data[:] = ds[variable][:]
-        ts_ds.close()
-
-    if local_storage is not None:
-        for local_path, output_path in local_paths:
-            move(local_path, output_path)
-            if isfile(local_path):
-                remove(local_path)
-    return output_paths
+                slices.append((slices[-1][1], index))
+            last_slice_yr = years[index]
+    if len(slices) == 0:
+        slices.append((0, index + 1))
+    elif slices[-1][1] != index + 1:
+        slices.append((slices[-1][1], index + 1))
+    return slices
 
 
-def concatenateSingleVariableDatasets(timestep_dataset_paths, output_template, time_str_format, overwrite=False, delete_timesteps=True):
+def generateTimeSeries(output_template, hf_paths, metadata, time_str_format, overwrite=False, debug_timing=False):
+    debug_start_time = time()
     output_template.parent.mkdir(parents=True, exist_ok=True)
 
-    concat_ds = netCDF4.MFDataset(timestep_dataset_paths)
-    concat_ds.set_auto_mask(False)
-    concat_ds.set_auto_scale(False)
-    concat_ds.set_always_mask(False)
+    auxiliary_ds = netCDF4.MFDataset(hf_paths, aggdim="time", exclude=metadata["primary_variables"])
+    auxiliary_ds.set_auto_mask(False)
+    auxiliary_ds.set_auto_scale(False)
+    auxiliary_ds.set_always_mask(False)
 
-    variables = list(concat_ds.variables)
-    time_start_str = cftime.num2date(concat_ds["time"][0], units=concat_ds["time"].units, calendar=concat_ds["time"].calendar).strftime(time_str_format)
-    time_end_str = cftime.num2date(concat_ds["time"][-1], units=concat_ds["time"].units, calendar=concat_ds["time"].calendar).strftime(time_str_format)
+    time_start_str = cftime.num2date(auxiliary_ds["time"][0],
+                                     units=auxiliary_ds["time"].units,
+                                     calendar=auxiliary_ds["time"].calendar).strftime(time_str_format)
+    time_end_str = cftime.num2date(auxiliary_ds["time"][-1],
+                                   units=auxiliary_ds["time"].units,
+                                   calendar=auxiliary_ds["time"].calendar).strftime(time_str_format)
 
-    target_variable = "time"
-    for variable in variables:
-        if variable != "time":
-            target_variable = variable
-            break
+    auxiliary_variable_data = {}
+    for auxiliary_var in metadata["auxiliary_variables"]:
+        attrs = {}
+        for key in auxiliary_ds[auxiliary_var].ncattrs():
+            if type(auxiliary_ds[auxiliary_var]) is netCDF4._netCDF4._Variable:
+                attrs[key] = auxiliary_ds[auxiliary_var].__getattr__(key)
+            else:
+                attrs[key] = auxiliary_ds[auxiliary_var].getncattr(key)
+        auxiliary_variable_data[auxiliary_var] = {
+            "attrs": attrs,
+            "dimensions": auxiliary_ds[auxiliary_var].dimensions,
+            "shape": auxiliary_ds[auxiliary_var].shape,
+            "dtype": auxiliary_ds[auxiliary_var].dtype,
+            "data": auxiliary_ds[auxiliary_var][:],
+        }
+    auxiliary_ds.close()
 
-    output_dataset_path = output_template.parent / f"{output_template.name}{target_variable}.{time_start_str}.{time_end_str}.nc"
-    if isfile(output_dataset_path):
-        if overwrite:
-            remove(output_dataset_path)
-        else:
-            return (target_variable, output_dataset_path)
+    primary_ds = netCDF4.MFDataset(hf_paths, aggdim="time", exclude=metadata["auxiliary_variables"])
+    primary_ds.set_auto_mask(False)
+    primary_ds.set_auto_scale(False)
+    primary_ds.set_always_mask(False)
 
-    ts_ds = netCDF4.Dataset(output_dataset_path, mode="w")
-    ts_ds.setncatts({key: getattr(concat_ds, key) for key in concat_ds.ncattrs()})
-
-    for variable in variables:
-        for dim_index, dim in enumerate(concat_ds[variable].dimensions):
+    ts_paths = []
+    for primary_var in metadata["primary_variables"]:
+        ts_path = output_template.parent / f"{output_template.name}{primary_var}.{time_start_str}.{time_end_str}.nc"
+        ts_paths.append(ts_path)
+        if isfile(ts_path) and not overwrite:
+            continue
+        elif isfile(ts_path) and overwrite:
+            remove(ts_path)
+        ts_ds = netCDF4.Dataset(ts_path, mode="w")
+        for dim_index, dim in enumerate(primary_ds[primary_var].dimensions):
             if dim not in ts_ds.dimensions:
                 if dim == "time":
                     ts_ds.createDimension(dim, None)
                 else:
-                    ts_ds.createDimension(dim, concat_ds[variable].shape[dim_index])
+                    ts_ds.createDimension(dim, primary_ds[primary_var].shape[dim_index])
 
-        var_data = ts_ds.createVariable(variable, concat_ds[variable].dtype, concat_ds[variable].dimensions)
-
+        var_data = ts_ds.createVariable(primary_var,
+                                        primary_ds[primary_var].dtype,
+                                        primary_ds[primary_var].dimensions)
         var_data.set_auto_mask(False)
         var_data.set_auto_scale(False)
         var_data.set_always_mask(False)
 
         attrs = {}
-        if type(concat_ds[variable]) is netCDF4._netCDF4._Variable:
-            for key in concat_ds[variable].ncattrs():
-                attrs[key] = concat_ds[variable].__getattr__(key)
+        if type(primary_ds[primary_var]) is netCDF4._netCDF4._Variable:
+            for key in primary_ds[primary_var].ncattrs():
+                attrs[key] = primary_ds[primary_var].__getattr__(key)
         else:
-            for key in concat_ds[variable].ncattrs():
-                attrs[key] = concat_ds[variable].getncattr(key)
+            for key in primary_ds[primary_var].ncattrs():
+                attrs[key] = primary_ds[primary_var].getncattr(key)
 
-        ts_ds[variable].setncatts(attrs)
+        ts_ds[primary_var].setncatts(attrs)
+
 
         time_chunk_size = 1
-        if len(concat_ds[variable].shape) > 0:
-            for i in range(0, concat_ds[variable].shape[0], time_chunk_size):
-                if i + time_chunk_size > concat_ds[variable].shape[0]:
-                    time_chunk_size = concat_ds[variable].shape[0] - i
-                var_data[i:i + time_chunk_size] = concat_ds[variable][i:i + time_chunk_size]
-    ts_ds.close()
-    concat_ds.close()
+        if len(primary_ds[primary_var].shape) > 0 and "time" in primary_ds[primary_var].dimensions:
+            for i in range(0, primary_ds[primary_var].shape[0], time_chunk_size):
+                if i + time_chunk_size > primary_ds[primary_var].shape[0]:
+                    time_chunk_size = primary_ds[primary_var].shape[0] - i
+                var_data[i:i + time_chunk_size] = primary_ds[primary_var][i:i + time_chunk_size]
+        else:
+            var_data[:] = primary_ds[primary_var][:]
 
-    if delete_timesteps:
-        for path in timestep_dataset_paths:
-            remove(path)
+        for auxiliary_var in auxiliary_variable_data:
+            for dim_index, dim in enumerate(auxiliary_variable_data[auxiliary_var]["dimensions"]):
+                if dim not in ts_ds.dimensions:
+                    ts_ds.createDimension(dim, auxiliary_variable_data[auxiliary_var]["shape"][dim_index])
+            aux_var_data = ts_ds.createVariable(auxiliary_var,
+                                                auxiliary_variable_data[auxiliary_var]["dtype"],
+                                                auxiliary_variable_data[auxiliary_var]["dimensions"])
+            aux_var_data.set_auto_mask(False)
+            aux_var_data.set_auto_scale(False)
+            aux_var_data.set_always_mask(False)
+            ts_ds[auxiliary_var].setncatts(auxiliary_variable_data[auxiliary_var]["attrs"])
 
-    return (target_variable, output_dataset_path)
+            aux_var_data[:] = auxiliary_variable_data[auxiliary_var]["data"]
 
+        ts_ds.setncatts({key: getattr(primary_ds, key) for key in primary_ds.ncattrs()})
+        ts_ds.close()
 
-def addAuxiliaryVariables(auxiliary_paths, primary_paths, delete_auxiliary_concats=True):
-    aux_dims = []
-    aux_dim_shapes = []
-
-    aux_variables = []
-    aux_variable_dims = []
-    aux_dtypes = []
-    aux_attrs = []
-    aux_data = []
-    for path in auxiliary_paths:
-        aux_ds = netCDF4.Dataset(path, mode="r")
-        aux_ds.set_auto_mask(False)
-        aux_ds.set_auto_scale(False)
-        aux_ds.set_always_mask(False)
-
-        for variable in aux_ds.variables:
-            if variable == "time":
-                continue
-
-            for dim_index, dim in enumerate(aux_ds[variable].dimensions):
-                if dim not in aux_dims and dim != "time":
-                    aux_dims.append(dim)
-                    aux_dim_shapes.append(aux_ds[variable].shape[dim_index])
-
-        if variable not in aux_variables:
-            aux_variables.append(variable)
-            aux_variable_dims.append(aux_ds[variable].dimensions)
-            aux_dtypes.append(aux_ds[variable].dtype)
-
-            attrs = {}
-            if type(aux_ds[variable]) is netCDF4._netCDF4._Variable:
-                for key in aux_ds[variable].ncattrs():
-                    attrs[key] = aux_ds[variable].__getattr__(key)
-            else:
-                for key in aux_ds[variable].ncattrs():
-                    attrs[key] = aux_ds[variable].getncattr(key)
-            aux_attrs.append(attrs)
-            aux_data.append(aux_ds[variable][:])
-        aux_ds.close()
-
-    for path in primary_paths:
-        primary_ds = netCDF4.Dataset(path, mode="a")
-        for dim_index, dim in enumerate(aux_dims):
-            if dim not in primary_ds.dimensions:
-                primary_ds.createDimension(dim, aux_dim_shapes[dim_index])
-
-        for var_index, variable in enumerate(aux_variables):
-            if variable not in primary_ds.variables:
-                var_data = primary_ds.createVariable(variable, aux_dtypes[var_index], aux_variable_dims[var_index])
-
-                var_data.set_auto_mask(False)
-                var_data.set_auto_scale(False)
-                var_data.set_always_mask(False)
-                primary_ds[variable].setncatts(aux_attrs[var_index])
-                var_data[:] = aux_data[var_index]
-        primary_ds.close()
-
-    if delete_auxiliary_concats:
-        for path in auxiliary_paths:
-            remove(path)
-    return primary_paths
+    if debug_timing:
+        return (time() - debug_start_time, ts_paths)
+    else:
+        return ts_paths
 
 
 class ModelOutputDatabase:
-    def __init__(self, hf_head_dir, ts_head_dir, dir_name_swaps={}, file_exclusions=[], dir_exclusions=["rest", "logs"], local_storage=None):
+    def __init__(self, hf_head_dir, ts_head_dir, dir_name_swaps={}, file_exclusions=[], dir_exclusions=["rest", "logs"]):
         self.__hf_head_dir = Path(hf_head_dir)
         self.__ts_head_dir = Path(ts_head_dir)
-        if local_storage is None:
-            self.__local_storage = None
-        else:
-            self.__local_storage = Path(local_storage)
         self.__total_size = 0
 
         self.__history_file_paths = []
@@ -414,7 +328,7 @@ class ModelOutputDatabase:
             return self.__history_file_metas[hf_paths[0]]["global_attrs"]["time_period_freq"]
 
         dt_hrs = self.getTimeStepHours(hf_paths)
-        if dt_hrs >= 24*365:
+        if dt_hrs >= 24*364:
             return f"year_{int(np.ceil(dt_hrs / (24*365)))}"
         elif dt_hrs >= 24*28:
             return f"month_{int(np.ceil(dt_hrs / (24*31)))}"
@@ -459,104 +373,28 @@ class ModelOutputDatabase:
         for meta in metas:
             self.__total_size += meta["file_size"]
 
-    def run_serial(self):
-        pass
-
-    def run(self, client=None, overwrite_expands=False):
+    def run(self, client=None, timeseries_year_length=10, overwrite=False, serial=False):
         if client is None:
             client = dask.distributed.client._get_global_client()
 
-        if client is None:
-            self.run_serial()
-            return None
-
-        hf_paths = []
-        timestep_output_dirs = []
-        suffixes = []
-        overwrites = []
-        local_storages = []
-        for template_path in self.__timeseries_group_paths:
-            timestep_strfrmt = self.getTimeStepStrFormat(template_path.parent.name)
-            for hf_path in self.__timeseries_group_paths[template_path]:
-                hf_paths.append(hf_path)
-                overwrites.append(overwrite_expands)
-                local_storages.append(self.__local_storage)
-                timestep_output_dirs.append(template_path)
-                time = self.getHistoryFileMetaData(hf_path)["time"][0]
-                if time is None:
-                    suffixes.append(".None")
-                else:
-                    suffixes.append("." + time.strftime(timestep_strfrmt))
-        expand_futures = client.map(expandDataset, hf_paths, timestep_output_dirs, suffixes, overwrites, local_storages)
-        expanded_paths_grouped = client.gather(expand_futures)
-        # expanded_paths_grouped = []
-        # for future in expand_futures:
-        #     expanded_paths_grouped.append(future.result())
-        #     future.release()
-
-        expanded_to_hf_map = {}
-        timestep_variable_map = {}
-
-        for timestep_dir in timestep_output_dirs:
-            timestep_variable_map[timestep_dir] = {}
-
-        for index, group in enumerate(expanded_paths_grouped):
-            for path in group:
-                expanded_to_hf_map[path] = hf_paths[index]
-                timestep_dir = path.parent.parent
-                if path.parent not in timestep_variable_map[timestep_dir]:
-                    timestep_variable_map[timestep_dir][path.parent] = [path]
-                else:
-                    timestep_variable_map[timestep_dir][path.parent].append(path)
-
-        concat_output_templates = []
-        concat_input_sets = []
-        concat_timestep_st_formats = []
-        overwrites = []
-        for output_template in timestep_variable_map:
-            for variable_path in timestep_variable_map[output_template]:
-                concat_output_templates.append(output_template)
-                concat_input_sets.append(timestep_variable_map[output_template][variable_path])
-                concat_timestep_st_formats.append(self.getTimeStepStrFormat(variable_path.parent.parent.name))
-                overwrites.append(overwrite_expands)
-
-        concat_futures = client.map(concatenateSingleVariableDatasets,
-                                    concat_input_sets,
-                                    concat_output_templates,
-                                    concat_timestep_st_formats,
-                                    overwrites)
-        concatd_tuples = client.gather(concat_futures)
-
-        template_metadata = {}
-        for template in self.getTimeSeriesGroups():
-            hf_metadata = self.getHistoryFileMetaData(self.getTimeSeriesGroups()[template][0])
-            template_metadata[template] = {
-                "primary_variables": hf_metadata["primary_variables"],
-                "primary_paths": [],
-                "auxiliary_paths": []
-            }
-
-        for index in range(len(concatd_tuples)):
-            variable, concat_path = concatd_tuples[index]
-            template = concat_output_templates[index]
-            if variable in template_metadata[template]["primary_variables"]:
-                template_metadata[template]["primary_paths"].append(concat_path)
-            else:
-                template_metadata[template]["auxiliary_paths"].append(concat_path)
-
-        auxiliary_path_sets = []
-        primary_path_sets = []
-
-        for template in template_metadata:
-            auxiliary_path_sets.append(template_metadata[template]["auxiliary_paths"])
-            primary_path_sets.append(template_metadata[template]["primary_paths"])
-
-        append_auxiliary_futures = client.map(addAuxiliaryVariables, auxiliary_path_sets, primary_path_sets)
-        appended_primary_paths_sets = client.gather(append_auxiliary_futures)
-
-        for path in self.__ts_head_dir.rglob("*"):
-            if not isfile(path):
-                if len(listdir(path)) == 0:
-                    rmdir(path)
-
-        return appended_primary_paths_sets
+        delayed_ts_gen_funcs = []
+        futures = []
+        for output_template in self.getTimeSeriesGroups():
+            hf_paths = self.getTimeSeriesGroups()[output_template]
+            years = [self.getHistoryFileMetaData(hf_path)["time"][0].year for hf_path in hf_paths]
+            for start_index, end_index in getYearSlices(years, timeseries_year_length):
+                slice_paths = hf_paths[start_index:end_index]
+                metadata = self.getHistoryFileMetaData(slice_paths[0])
+                time_str_format = self.getTimeStepStrFormat(self.getTimeStepStr(slice_paths))
+                for primary_variable in metadata["primary_variables"]:
+                    slice_metadata = metadata
+                    slice_metadata["time"] = None
+                    slice_metadata["primary_variables"] = [primary_variable]
+                    futures.append(client.submit(generateTimeSeries, output_template, slice_paths, slice_metadata, time_str_format, overwrite))
+        ts_paths = []
+        if client is None or serial:
+            for func in delayed_ts_gen_funcs:
+                ts_paths.append(func.compute())
+        else:
+            ts_paths = client.gather(futures)
+        return ts_paths
