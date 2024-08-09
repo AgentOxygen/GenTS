@@ -4,13 +4,13 @@
 Computational Engineer<br>
 Contact: cameron.cummins@utexas.edu<br>
 Webpage: [https://www.jsg.utexas.edu/student/cameron_cummins](https://www.jsg.utexas.edu/student/cameron_cummins)<br>
-Affiliation: Persad Aero-Climate Lab, The University of Texas atstin Au
+Affiliation: Persad Aero-Climate Lab, The University of Texas at Austin
 
 >Adam Phillips<br>
 Mentor and Advisor<br>
 Contact: asphilli@ucar.edu<br>
 Webpage: [https://staff.cgd.ucar.edu/asphilli/](https://staff.cgd.ucar.edu/asphilli/)<br>
-Affiliation: Climate and Global Dynamics Lab, National Center for Atmospheric Resea
+Affiliation: Climate and Global Dynamics Lab, National Center for Atmospheric Research
 
 ## *This Project is still in Development*
 It works pretty well and can likely handle most cases, but some features aren't finished yet. Stay tuned for more!
