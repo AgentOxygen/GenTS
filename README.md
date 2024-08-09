@@ -58,8 +58,9 @@ You can then either import `timeseries_generation.py` as a module in an interact
 For those that learn faster by doing than reading, there is a template notebook available called `template_notebook.ipynb`.
 
 ### Jupyter Notebook
-To use this package in an interactive Jupyter notebook, create a Dask cluster using either a LocalCluster or your HPC's job-queue cluster. Here is an example of a possible cluster on Casper, which uses the PBS job scheduler:
+To use this package in an interactive Jupyter notebook, create a notebook in the repository directory and start a Dask cluster using either a LocalCluster or your HPC's job-queue. Be sure to activate an environment with the correct dependencies (this can be done either at the start of the Jupyter Server or by selecting the appropriate kernel in the bottom left bar). Here is an example of a possible cluster on Casper using the NPL 2024b conda environment and the PBS job scheduler:
 ````
+from timeseries_generation import ModelOutputDatabase
 from dask_jobqueue import PBSCluster
 from dask.distributed import Client
 
