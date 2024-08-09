@@ -617,6 +617,7 @@ class ModelOutputDatabase:
             Compression levels to apply to specific variables (variable name is
             key and the compression level is the value).
         """
+        self.log("Initializing...")
         self.__hf_head_dir = Path(hf_head_dir)
         self.__ts_head_dir = Path(ts_head_dir)
         self.__include_variables = include_variables
@@ -632,6 +633,8 @@ class ModelOutputDatabase:
         self.__total_size = 0
         self.__built = False
 
+        start_t = time()
+        self.log(f"Searching tree for netCDF files: '{hf_head_dir}'")
         self.__history_file_paths = []
         for path in sorted(self.__hf_head_dir.rglob("*.nc")):
             exclude = False
@@ -647,8 +650,15 @@ class ModelOutputDatabase:
 
             if not exclude:
                 self.__history_file_paths.append(path)
+        self.log(f"\tDone. ({round(time() - start_t, 2)}s)")
+        start_t = time()
+        self.log(f"Grouping history files... ", end="")
         self.__timeseries_group_paths = generateTimeSeriesGroupPaths(self.__history_file_paths, hf_head_dir, ts_head_dir, dir_name_swaps=dir_name_swaps)
-    
+        self.log(f"Done. {round(time() - start_t, 2)}s")
+
+    def log(self, msg, end="\n"):
+        print(msg, end=end)
+
     def getHistoryFileMetaData(self,
                                history_file_path: Path) -> dict:
         r"""Returns metadata for particulary history file.
@@ -804,9 +814,10 @@ class ModelOutputDatabase:
         -------
         None
         """
+        start_bt = time()
+        self.log("Starting Build.")
         if client is None:
             client = dask.distributed.client._get_global_client()
-
 
         self.__gen_ts_args_templates = []
         self.__gen_ts_args_hf_paths = []
@@ -815,16 +826,23 @@ class ModelOutputDatabase:
         self.__gen_ts_args_time_formats = []
         self.__gen_ts_args_comp_levels = []
         self.__gen_ts_args_overwrites = []
-        
+
+        start_t = time()
+        self.log("\t Gathering metadata...")
         self.__history_file_metas = {}
         if client is None:
+            self.log("\t Dask client not detected, proceeding serially.")
             for path in self.__history_file_paths:
                 self.__history_file_metas[path] = getHistoryFileMetaData(path)
         else:
+            self.log("\t Dask client detected.")
             metas = dask.compute(*[delayed(getHistoryFileMetaData)(path) for path in self.__history_file_paths])
             for index, path in enumerate(self.__history_file_paths):
                 self.__history_file_metas[path] = metas[index]
+            self.log(f"\t \t Done. ({round(time() - start_t, 2)}s)")
 
+        start_t = time()
+        self.log("\t Computing timeseries arguments...")
         new_timeseries_group_paths = {}
         for path_template in self.__timeseries_group_paths:
             hs_file_paths = self.__timeseries_group_paths[path_template]
@@ -860,11 +878,11 @@ class ModelOutputDatabase:
 
                 if not within_range or end_index < start_index:
                     continue
-                
+
                 slice_paths = hf_paths[start_index:end_index]
                 metadata = self.getHistoryFileMetaData(slice_paths[0])
                 time_str_format = self.getTimeStepStrFormat(self.getTimeStepStr(slice_paths))
-                
+
                 for primary_variable in metadata["primary_variables"]:
                     if self.__include_variables is not None and primary_variable not in self.__include_variables:
                         continue
@@ -882,6 +900,8 @@ class ModelOutputDatabase:
                         self.__gen_ts_args_time_formats.append(time_str_format)
                         self.__gen_ts_args_comp_levels.append(compression_level)
                         self.__gen_ts_args_overwrites.append(overwrite)
+        self.log(f"\t \t Done. ({round(time() - start_t, 2)}s)")
+        self.log(f"\t Build complete. ({round(time() - start_bt, 2)}s)")
         self.__built = True
 
     def getGenTSArgs(self):
@@ -911,15 +931,21 @@ class ModelOutputDatabase:
             List of paths pointing to timeseries files generated.
         """
         if not self.__built:
+            self.log("Building arguments.")
             self.build(client=client)
+        else:
+            self.log("Build already complete. Skipping build step.")
 
         if client is None:
             client = dask.distributed.client._get_global_client()
 
         ts_paths = []
         if client is None or serial:
+            self.log("ERROR: No Dask client detected, serial run() not yet implemented.")
             pass
         else:
+            start_t = time()
+            self.log("Dask client detected, mapping arguments to generateTimeSeries() in parallel.")
             futures = client.map(generateTimeSeries,
                                  self.__gen_ts_args_templates,
                                  self.__gen_ts_args_hf_paths,
@@ -928,5 +954,7 @@ class ModelOutputDatabase:
                                  self.__gen_ts_args_time_formats,
                                  self.__gen_ts_args_comp_levels,
                                  self.__gen_ts_args_overwrites)
+            self.log("Map complete, awaiting cluster computation...")
             ts_paths = client.gather(futures, errors="skip")
+            self.log(f"\tDone. ({round(time() - start_t, 2)}s)")
         return ts_paths
