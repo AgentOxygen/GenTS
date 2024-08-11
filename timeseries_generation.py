@@ -294,36 +294,38 @@ def getHistoryFileMetaData(hs_file_path: Path) -> dict:
     """
     meta = {}
     ds = netCDF4.Dataset(hs_file_path, mode="r")
-
-    meta["file_size"] = getsize(hs_file_path)
-    meta["variables"] = list(ds.variables)
-    meta["global_attrs"] = {key: getattr(ds, key) for key in ds.ncattrs()}
-    meta["variable_meta"] = {}
-    if "time" in meta["variables"]:
-        meta["time"] = cftime.num2date(ds["time"][:], units=ds["time"].units, calendar=ds["time"].calendar)
-    else:
-        meta["time"] = None
-
-    for variable in meta["variables"]:
-        meta["variable_meta"][variable] = {}
-        if type(ds[variable]) is netCDF4._netCDF4._Variable:
-            for key in ds[variable].ncattrs():
-                meta["variable_meta"][variable][key] = ds[variable].__getattr__(key)
+    try:
+        meta["file_size"] = getsize(hs_file_path)
+        meta["variables"] = list(ds.variables)
+        meta["global_attrs"] = {key: getattr(ds, key) for key in ds.ncattrs()}
+        meta["variable_meta"] = {}
+        if "time" in meta["variables"]:
+            meta["time"] = cftime.num2date(ds["time"][:], units=ds["time"].units, calendar=ds["time"].calendar)
         else:
-            for key in ds[variable].ncattrs():
-                meta["variable_meta"][variable][key] = ds[variable].getncattr(key)
-
-        meta["variable_meta"][variable]["dimensions"] = list(ds[variable].dimensions)
-        meta["variable_meta"][variable]["data_type"] = ds[variable].dtype
-        meta["variable_meta"][variable]["shape"] = ds[variable].shape
-
-    meta["primary_variables"] = []
-    meta["auxiliary_variables"] = []
-    for variable in meta["variable_meta"]:
-        if isVariableAuxiliary(meta["variable_meta"][variable]):
-            meta["auxiliary_variables"].append(variable)
-        else:
-            meta["primary_variables"].append(variable)
+            meta["time"] = None
+    
+        for variable in meta["variables"]:
+            meta["variable_meta"][variable] = {}
+            if type(ds[variable]) is netCDF4._netCDF4._Variable:
+                for key in ds[variable].ncattrs():
+                    meta["variable_meta"][variable][key] = ds[variable].__getattr__(key)
+            else:
+                for key in ds[variable].ncattrs():
+                    meta["variable_meta"][variable][key] = ds[variable].getncattr(key)
+    
+            meta["variable_meta"][variable]["dimensions"] = list(ds[variable].dimensions)
+            meta["variable_meta"][variable]["data_type"] = ds[variable].dtype
+            meta["variable_meta"][variable]["shape"] = ds[variable].shape
+    
+        meta["primary_variables"] = []
+        meta["auxiliary_variables"] = []
+        for variable in meta["variable_meta"]:
+            if isVariableAuxiliary(meta["variable_meta"][variable]):
+                meta["auxiliary_variables"].append(variable)
+            else:
+                meta["primary_variables"].append(variable)
+    except Exception as e:
+        meta["exception"] = e
     ds.close()
     return meta
 
