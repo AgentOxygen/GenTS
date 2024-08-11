@@ -652,11 +652,11 @@ class ModelOutputDatabase:
 
             if not exclude:
                 self.__history_file_paths.append(path)
-        self.log(f"\tDone. ({round(time() - start_t, 2)}s)")
+        self.log("\tDone.")
         start_t = time()
-        self.log(f"Grouping history files... ", end="")
+        self.log("Grouping history files... ")
         self.__timeseries_group_paths = generateTimeSeriesGroupPaths(self.__history_file_paths, hf_head_dir, ts_head_dir, dir_name_swaps=dir_name_swaps)
-        self.log(f"Done. {round(time() - start_t, 2)}s")
+        self.log("Done.")
 
     def log(self, msg, end="\n"):
         print(msg, end=end)
@@ -830,21 +830,24 @@ class ModelOutputDatabase:
         self.__gen_ts_args_overwrites = []
 
         start_t = time()
-        self.log("\t Gathering metadata...")
         self.__history_file_metas = {}
         if client is None:
-            self.log("\t Dask client not detected, proceeding serially.")
+            self.log("Dask client not detected, proceeding serially.")
+            self.log("\tGathering metadata...")
             for path in self.__history_file_paths:
                 self.__history_file_metas[path] = getHistoryFileMetaData(path)
+            self.log("\t Done.")
         else:
-            self.log("\t Dask client detected.")
-            metas = dask.compute(*[delayed(getHistoryFileMetaData)(path) for path in self.__history_file_paths])
+            self.log("Dask client detected.")
+            self.log("\tGathering metadata...")
+            bag = db.from_sequence(self.__history_file_paths, npartitions=20000).map(getHistoryFileMetaData)
+            metas = bag.compute()
             for index, path in enumerate(self.__history_file_paths):
                 self.__history_file_metas[path] = metas[index]
-            self.log(f"\t \t Done. ({round(time() - start_t, 2)}s)")
+            self.log("\tDone.")
 
         start_t = time()
-        self.log("\t Computing timeseries arguments...")
+        self.log("\tComputing timeseries arguments...")
         new_timeseries_group_paths = {}
         for path_template in self.__timeseries_group_paths:
             hs_file_paths = self.__timeseries_group_paths[path_template]
@@ -902,8 +905,8 @@ class ModelOutputDatabase:
                         self.__gen_ts_args_time_formats.append(time_str_format)
                         self.__gen_ts_args_comp_levels.append(compression_level)
                         self.__gen_ts_args_overwrites.append(overwrite)
-        self.log(f"\t \t Done. ({round(time() - start_t, 2)}s)")
-        self.log(f"\t Build complete. ({round(time() - start_bt, 2)}s)")
+        self.log("\tDone.")
+        self.log("Build complete.")
         self.__built = True
 
     def getGenTSArgs(self):
@@ -946,7 +949,6 @@ class ModelOutputDatabase:
             self.log("ERROR: No Dask client detected, serial run() not yet implemented.")
             pass
         else:
-            start_t = time()
             self.log("Dask client detected, mapping arguments to generateTimeSeries() in parallel.")
             futures = client.map(generateTimeSeries,
                                  self.__gen_ts_args_templates,
@@ -958,5 +960,5 @@ class ModelOutputDatabase:
                                  self.__gen_ts_args_overwrites)
             self.log("Map complete, awaiting cluster computation...")
             ts_paths = client.gather(futures, errors="skip")
-            self.log(f"\tDone. ({round(time() - start_t, 2)}s)")
+            self.log(f"\tDone.)")
         return ts_paths
