@@ -18,6 +18,7 @@ import cftime
 from os.path import isfile, getsize
 from os import remove
 import dask.distributed
+import dask.bag as db
 
 
 def generateReflectiveOutputDirectory(input_head: Path,
@@ -577,6 +578,8 @@ class ModelOutputDatabase:
                  dir_name_swaps: dict = {},
                  file_exclusions: list = [],
                  dir_exclusions: list = ["rest", "logs"],
+                 timeseries_year_length: int = 10,
+                 overwrite: bool = False,
                  include_variables: list = None,
                  exclude_variables: list = None,
                  year_start: int = None,
@@ -600,6 +603,12 @@ class ModelOutputDatabase:
         dir_exclusions : list
             Directory names containing any of the keywords in this list will be
             excluded from the database.
+        timeseries_year_length : int
+            Number of years each timeseries file should be chunked to using
+            `getYearSlices` (Default: 10).
+        overwrite : bool
+            Whether or not to overwrite timeseries files if they already exist
+            at the generated paths (Default: False).
         include_variables : list
             Variables to include in either creating individual timeseries files
             for adding as auxiliary variables.
@@ -622,6 +631,8 @@ class ModelOutputDatabase:
         self.log("Initializing...")
         self.__hf_head_dir = Path(hf_head_dir)
         self.__ts_head_dir = Path(ts_head_dir)
+        self.__overwrite = overwrite
+        self.__timeseries_year_length = timeseries_year_length
         self.__include_variables = include_variables
         self.__exclude_variables = exclude_variables
         if self.__exclude_variables is None:
@@ -784,9 +795,7 @@ class ModelOutputDatabase:
             return "%Y-%m-%d-%H"
 
     def build(self,
-              client: dask.distributed.Client = None,
-              timeseries_year_length: int = 10,
-              overwrite = False) -> None:
+              client: dask.distributed.Client = None) -> None:
         r"""Builds database by reading each history file and storing metadata.
 
         Should be called before `run()`
@@ -805,12 +814,6 @@ class ModelOutputDatabase:
         ----------
         client : dask.distributed.Client
             Client object to use for Dask parallelization.
-        timeseries_year_length : int
-            Number of years each timeseries file should be chunked to using
-            `getYearSlices` (Default: 10).
-        overwrite : bool
-            Whether or not to overwrite timeseries files if they already exist
-            at the generated paths (Default: False).
 
         Returns
         -------
@@ -864,7 +867,7 @@ class ModelOutputDatabase:
             hf_paths = self.getTimeSeriesGroups()[output_template]
             years = [self.getHistoryFileMetaData(hf_path)["time"][0].year for hf_path in hf_paths]
 
-            for start_index, end_index in getYearSlices(years, timeseries_year_length):
+            for start_index, end_index in getYearSlices(years, self.__timeseries_year_length):
                 within_range = True
                 if self.__year_start is not None and years[start_index] < self.__year_start:
                     within_range = False
@@ -873,15 +876,15 @@ class ModelOutputDatabase:
                             start_index = index
                             within_range = True
                             break
-                if self.__year_end is not None and years[end_index] > self.__year_end:
+                if self.__year_end is not None and years[end_index-1] > self.__year_end:
                     within_range = False
                     for index in range(start_index, end_index):
-                        if years[start_index] <= self.__year_end:
+                        if years[end_index-1] <= self.__year_end:
                             end_index = index
                             within_range = True
                             break
 
-                if not within_range or end_index < start_index:
+                if not within_range or end_index <= start_index:
                     continue
 
                 slice_paths = hf_paths[start_index:end_index]
@@ -904,7 +907,7 @@ class ModelOutputDatabase:
                         self.__gen_ts_args_primary_vars.append(primary_variables)
                         self.__gen_ts_args_time_formats.append(time_str_format)
                         self.__gen_ts_args_comp_levels.append(compression_level)
-                        self.__gen_ts_args_overwrites.append(overwrite)
+                        self.__gen_ts_args_overwrites.append(self.__overwrite)
         self.log("\tDone.")
         self.log("Build complete.")
         self.__built = True
@@ -960,5 +963,5 @@ class ModelOutputDatabase:
                                  self.__gen_ts_args_overwrites)
             self.log("Map complete, awaiting cluster computation...")
             ts_paths = client.gather(futures, errors="skip")
-            self.log(f"\tDone.)")
+            self.log(f"\tDone.")
         return ts_paths
