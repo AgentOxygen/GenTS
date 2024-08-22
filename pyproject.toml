@@ -1,16 +1,16 @@
 [build-system]
-requires = ["hatchling", "numpy", "dask", "netCDF4", "cftime"]
-build-backend = "hatchling.build"
+requires = ["setuptools", "setuptools-scm", "numpy", "dask", "netCDF4", "cftime"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "gents"
-version = "0.9"
+version = "0.1.0"
 authors = [
   { name="Cameron Cummins", email="cameron.cummins@utexas.edu" },
 ]
 description = "A useful tool for post-processing CESM2 history files into the timeseries format."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10.13"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
@@ -20,3 +20,6 @@ classifiers = [
 [project.urls]
 Homepage = "https://github.com/AgentOxygen/timeseries_generation"
 Issues = "https://github.com/AgentOxygen/timeseries_generation/issues"
+
+[tool.setuptools]
+packages = ["gents"]
