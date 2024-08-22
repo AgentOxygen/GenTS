@@ -12,14 +12,13 @@ Last Header Update: 8/22/24
 from time import time
 import numpy as np
 from pathlib import Path
-from dask import delayed
 import netCDF4
 import cftime
 from os.path import isfile, getsize
 from os import remove
 import dask.distributed
 import dask.bag as db
-
+from importlib.metadata import version as getVersion, PackageNotFoundError
 
 def generateReflectiveOutputDirectory(input_head: Path,
                                       output_head: Path,
@@ -378,7 +377,8 @@ def generateTimeSeries(output_template: Path,
                        time_str_format: str,
                        compression_level : int = None,
                        overwrite: bool = False,
-                       debug_timing: bool = True) -> tuple:
+                       debug_timing: bool = True,
+                       version: str = "source") -> tuple:
     r"""Generates timeseries files from history files.
 
     This is the primary function for generating the timeseries files and
@@ -407,21 +407,27 @@ def generateTimeSeries(output_template: Path,
         List of paths pointing to the history files from which these timeseries
         files will be generated from.
     auxiliary_variables : list
-        
+        List of names for auxiliary variables to be included in all resulting
+        timeseries files.
     primary_variables : list
-        
+        List of names for primary variables to generate individual timeseries
+        files for.
     time_str_format : str
         Date format code used to convert the CFTime object to a string. This
         may vary for different timesteps and should be determined before
         calling this function.
     compression_level : int
-        
+        Compression level to apply to all variables. None or 0 indicates no
+        compression (Default: None).
     overwrite : bool
         Whether or not to overwrite timeseries files if they already exist at
         the generated paths (Default: False).
     debug_timing : bool
         Includes the time to generate each resulting timeseries file in the
         output tuples.
+    version : str
+        Software version being used, included as an attribute in the generated
+        timeseries files. (Default: 'source')
 
     Returns
     -------
@@ -536,7 +542,7 @@ def generateTimeSeries(output_template: Path,
             ts_ds[auxiliary_var].setncatts(auxiliary_variable_data[auxiliary_var]["attrs"])
 
             aux_var_data[:] = auxiliary_variable_data[auxiliary_var]["data"]
-        ts_ds.setncatts({key: getattr(primary_ds, key) for key in primary_ds.ncattrs()} | {"timeseries_software_version": "0.8", "timeseries_process": "complete"})
+        ts_ds.setncatts({key: getattr(primary_ds, key) for key in primary_ds.ncattrs()} | {"timeseries_software_version": version, "timeseries_process": "complete"})
         ts_ds.close()
 
     if debug_timing:
@@ -917,7 +923,8 @@ class ModelOutputDatabase:
 
     def run(self,
             client: dask.distributed.Client = None,
-            serial: bool = False):
+            serial: bool = False,
+            debug_timing: bool = False):
         r"""Starts process for generating timeseries files.
 
         This function generates the appropriate parameters for the database and
@@ -947,6 +954,12 @@ class ModelOutputDatabase:
         if client is None:
             client = dask.distributed.client._get_global_client()
 
+        try:
+            version = getVersion("gents")
+        except PackageNotFoundError:
+            self.log("No metadata found for package 'gents', assuming source installation.")
+            version = "source"
+
         ts_paths = []
         if client is None or serial:
             self.log("ERROR: No Dask client detected, serial run() not yet implemented.")
@@ -960,7 +973,9 @@ class ModelOutputDatabase:
                                  self.__gen_ts_args_primary_vars,
                                  self.__gen_ts_args_time_formats,
                                  self.__gen_ts_args_comp_levels,
-                                 self.__gen_ts_args_overwrites)
+                                 self.__gen_ts_args_overwrites,
+                                 [debug_timing]*len(self.__gen_ts_args_templates),
+                                 [version]*len(self.__gen_ts_args_templates))
             self.log("Map complete, awaiting cluster computation...")
             ts_paths = client.gather(futures, errors="skip")
             self.log(f"\tDone.")
