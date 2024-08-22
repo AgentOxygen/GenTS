@@ -375,7 +375,8 @@ def generateTimeSeries(output_template: Path,
                        auxiliary_variables: list,
                        primary_variables: list,
                        time_str_format: str,
-                       compression_level : int = None,
+                       compression_level: int = None,
+                       compression_algo: str = "bzip2",
                        overwrite: bool = False,
                        debug_timing: bool = True,
                        version: str = "source") -> tuple:
@@ -419,6 +420,9 @@ def generateTimeSeries(output_template: Path,
     compression_level : int
         Compression level to apply to all variables. None or 0 indicates no
         compression (Default: None).
+    compression_algo : str
+        Which netCDF4 compression algorithm to use. See netcdf4-python
+        documentation for available algorithms (Default: 'bzip2').
     overwrite : bool
         Whether or not to overwrite timeseries files if they already exist at
         the generated paths (Default: False).
@@ -477,7 +481,7 @@ def generateTimeSeries(output_template: Path,
     compression = None
     if complevel > 0:
         compression = "bzip2"
-    
+
     ts_paths = []
     for primary_var in primary_variables:
         ts_path = output_template.parent / f"{output_template.name}{primary_var}.{time_start_str}.{time_end_str}.nc"
@@ -591,6 +595,7 @@ class ModelOutputDatabase:
                  year_start: int = None,
                  year_end: int = None,
                  compression_level: int = None,
+                 compression_algo: str = "bzip2",
                  variable_compression_levels: dict = None) -> None:
         r"""Parameters
         ----------
@@ -630,6 +635,10 @@ class ModelOutputDatabase:
         compression_level : int
             Compression level to pass to netCDF4 engine when generating
             timeseries files.
+        compression_algo : str
+            Compression algorithm to pass to netCDF4 engine when generating
+            timeseries files. See netCDF4-python documentation for available
+            algorithms (Default: 'bzip2').
         variable_compression_levels : dict
             Compression levels to apply to specific variables (variable name is
             key and the compression level is the value).
@@ -646,6 +655,7 @@ class ModelOutputDatabase:
         self.__year_start = year_start
         self.__year_end = year_end
         self.__compression_level = compression_level
+        self.__compression_algo = compression_algo
         if self.__compression_level is None:
             self.__compression_level = 0
         self.__variable_compression_levels = variable_compression_levels
@@ -972,6 +982,7 @@ class ModelOutputDatabase:
                                  self.__gen_ts_args_primary_vars,
                                  self.__gen_ts_args_time_formats,
                                  self.__gen_ts_args_comp_levels,
+                                 [self.__compression_algo]*len(self.__gen_ts_args_templates),
                                  [self.__overwrite]*len(self.__gen_ts_args_templates),
                                  [debug_timing]*len(self.__gen_ts_args_templates),
                                  [version]*len(self.__gen_ts_args_templates))
