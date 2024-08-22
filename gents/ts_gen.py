@@ -20,6 +20,7 @@ import dask.distributed
 import dask.bag as db
 from importlib.metadata import version as getVersion, PackageNotFoundError
 
+
 def generateReflectiveOutputDirectory(input_head: Path,
                                       output_head: Path,
                                       parent_dir: Path,
@@ -51,7 +52,7 @@ def generateReflectiveOutputDirectory(input_head: Path,
     swaps: dict
         Dictionary containing keyword swaps for the returned directory
         structure. For example, ``hist`` may replace ``proc/tseries/``
-        (e.g. {``hist``: ``proc/tseries/``}).
+        (e.g. {``hist``: ``proc/tseries/``}) (Default: {}).
 
     Returns
     -------
@@ -99,7 +100,7 @@ def solveForGroupsLeftToRight(file_names: list,
         List of string-like objects containing the names of history files.
     delimiter : str
         String to parse each file name by to produce substrings for
-        comparison.
+        comparison (Default: '.').
 
     Returns
     -------
@@ -175,7 +176,7 @@ def generateTimeSeriesGroupPaths(paths: list,
     dir_name_swaps: dict
         Dictionary containing keyword swaps for output directory structure.
         For example, ``hist`` may replace ``proc/tseries/``
-        (e.g. {``hist``: ``proc/tseries/``}).
+        (e.g. {``hist``: ``proc/tseries/``}) (Default: {}).
 
     Returns
     -------
@@ -224,6 +225,7 @@ def generateTimeSeriesGroupPaths(paths: list,
 
 def isVariableAuxiliary(variable_meta: dict,
                         auxiliary_dims: list = ["nbnd", "chars", "string_length", "hist_interval"],
+                        max_num_dims: int = 1,
                         primary_dims: list = ["time"]) -> bool:
     r"""Determines if a variable is auxiliary based on metadata.
 
@@ -242,7 +244,7 @@ def isVariableAuxiliary(variable_meta: dict,
     be considered auxiliary if they do not any of the contain dimensions
     specified in `primary_dims`.
 
-    The defautls are configured somewhat arbitrarily and will likely
+    The defaults are configured somewhat arbitrarily and will likely
     need to be improved for comaptability with other model runs (and
     definitely for other models). We may also need to implement a new method
     for identifying auxiliary variables other than just dimensions.
@@ -251,6 +253,17 @@ def isVariableAuxiliary(variable_meta: dict,
     ----------
     variable_meta : dict
         Dictionary containing metadata produced by `getHistoryFileMetaData`
+    auxiliary_dims : list
+        List of dimension names that, regardless of size, if found in a
+        variable will designate that variable as auxiliary
+        (Default: ["nbnd", "chars", "string_length", "hist_interval"]).
+    max_num_dims : int
+        Maximum number of dimensions a variable can have before it is possibly
+        considered as primary and thus not auxiliary (Default: 1).
+    primary_dims : list
+        List of dimension names that, if the variable exceeds the maximum
+        number of dimensions, will designate the variable as primary and thus
+        not auxiliary (Default: ["time"]).
 
     Returns
     -------
@@ -263,7 +276,7 @@ def isVariableAuxiliary(variable_meta: dict,
         if tag in dims:
             return True
 
-    if len(dims) > 1:
+    if len(dims) > max_num_dims:
         for tag in primary_dims:
             if tag in dims:
                 return False
@@ -303,7 +316,7 @@ def getHistoryFileMetaData(hs_file_path: Path) -> dict:
             meta["time"] = cftime.num2date(ds["time"][:], units=ds["time"].units, calendar=ds["time"].calendar)
         else:
             meta["time"] = None
-    
+
         for variable in meta["variables"]:
             meta["variable_meta"][variable] = {}
             if type(ds[variable]) is netCDF4._netCDF4._Variable:
@@ -312,11 +325,11 @@ def getHistoryFileMetaData(hs_file_path: Path) -> dict:
             else:
                 for key in ds[variable].ncattrs():
                     meta["variable_meta"][variable][key] = ds[variable].getncattr(key)
-    
+
             meta["variable_meta"][variable]["dimensions"] = list(ds[variable].dimensions)
             meta["variable_meta"][variable]["data_type"] = ds[variable].dtype
             meta["variable_meta"][variable]["shape"] = ds[variable].shape
-    
+
         meta["primary_variables"] = []
         meta["auxiliary_variables"] = []
         for variable in meta["variable_meta"]:
@@ -428,7 +441,7 @@ def generateTimeSeries(output_template: Path,
         the generated paths (Default: False).
     debug_timing : bool
         Includes the time to generate each resulting timeseries file in the
-        output tuples.
+        output tuples (Default: True).
     version : str
         Software version being used, included as an attribute in the generated
         timeseries files. (Default: 'source')
@@ -608,12 +621,13 @@ class ModelOutputDatabase:
         dir_name_swaps : dict
             Dictionary for swapping out keyword directory names in the
             structure under `hf_head_dir` (e.g. ``{"hist" : "proc/tseries"}``
+            (Default: {}).
         file_exclusions : list
             File names containing any of the keywords in this list will be
-            excluded from the database.
+            excluded from the database (Default: []).
         dir_exclusions : list
             Directory names containing any of the keywords in this list will be
-            excluded from the database.
+            excluded from the database (Default: ['rest', 'logs']).
         timeseries_year_length : int
             Number of years each timeseries file should be chunked to using
             `getYearSlices` (Default: 10).
@@ -622,26 +636,26 @@ class ModelOutputDatabase:
             at the generated paths (Default: False).
         include_variables : list
             Variables to include in either creating individual timeseries files
-            for adding as auxiliary variables.
+            for adding as auxiliary variables (Default: None).
         exclude_variables : list
             Variables to exclude from either creating individual timeseries
-            files for adding as auxiliary variables.
+            files for adding as auxiliary variables (Default: None).
         year_start : int
             Starting year for timeseries generation, must be later than first
-            history file timestamp to have an effect.
+            history file timestamp to have an effect (Default: None).
         year_end : int
             Ending year for timeseries generation, must be later than last
-            history file timestamp to have an effect.
+            history file timestamp to have an effect (Default: None).
         compression_level : int
             Compression level to pass to netCDF4 engine when generating
-            timeseries files.
+            timeseries files (Default: None).
         compression_algo : str
             Compression algorithm to pass to netCDF4 engine when generating
             timeseries files. See netCDF4-python documentation for available
             algorithms (Default: 'bzip2').
         variable_compression_levels : dict
-            Compression levels to apply to specific variables (variable name is
-            key and the compression level is the value).
+            Compression levels to apply to specific variables. Variable name is
+            key and the compression level is the value (Default: None).
         """
         self.log("Initializing...")
         self.__hf_head_dir = Path(hf_head_dir)
