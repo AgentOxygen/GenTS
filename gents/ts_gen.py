@@ -536,7 +536,7 @@ def generateTimeSeries(output_template: Path,
             ts_ds[auxiliary_var].setncatts(auxiliary_variable_data[auxiliary_var]["attrs"])
 
             aux_var_data[:] = auxiliary_variable_data[auxiliary_var]["data"]
-        ts_ds.setncatts({key: getattr(primary_ds, key) for key in primary_ds.ncattrs()} | {"timeseries_software_version": "v1.0", "timeseries_process": "complete"})
+        ts_ds.setncatts({key: getattr(primary_ds, key) for key in primary_ds.ncattrs()} | {"timeseries_software_version": "0.8", "timeseries_process": "complete"})
         ts_ds.close()
 
     if debug_timing:
