@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 """
-timeseries_generation.py
+genTS.py
 
-Automatic system for generating timeseries datasets from history files
+Automatic system for generating time-series datasets from history files
 efficiently by leveraging the netCDF4 engine and Dask.
 
 Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
-Last Header Update: 8/8/24
+Last Header Update: 8/22/24
 """
 from time import time
 import numpy as np
