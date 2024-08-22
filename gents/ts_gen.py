@@ -913,7 +913,6 @@ class ModelOutputDatabase:
                         self.__gen_ts_args_primary_vars.append(primary_variables)
                         self.__gen_ts_args_time_formats.append(time_str_format)
                         self.__gen_ts_args_comp_levels.append(compression_level)
-                        self.__gen_ts_args_overwrites.append(self.__overwrite)
         self.log("\tDone.")
         self.log("Build complete.")
         self.__built = True
@@ -973,7 +972,7 @@ class ModelOutputDatabase:
                                  self.__gen_ts_args_primary_vars,
                                  self.__gen_ts_args_time_formats,
                                  self.__gen_ts_args_comp_levels,
-                                 self.__gen_ts_args_overwrites,
+                                 [self.__overwrite]*len(self.__gen_ts_args_templates),
                                  [debug_timing]*len(self.__gen_ts_args_templates),
                                  [version]*len(self.__gen_ts_args_templates))
             self.log("Map complete, awaiting cluster computation...")
