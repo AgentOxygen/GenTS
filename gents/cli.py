@@ -11,12 +11,13 @@ Last Header Update: 8/23/24
 import gents
 import argparse
 from dask.distributed import Client
-import json
+from json import load
 from importlib.metadata import version as getVersion
 
-if __name__ == '__main__':
+
+def main():
     parser = argparse.ArgumentParser(description = f"Command Line Interface (CLI) for Generating Time-Series (GenTS) Version {getVersion("gents")}")
-    
+
     parser.add_argument("hf_head_dir", nargs = 1, metavar = "hf_head_dir", type = str, 
                          help = "Path to head directory with subdirectories containing history files.")
     parser.add_argument("ts_head_dir", nargs = 1, metavar = "ts_head_dir", type = str, 
@@ -49,77 +50,76 @@ if __name__ == '__main__':
                          help = "Level of logging to output to the standard output stream. 0 = No output, 1 = high level computational stages with timings, 2 = all stages and iterations with timings, including logic (Default: 1).")
     parser.add_argument("--overwrite", action='store_true', 
                          help = "Overwrite timeseries files if they already exist at the generated paths.")
-     
     args = parser.parse_args()
-    
+
     if args.hf_head_dir is not None:
         hf_head_dir = args.hf_head_dir[0]
-    
+
     if args.ts_head_dir is not None:
         ts_head_dir = args.ts_head_dir[0]
-    
+
     if args.dask_address is not None:
-        client = Client(dask_address[0])
+        client = Client(args.dask_address[0])
     else:
         client = None
-    
+
     if args.dir_name_swaps_path is not None:
         with open(args.dir_name_swaps_path[0], "r") as f:
             variable_compression_levels = load(f)
     else:
         dir_name_swaps = {}
-    
+
     if args.file_exclusions is not None:
         file_exclusions = args.file_exclusions
     else:
         file_exclusions = []
-    
+
     if args.dir_exclusions is not None:
         dir_exclusions = args.dir_exclusions
     else:
         dir_exclusions = []
-    
+
     if args.timeseries_year_length is not None:
         timeseries_year_length = args.timeseries_year_length[0]
     else:
         timeseries_year_length = 10
-    
+
     if args.include_variables is not None:
         include_variables = args.include_variables
     else:
         include_variables = None
-    
+
     if args.exclude_variables is not None:
         exclude_variables = args.exclude_variables
     else:
         exclude_variables = None
-    
+
     if args.year_start is not None:
         year_start = args.year_start[0]
     else:
         year_start = None
-    
+
     if args.year_end is not None:
         year_end = args.year_end[0]
     else:
         year_end = None
-    
+
     if args.compression_level is not None:
         compression_level = args.compression_level[0]
     else:
         compression_level = None
-    
+
     if args.compression_algo is not None:
         compression_algo = args.compression_algo[0]
     else:
         compression_algo = None
-    
+
     if args.variable_compression_levels_path is not None:
         with open(args.variable_compression_levels_path[0], "r") as f:
             variable_compression_levels = load(f)
     else:
         variable_compression_levels = None
-    
+
     if args.verbosity_level is not None:
         verbosity_level = args.verbosity_level[0]
     else:
@@ -148,5 +148,9 @@ if __name__ == '__main__':
         variable_compression_levels=variable_compression_levels,
         verbosity_level=verbosity_level
     )
-    
+
     modb.run(client=client)
+
+
+if __name__ == '__main__':
+    main()
