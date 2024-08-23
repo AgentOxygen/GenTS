@@ -924,8 +924,8 @@ class ModelOutputDatabase:
             new_timeseries_group_paths[new_path_template] = hs_file_paths
         self.__timeseries_group_paths = new_timeseries_group_paths
 
-        for meta in metas:
-            self.__total_size += meta["file_size"]
+        for path in self.__history_file_metas:
+            self.__total_size += self.__history_file_metas[path]["file_size"]
 
         self.__generateTimeSeries_args = []
         for output_template in self.getTimeSeriesGroups():
@@ -1020,8 +1020,21 @@ class ModelOutputDatabase:
 
         ts_paths = []
         if client is None or serial:
-            self.log("ERROR: No Dask client detected, serial run() not yet implemented.")
-            pass
+            self.log("No Dask client detected (or forced to run in serial), executing tasks in serial.")
+            for index in range(len(self.__gen_ts_args_templates)):
+                ts_paths.append(generateTimeSeries(
+                    self.__gen_ts_args_templates[index],
+                    self.__gen_ts_args_hf_paths[index],
+                    self.__gen_ts_args_auxiliary_vars[index],
+                    self.__gen_ts_args_primary_vars[index],
+                    self.__gen_ts_args_time_formats[index],
+                    self.__gen_ts_args_comp_levels[index],
+                    self.__compression_algo,
+                    self.__overwrite,
+                    debug_timing,
+                    version
+                ))
+            self.log(f"\tDone.")
         else:
             self.log("Dask client detected, mapping arguments to generateTimeSeries() in parallel.")
             futures = client.map(generateTimeSeries,
