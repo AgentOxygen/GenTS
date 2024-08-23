@@ -873,7 +873,8 @@ class ModelOutputDatabase:
         else:
             self.log("Dask client detected.")
             self.log("\tGathering metadata...")
-            bag = db.from_sequence(self.__history_file_paths, npartitions=20000).map(getHistoryFileMetaData)
+            paths = np.array([str(path) for path in self.getHistoryFilePaths()])
+            bag = db.from_sequence([str(path) for path in self.getHistoryFilePaths()], partition_size=1).map(getHistoryFileMetaData)
             metas = bag.compute()
             for index, path in enumerate(self.__history_file_paths):
                 self.__history_file_metas[path] = metas[index]
