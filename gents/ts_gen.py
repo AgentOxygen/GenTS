@@ -609,7 +609,8 @@ class ModelOutputDatabase:
                  year_end: int = None,
                  compression_level: int = None,
                  compression_algo: str = "bzip2",
-                 variable_compression_levels: dict = None) -> None:
+                 variable_compression_levels: dict = None,
+                 verbosity_level: int = 1) -> None:
         r"""Parameters
         ----------
         hf_head_dir : str
@@ -656,7 +657,16 @@ class ModelOutputDatabase:
         variable_compression_levels : dict
             Compression levels to apply to specific variables. Variable name is
             key and the compression level is the value (Default: None).
+        verbosity_level : int
+            Level of logging to output to the standard output stream.
+            0 = No output
+            1 = High level computational stages with timings
+            2 = All stages and iterations with timings, including logic
+            (Default: 1)
         """
+        self.__verbosity_level = verbosity_level
+        self.__logs = []
+        self.__full_logs = []
         self.log("Initializing...")
         self.__hf_head_dir = Path(hf_head_dir)
         self.__ts_head_dir = Path(ts_head_dir)
@@ -699,8 +709,32 @@ class ModelOutputDatabase:
         self.__timeseries_group_paths = generateTimeSeriesGroupPaths(self.__history_file_paths, hf_head_dir, ts_head_dir, dir_name_swaps=dir_name_swaps)
         self.log("Done.")
 
-    def log(self, msg, end="\n"):
-        print(msg, end=end)
+    def log(self, msg: str, end: str = "\n", level: int = 1):
+        r"""Logs some output to internal logs and outputs to the standard
+        output stream.
+
+        Parameters
+        ----------
+        msg : str
+            Message to ouput to log.
+        end : str
+            End string to append to message (Default: '\n').
+        level : int
+            Verbosity level for this message (Default: 0).
+        """
+        if level <= self.__verbosity_level:
+            print(msg, end=end)
+            self.__logs.append(msg)
+        else:
+            self.__full_logs.append(msg)
+
+    def getLogs(self):
+        r"""Returns logs filtered according to verbosity level"""
+        return self.__logs
+
+    def getFullLogs(self):
+        r"""Returns all logs regardless of verbosity level"""
+        return self.__full_logs
 
     def getHistoryFileMetaData(self,
                                history_file_path: Path) -> dict:
