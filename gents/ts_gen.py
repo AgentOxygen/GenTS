@@ -458,7 +458,7 @@ def generateTimeSeries(output_template: Path,
             "ignore" - Use the coordinate values in the 'time' dimension,
                 ignoring `time_bnds`
         This only applies if 'time_bnds' is available in the history files
-        (Default: "first").
+        (Default: "ignore").
 
     Returns
     -------
