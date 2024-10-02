@@ -638,7 +638,8 @@ class ModelOutputDatabase:
                  compression_level: int = None,
                  compression_algo: str = "bzip2",
                  variable_compression_levels: dict = None,
-                 verbosity_level: int = 1) -> None:
+                 verbosity_level: int = 1,
+                 time_bnds_method: str = "ignore") -> None:
         r"""Parameters
         ----------
         hf_head_dir : str
@@ -691,6 +692,23 @@ class ModelOutputDatabase:
             1 = High level computational stages with timings
             2 = All stages and iterations with timings, including logic
             (Default: 1)
+        time_bnds_method : str
+            Which method to use when slicing timeseries and labeling the start
+            and end timestamps for each output timeseries file by reading
+            'time_bnds':
+                "first" - Uses the first entry in 'time_bnds' at start/stop
+                    times
+                "second" - Uses the second entry in 'time_bnds' at start/stop
+                    times
+                "average" - Averages the first and second entries
+                "exterior" - Use the first entry for the start time and the
+                    second entry for the last time (exteriors of time period).
+                    Note that this causes overlap if the timeseries is one of
+                    many slices.
+                "ignore" - Use the coordinate values in the 'time' dimension,
+                    ignoring `time_bnds`
+            This only applies if 'time_bnds' is available in the history files
+            (Default: "ignore").
         """
         self.__verbosity_level = verbosity_level
         self.__logs = []
@@ -713,6 +731,7 @@ class ModelOutputDatabase:
         self.__variable_compression_levels = variable_compression_levels
         self.__total_size = 0
         self.__built = False
+        self.__time_bnds_method = time_bnds_method
 
         start_t = time()
         self.log(f"Searching tree for netCDF files: '{hf_head_dir}'")
@@ -958,7 +977,17 @@ class ModelOutputDatabase:
         self.__generateTimeSeries_args = []
         for output_template in self.getTimeSeriesGroups():
             hf_paths = self.getTimeSeriesGroups()[output_template]
-            years = [self.getHistoryFileMetaData(hf_path)["time"][0].year for hf_path in hf_paths]
+
+            if self.__time_bnds_method == "first":
+                pass
+            elif self.__time_bnds_method == "second":
+                pass
+            elif self.__time_bnds_method == "average":
+                pass
+            elif self.__time_bnds_method == "exterior":
+                pass
+            else:
+                years = [self.getHistoryFileMetaData(hf_path)["time"][0].year for hf_path in hf_paths]
 
             for start_index, end_index in getYearSlices(years, self.__timeseries_year_length):
                 within_range = True
