@@ -393,7 +393,7 @@ def generateTimeSeries(output_template: Path,
                        overwrite: bool = False,
                        debug_timing: bool = True,
                        version: str = "source",
-                       time_bnd_avg: bool = True) -> tuple:
+                       time_bnd_method: str = "first") -> tuple:
     r"""Generates timeseries files from history files.
 
     This is the primary function for generating the timeseries files and
@@ -446,12 +446,19 @@ def generateTimeSeries(output_template: Path,
     version : str
         Software version being used, included as an attribute in the generated
         timeseries files. (Default: 'source')
-    time_bnd_avg : bool
-        Whether or not to use the average of the 'time_bnds' variable, if it is
-        available in the history files, to determine the timestamp used for the
-        file name. This does not affect timestep identification and does not
-        change the values of the 'time' dimension coordinates. If false, the
-        first and last values stored in 'time' are used instead.
+    time_bnd_method: str
+        Which method to use when labeling the start and end timestamps for each
+        output timeseries file by reading 'time_bnds':
+            "first" - Uses the first entry in 'time_bnds' at start/stop times
+            "second" - Uses the second entry in 'time_bnds' at start/stop times
+            "average" - Averages the first and second entries
+            "exterior" - Use the first entry for the start time and the second
+                entry for the last time (exteriors of time period). Note that
+                this causes overlap if the timeseries is one of many slices.
+            "ignore" - Use the coordinate values in the 'time' dimension,
+                ignoring `time_bnds`
+        This only applies if 'time_bnds' is available in the history files
+        (Default: "first").
 
     Returns
     -------
@@ -468,26 +475,26 @@ def generateTimeSeries(output_template: Path,
     auxiliary_ds.set_auto_scale(False)
     auxiliary_ds.set_always_mask(False)
 
+    if "time_bnds" in auxiliary_variables and time_bnd_method == "average":
+        time_start = (auxiliary_ds["time_bnds"][0, 0] + auxiliary_ds["time_bnds"][0, 1]) / 2
+        time_end = (auxiliary_ds["time_bnds"][-1, 0] + auxiliary_ds["time_bnds"][-1, 1]) / 2
+    elif "time_bnds" in auxiliary_variables and time_bnd_method == "first":
+        time_start = auxiliary_ds["time_bnds"][0, 0]
+        time_end = auxiliary_ds["time_bnds"][-1, 0]
+    elif "time_bnds" in auxiliary_variables and time_bnd_method == "second":
+        time_start = auxiliary_ds["time_bnds"][0, 1]
+        time_end = auxiliary_ds["time_bnds"][-1, 1]
+    elif "time_bnds" in auxiliary_variables and time_bnd_method == "exterior":
+        time_start = auxiliary_ds["time_bnds"][0, 0]
+        time_end = auxiliary_ds["time_bnds"][-1, 1]
+    else:
+        time_start = auxiliary_ds["time"][0]
+        time_end = auxiliary_ds["time"][-1]
+
     time_units = auxiliary_ds["time"].units
     time_calendar = auxiliary_ds["time"].calendar
-
-    if "time_bnds" in auxiliary_variables and time_bnd_avg:
-        time_start = cftime.num2date((auxiliary_ds["time_bnds"][0, 0] + auxiliary_ds["time_bnds"][0, 1]) / 2,
-                                     units=time_units,
-                                     calendar=time_calendar)
-        time_end = cftime.num2date((auxiliary_ds["time_bnds"][-1, 0] + auxiliary_ds["time_bnds"][-1, 0]) / 2,
-                                   units=time_units,
-                                   calendar=time_calendar)
-    else:
-        time_start = cftime.num2date(auxiliary_ds["time"][0],
-                                     units=time_units,
-                                     calendar=time_calendar)
-        time_end = cftime.num2date(auxiliary_ds["time"][-1],
-                                   units=time_units,
-                                   calendar=time_calendar)
-
-    time_start_str = time_start.strftime(time_str_format)
-    time_end_str = time_end.strftime(time_str_format)
+    time_start_str = cftime.num2date(time_start, units=time_units, calendar=time_calendar).strftime(time_str_format)
+    time_end_str = cftime.num2date(time_end, units=time_units, calendar=time_calendar).strftime(time_str_format)
 
     auxiliary_variable_data = {}
     for auxiliary_var in auxiliary_variables:
