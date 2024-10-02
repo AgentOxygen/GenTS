@@ -393,7 +393,7 @@ def generateTimeSeries(output_template: Path,
                        overwrite: bool = False,
                        debug_timing: bool = True,
                        version: str = "source",
-                       time_bnd_method: str = "first") -> tuple:
+                       time_bnd_method: str = "ignore") -> tuple:
     r"""Generates timeseries files from history files.
 
     This is the primary function for generating the timeseries files and
