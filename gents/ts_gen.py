@@ -393,7 +393,7 @@ def generateTimeSeries(output_template: Path,
                        overwrite: bool = False,
                        debug_timing: bool = True,
                        version: str = "source",
-                       time_bnd_method: str = "ignore") -> tuple:
+                       time_bnds_method: str = "ignore") -> tuple:
     r"""Generates timeseries files from history files.
 
     This is the primary function for generating the timeseries files and
@@ -446,7 +446,7 @@ def generateTimeSeries(output_template: Path,
     version : str
         Software version being used, included as an attribute in the generated
         timeseries files. (Default: 'source')
-    time_bnd_method: str
+    time_bnds_method: str
         Which method to use when labeling the start and end timestamps for each
         output timeseries file by reading 'time_bnds':
             "first" - Uses the first entry in 'time_bnds' at start/stop times
@@ -475,16 +475,16 @@ def generateTimeSeries(output_template: Path,
     auxiliary_ds.set_auto_scale(False)
     auxiliary_ds.set_always_mask(False)
 
-    if "time_bnds" in auxiliary_variables and time_bnd_method == "average":
+    if "time_bnds" in auxiliary_variables and time_bnds_method == "average":
         time_start = (auxiliary_ds["time_bnds"][0, 0] + auxiliary_ds["time_bnds"][0, 1]) / 2
         time_end = (auxiliary_ds["time_bnds"][-1, 0] + auxiliary_ds["time_bnds"][-1, 1]) / 2
-    elif "time_bnds" in auxiliary_variables and time_bnd_method == "first":
+    elif "time_bnds" in auxiliary_variables and time_bnds_method == "first":
         time_start = auxiliary_ds["time_bnds"][0, 0]
         time_end = auxiliary_ds["time_bnds"][-1, 0]
-    elif "time_bnds" in auxiliary_variables and time_bnd_method == "second":
+    elif "time_bnds" in auxiliary_variables and time_bnds_method == "second":
         time_start = auxiliary_ds["time_bnds"][0, 1]
         time_end = auxiliary_ds["time_bnds"][-1, 1]
-    elif "time_bnds" in auxiliary_variables and time_bnd_method == "exterior":
+    elif "time_bnds" in auxiliary_variables and time_bnds_method == "exterior":
         time_start = auxiliary_ds["time_bnds"][0, 0]
         time_end = auxiliary_ds["time_bnds"][-1, 1]
     else:
