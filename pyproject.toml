@@ -11,6 +11,12 @@ authors = [
 description = "A useful tool for post-processing CESM2 history files into the timeseries format."
 readme = "README.md"
 requires-python = ">=3.10.13"
+dependencies = [
+  "numpy",
+  "netcdf4",
+  "dask",
+  "cftime"
+]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
