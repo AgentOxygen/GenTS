@@ -723,6 +723,7 @@ class ModelOutputDatabase:
         self.log("Initializing...")
         self.__hf_head_dir = Path(hf_head_dir)
         self.__ts_head_dir = Path(ts_head_dir)
+        self.__dir_name_swaps = dir_name_swaps
         self.__overwrite = overwrite
         self.__timeseries_year_length = timeseries_year_length
         self.__include_variables = include_variables
@@ -759,9 +760,6 @@ class ModelOutputDatabase:
                 self.__history_file_paths.append(path)
         self.log("\tDone.")
         start_t = time()
-        self.log("Grouping history files... ")
-        self.__timeseries_group_paths = generateTimeSeriesGroupPaths(self.__history_file_paths, hf_head_dir, ts_head_dir, dir_name_swaps=dir_name_swaps)
-        self.log("Done.")
 
     def log(self, msg: str, end: str = "\n", level: int = 1):
         r"""Logs some output to internal logs and outputs to the standard
@@ -956,7 +954,9 @@ class ModelOutputDatabase:
             self.log("Dask client not detected, proceeding serially.")
             self.log("\tGathering metadata...")
             for path in self.__history_file_paths:
-                self.__history_file_metas[path] = getHistoryFileMetaData(path)
+                meta = getHistoryFileMetaData(path)
+                if "timeseries_process" not in meta["global_attrs"]:
+                    self.__history_file_metas[path] = meta
             self.log("\t Done.")
         else:
             self.log("Dask client detected.")
@@ -965,8 +965,16 @@ class ModelOutputDatabase:
             bag = db.from_sequence([str(path) for path in self.getHistoryFilePaths()], partition_size=1).map(getHistoryFileMetaData)
             metas = bag.compute()
             for index, path in enumerate(self.__history_file_paths):
-                self.__history_file_metas[path] = metas[index]
+                if "timeseries_process" not in metas[index]["global_attrs"]:
+                    self.__history_file_metas[path] = metas[index]
             self.log("\tDone.")
+
+        self.log("Grouping history files... ")
+        self.__timeseries_group_paths = generateTimeSeriesGroupPaths(list(self.__history_file_metas.keys()),
+                                                                     self.__hf_head_dir,
+                                                                     self.__ts_head_dir,
+                                                                     dir_name_swaps=self.__dir_name_swaps)
+        self.log("Done.")
 
         start_t = time()
         self.log("\tComputing timeseries arguments...")
