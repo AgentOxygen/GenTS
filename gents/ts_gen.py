@@ -317,6 +317,13 @@ def getHistoryFileMetaData(hs_file_path: Path) -> dict:
         else:
             meta["time"] = None
 
+        if "time_bnds" in meta["variables"]:
+            meta["time_bnds"] = np.array([
+                cftime.num2date(ds["time_bnds"][:, 0], units=ds["time"].units, calendar=ds["time"].calendar),
+                cftime.num2date(ds["time_bnds"][:, 0], units=ds["time"].units, calendar=ds["time"].calendar)])
+        else:
+            meta["time_bnds"] = None
+        
         for variable in meta["variables"]:
             meta["variable_meta"][variable] = {}
             if type(ds[variable]) is netCDF4._netCDF4._Variable:
@@ -977,18 +984,20 @@ class ModelOutputDatabase:
         self.__generateTimeSeries_args = []
         for output_template in self.getTimeSeriesGroups():
             hf_paths = self.getTimeSeriesGroups()[output_template]
-
+            
             if self.__time_bnds_method == "first":
-                pass
+                years = [self.getHistoryFileMetaData(hf_path)["time_bnds"][0].year for hf_path in hf_paths]
             elif self.__time_bnds_method == "second":
-                pass
+                years = [self.getHistoryFileMetaData(hf_path)["time_bnds"][1].year for hf_path in hf_paths]
             elif self.__time_bnds_method == "average":
-                pass
-            elif self.__time_bnds_method == "exterior":
-                pass
+                years = [(self.getHistoryFileMetaData(hf_path)["time_bnds"][1].year + self.getHistoryFileMetaData(hf_path)["time_bnds"][1].year) / 2 for hf_path in hf_paths]
             else:
-                years = [self.getHistoryFileMetaData(hf_path)["time"][0].year for hf_path in hf_paths]
+                try:
+                    years = [self.getHistoryFileMetaData(hf_path)["time"][0].year for hf_path in hf_paths]
+                except TypeError:
+                    continue
 
+            
             for start_index, end_index in getYearSlices(years, self.__timeseries_year_length):
                 within_range = True
                 if self.__year_start is not None and years[start_index] < self.__year_start:
