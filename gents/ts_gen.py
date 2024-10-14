@@ -520,6 +520,24 @@ def generateTimeSeries(output_template: Path,
         }
     auxiliary_ds.close()
 
+    ts_paths_and_vars = {}
+    for primary_var in primary_variables:
+        ts_path = output_template.parent / f"{output_template.name}{primary_var}.{time_start_str}.{time_end_str}.nc"
+        if isfile(ts_path):
+            try:
+                ds = netCDF4.Dataset(ts_path, mode="r")
+                attrs = {key: getattr(ds, key) for key in ds.ncattrs()}
+                ds.close()
+                if not overwrite and attrs["timeseries_process"] == "complete":
+                    continue
+                else:
+                    remove(ts_path)
+                    ts_paths_and_vars[primary_var] = ts_path
+            except OSError:
+                remove(ts_path)
+        else:
+            ts_paths_and_vars[primary_var] = ts_path
+    
     primary_ds = netCDF4.MFDataset(hf_paths, aggdim="time", exclude=auxiliary_variables)
     primary_ds.set_auto_mask(False)
     primary_ds.set_auto_scale(False)
@@ -531,22 +549,10 @@ def generateTimeSeries(output_template: Path,
         compression = "bzip2"
 
     ts_paths = []
-    for primary_var in primary_variables:
-        ts_path = output_template.parent / f"{output_template.name}{primary_var}.{time_start_str}.{time_end_str}.nc"
+    for primary_var in ts_paths_and_vars:
+        ts_path = ts_paths_and_vars[primary_var]
         ts_paths.append(ts_path)
-        if isfile(ts_path) and not overwrite:
-            try:
-                ds = netCDF4.Dataset(ts_path, mode="r")
-                attrs = {key: getattr(ds, key) for key in ds.ncattrs()}
-                ds.close()
-                if "timeseries_process_complete" in attrs and attrs["timeseries_process"] == "complete":
-                    continue
-                else:
-                    remove(ts_path)
-            except OSError:
-                remove(ts_path)
-        elif isfile(ts_path) and overwrite:
-            remove(ts_path)
+        
         ts_ds = netCDF4.Dataset(ts_path, mode="w")
         for dim_index, dim in enumerate(primary_ds[primary_var].dimensions):
             if dim not in ts_ds.dimensions:
