@@ -1,6 +1,6 @@
 # **Gen**erate **T**ime **S**eries Tool (GenTS)
 
-#### *Converting from history files to time series files used to be painful, but not anymore with GenTS, a very gentlemanly software tool.*
+#### *Converting from history files to time series files used to be painful, but not anymore with GenTS.*
 
 >Cameron Cummins<br>
 Computational Engineer<br>
