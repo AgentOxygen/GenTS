@@ -105,10 +105,11 @@ def generate_time_series(hf_paths, ts_out_dir, prefix=None, complevel=0, compres
             primary_vars.append(variable)
     
     for variable in primary_vars:
+        ts_string = get_timestamp_str(agg_hf_ds["time"])
         if prefix is not None:
-            ts_out_path = f"{ts_out_dir}/{prefix}.{variable}.{get_timestamp_str(agg_hf_ds["time"])}.nc"
+            ts_out_path = f"{ts_out_dir}/{prefix}.{variable}.{ts_string}.nc"
         else:
-            ts_out_path = f"{ts_out_dir}/{variable}.{get_timestamp_str(agg_hf_ds["time"])}.nc"
+            ts_out_path = f"{ts_out_dir}/{variable}.{ts_string}.nc"
 
         if not overwrite and isfile(ts_out_path):
             # Can add a check here to see if the file is readable and the version attribute is added
