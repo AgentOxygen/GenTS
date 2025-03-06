@@ -14,15 +14,15 @@ from gents.read import get_groups_from_path, generate_output_template
 from gents.timeseries import generate_time_series
 
 
-def generate_time_series_from_directory(input_head_dir, output_head_dir, complevel=0, compression=None, overwrite=True)
+def generate_time_series_from_directory(input_head_dir, output_head_dir, complevel=0, compression=None, overwrite=True, dask_client=None):
     if dask_client is None:
         dask_client = dask.distributed.client._get_global_client()
 
-    group_metas = get_groups_from_path(head_dir, dask_client=client)
+    group_metas = get_groups_from_path(input_head_dir, dask_client=dask_client)
     
     dask_gents = []
     for group_id in list(group_metas.keys()):
-        template_path = generate_output_template(head_dir, group_id, output_head_dir=output_head_dir)
+        template_path = generate_output_template(input_head_dir, group_id, output_head_dir=output_head_dir)
         group_hf_paths = [meta_ds.get_path() for meta_ds in group_metas[group_id]]
         delayed_func = dask.delayed(generate_time_series)(
             group_hf_paths,
