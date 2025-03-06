@@ -262,20 +262,37 @@ def filter_by_variables(meta_datasets):
     return (majority, others)
 
 
+def sort_metas_by_time(metas):
+    time_sorted_metas = [metas[0]]
+
+    if len(metas) > 1:
+        for meta in metas[1:]:
+            meta_sorted = False
+            
+            for index in range(len(time_sorted_metas)):
+                if meta.get_cftimes()[0] < time_sorted_metas[index].get_cftimes()[0]:
+                    time_sorted_metas.insert(index, meta)
+                    meta_sorted = True
+                    break
+            if not meta_sorted:
+                time_sorted_metas.append(meta)
+
+    return time_sorted_metas
+
+    
 def check_groups_by_variables(sliced_groups):
     filtered_sliced_groups = {}
     for group in sliced_groups:
         meta_datasets = sliced_groups[group]
         majority, others = filter_by_variables(meta_datasets)
         if majority is not None:
-            filtered_sliced_groups[group] = majority
+            filtered_sliced_groups[group] = sort_metas_by_time(majority)
             if others is not None:
                 for meta_ds in others:
                     log(f"Dataset has inconsistent variable list with directory group: {meta_ds.get_path()}")
         else:
             log(f"Unable to determine majority dataset, check variable configurations between directory groups, group ID: {group}")
     return filtered_sliced_groups
-
 
 
 def get_groups_from_path(head_dir, slice_size_years=10, dask_client=None):
