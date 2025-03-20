@@ -365,7 +365,7 @@ def get_metas_from_paths(paths, dask_client=None):
     ds_metas = dask_client.gather(ds_metas_futures)
     del ds_metas_futures
     
-    hf_to_meta_map = {path: ds_metas[index] for index, path in enumerate(paths) if ds_metas[index] is not None}
+    hf_to_meta_map = {path: ds_metas[index] for index, path in enumerate(paths) if ds_metas[index] is not None and ds_metas[index].get_cftime_bounds() is not None}
     return hf_to_meta_map
 
 
