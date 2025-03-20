@@ -18,6 +18,68 @@ import netCDF4
 import dask
 
 
+def is_ds_within_years(ds_meta, min_year, max_year):
+    time_bounds = ds_meta.get_cftime_bounds()[0]
+    year = (time_bounds[0].year + time_bounds[1].year) / 2
+
+    if min_year <= year <= max_year:
+        return True
+    else:
+        return False
+
+
+def apply_filter(meta_ds, filter_dict):
+    if "year_bounds" in filter_dict:
+        min_year, max_year = filter_dict["year_bounds"]
+        if is_ds_within_years(meta_ds, min_year, max_year):
+            return True
+    return False
+
+
+def apply_inclusive_filters(path_meta_map, filters):
+    filtered_mapping = {}
+
+    for path in path_meta_map:
+        meta_ds = path_meta_map[path]
+    
+        for tag in filters:
+            if tag in str(path) and apply_filter(meta_ds, filters[tag]):
+                filtered_mapping[path] = meta_ds
+                break
+    return filtered_mapping
+
+
+def apply_exclusive_filters(path_meta_map, filters):
+    filtered_mapping = {}
+    for path in path_meta_map:
+        tag_found = False
+        for tag in filters:
+            if tag in str(path):
+                tag_found = True
+                break
+
+        if not tag_found:
+            filtered_mapping[path] = path_meta_map[path]
+        
+    return filtered_mapping
+
+
+def check_config(config):
+    assert "name" in config
+    assert "include" in config
+    assert "exclude" in config
+    assert type(config["include"]) is dict or config["include"] is None
+    assert type(config["exclude"]) is list or config["exclude"] is None
+
+
+def get_default_config():
+    return {
+        "name": "default",
+        "include": None,
+        "exclude": None
+    }
+
+
 def find_files(head_path, pattern):
     """
     Search for files in the specified head directory and all subdirectories that match the given wildcard pattern.
@@ -295,19 +357,23 @@ def check_groups_by_variables(sliced_groups):
     return filtered_sliced_groups
 
 
-def get_groups_from_path(head_dir, slice_size_years=10, dask_client=None):
+def get_metas_from_paths(paths, dask_client=None):
     if dask_client is None:
         dask_client = dask.distributed.client._get_global_client()
-
-    paths = find_files(head_dir, "*.nc")
-
-    paths = [path for path in paths if "/rest/" not in str(path.parent)]
         
     ds_metas_futures = dask_client.map(get_meta_from_path, paths)
     ds_metas = dask_client.gather(ds_metas_futures)
     del ds_metas_futures
     
     hf_to_meta_map = {path: ds_metas[index] for index, path in enumerate(paths) if ds_metas[index] is not None}
+    return hf_to_meta_map
+
+
+def get_groups_from_paths(paths, slice_size_years=10, dask_client=None):
+    if dask_client is None:
+        dask_client = dask.distributed.client._get_global_client()
+
+    hf_to_meta_map = get_metas_from_paths(paths, dask_client=dask_client)
     
     groups = sort_hf_groups(list(hf_to_meta_map.keys()))
     sliced_groups = slice_hf_groups(groups, hf_to_meta_map, slice_size_years)
