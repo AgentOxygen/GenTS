@@ -43,14 +43,28 @@ def generate_time_series_from_directory(input_head_dir, output_head_dir, gents_c
         gents_config = get_default_config()
     
     paths = find_files(input_head_dir, "*.nc")
-    paths = [path for path in paths if "/rest/" not in str(path.parent)]
+
+    if gents_config["exclude"] is not None:
+        # path_to_meta_map = apply_exclusive_filters(path_to_meta_map, custom_filter["exclude"])
+        # Applying exclusive filters using just path for now. We can implement more advanced filters later
+        # This will save time on the metadata reads
+        print(len(paths))
+        filtered_paths = []
+        for path in paths:
+            exclude = False
+            for tag in gents_config["exclude"]:
+                if tag in str(path):
+                    exclude = True
+                    break
+            if not exclude:
+                filtered_paths.append(path) 
+        paths = filtered_paths
+        print(len(paths))
 
     check_config(gents_config)
     path_to_meta_map = get_metas_from_paths(paths, dask_client=dask_client)
     if gents_config["include"] is not None:
         path_to_meta_map = apply_inclusive_filters(path_to_meta_map, custom_filter["include"])
-    if gents_config["exclude"] is not None:
-        path_to_meta_map = apply_exclusive_filters(path_to_meta_map, custom_filter["exclude"])
 
     groups = sort_hf_groups(list(path_to_meta_map.keys()))
     sliced_groups = slice_hf_groups(groups, path_to_meta_map, slice_size_years)
