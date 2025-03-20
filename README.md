@@ -1,7 +1,5 @@
 # **Gen**erate **T**ime **S**eries Tool (GenTS)
 
-### Development "dev" Branch
-
 This branch of `GenTS` features a refactored version of the package that targets a more modular API design and friendlier user experience.
 
 Features:
@@ -11,7 +9,7 @@ Features:
 - [x] Custom time slicing
 - [x] Custom compression
 - [ ] Custom output directory structure
-- [ ] Customizeable per history file group
+- [x] Customizeable per history file group
 - [ ] Customizeable per variable
 - [ ] Resumeable process, can handle interrupts
 - [ ] Output validation
