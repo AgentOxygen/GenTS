@@ -64,7 +64,7 @@ def generate_time_series_from_directory(input_head_dir, output_head_dir, gents_c
     check_config(gents_config)
     path_to_meta_map = get_metas_from_paths(paths, dask_client=dask_client)
     if gents_config["include"] is not None:
-        path_to_meta_map = apply_inclusive_filters(path_to_meta_map, custom_filter["include"])
+        path_to_meta_map = apply_inclusive_filters(path_to_meta_map, gents_config["include"])
 
     groups = sort_hf_groups(list(path_to_meta_map.keys()))
     sliced_groups = slice_hf_groups(groups, path_to_meta_map, slice_size_years)
