@@ -1,1 +1,1 @@
-from gents.ts_gen import *
+from gents.gents import *
