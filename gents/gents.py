@@ -45,10 +45,6 @@ def generate_time_series_from_directory(input_head_dir, output_head_dir, gents_c
     paths = find_files(input_head_dir, "*.nc")
 
     if gents_config["exclude"] is not None:
-        # path_to_meta_map = apply_exclusive_filters(path_to_meta_map, custom_filter["exclude"])
-        # Applying exclusive filters using just path for now. We can implement more advanced filters later
-        # This will save time on the metadata reads
-        print(len(paths))
         filtered_paths = []
         for path in paths:
             exclude = False
@@ -59,15 +55,40 @@ def generate_time_series_from_directory(input_head_dir, output_head_dir, gents_c
             if not exclude:
                 filtered_paths.append(path) 
         paths = filtered_paths
-        print(len(paths))
 
     check_config(gents_config)
     path_to_meta_map = get_metas_from_paths(paths, dask_client=dask_client)
     if gents_config["include"] is not None:
         path_to_meta_map = apply_inclusive_filters(path_to_meta_map, gents_config["include"])
 
-    groups = sort_hf_groups(list(path_to_meta_map.keys()))
-    sliced_groups = slice_hf_groups(groups, path_to_meta_map, slice_size_years)
+    sliced_groups = {}
+    sliced_paths = []
+    
+    for tag in gents_config["include"]:
+        if tag != ".":
+            path_maps = {}
+            for path in path_to_meta_map:
+                if tag in path_to_meta_map[path].get_path():
+                    path_maps[path] = path_to_meta_map[path]
+                    sliced_paths.append(path)
+    
+            groups = sort_hf_groups(list(path_maps.keys()))
+            tag_groups = slice_hf_groups(groups, path_maps, gents_config["include"][tag]["chunk_years"])
+        
+            for group in tag_groups:
+                sliced_groups[group] = tag_groups[group]
+    
+    if "." in gents_config["include"]:
+        path_maps = {}
+        for path in path_to_meta_map:
+            if path not in sliced_paths:
+                path_maps[path] = path_to_meta_map[path]
+    
+        groups = sort_hf_groups(list(path_maps.keys()))
+        tag_groups = slice_hf_groups(groups, path_maps, gents_config["include"]["."]["chunk_years"])
+        for group in tag_groups:
+            sliced_groups[group] = tag_groups[group]
+    
     group_metas = check_groups_by_variables(sliced_groups)
     
     generate_time_series_from_meta_groups(group_metas, input_head_dir, output_head_dir, complevel, compression, overwrite, dask_client)
