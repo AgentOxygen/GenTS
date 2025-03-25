@@ -12,7 +12,7 @@ from os.path import isfile
 from os import remove, makedirs
 from cftime import num2date
 from gents.meta import get_attributes
-from gents.utils import get_version
+from gents.utils import get_version, log
 
 
 def is_var_secondary(variable: netCDF4._netCDF4._Variable,
@@ -47,7 +47,6 @@ def is_var_secondary(variable: netCDF4._netCDF4._Variable,
 
     return True
 
-
 def get_timestamp_str(times):
     """
     Creates timestamp string to describe time range for netCDF dataset
@@ -79,6 +78,15 @@ def get_timestamp_str(times):
         end_t = num2date(times[-1], units=times.units, calendar=times.calendar)
         return f"{start_t.strftime(time_format)}.{end_t.strftime(time_format)}"
 
+
+def check_timeseries_integrity(ts_path: str):
+    try:
+        ts_ds = netCDF4.Dataset(path, mode="r")
+        if "gents_version" in get_attributes(ts_ds):
+            return True
+    except OSError:
+        log(f"Corrupt timeseries output: '{ts_path}'")
+    return False
 
 def generate_time_series(hf_paths, ts_out_dir, prefix=None, complevel=0, compression=None, overwrite=False):
     """
@@ -112,17 +120,20 @@ def generate_time_series(hf_paths, ts_out_dir, prefix=None, complevel=0, compres
         else:
             ts_out_path = f"{ts_out_dir}/{variable}.{ts_string}.nc"
 
-        if not overwrite and isfile(ts_out_path):
-            # Can add a check here to see if the file is readable and the version attribute is added
-            continue
-        elif overwrite and isfile(ts_out_path):
-            remove(ts_out_path)
-
         if not ts_out_dir.exists():
             makedirs(ts_out_dir)
         
         var_ds = agg_hf_ds[variable]
-        ts_ds = netCDF4.Dataset(ts_out_path, mode="w")
+        
+        if overwrite and isfile(ts_out_path):
+            remove(ts_out_path)
+        elif not isfile(ts_out_path):
+            ts_ds = netCDF4.Dataset(ts_out_path, mode="w")
+        elif check_timeseries_integrity(ts_ds):
+            continue
+        else:
+            remove(ts_out_path)
+            ts_ds = netCDF4.Dataset(ts_out_path, mode="w")
         
         for index, dim in enumerate(var_ds.dimensions):
             if dim == "time":
