@@ -12,6 +12,7 @@ from os.path import isfile
 from os import remove, makedirs
 from cftime import num2date
 from gents.meta import get_attributes
+from gents.utils import get_version
 
 
 def is_var_secondary(variable: netCDF4._netCDF4._Variable,
@@ -172,8 +173,7 @@ def generate_time_series(hf_paths, ts_out_dir, prefix=None, complevel=0, compres
             ts_ds[secondary_var].setncatts(get_attributes(svar_ds))
             svar_data[:] = secondary_vars_data[secondary_var]
         
-        # Put version here later
-        ts_ds.setncatts(global_attrs | {"gents_version": "put version here later"})
+        ts_ds.setncatts(global_attrs | {"gents_version": str(get_version())})
         ts_ds.close()
         output_paths.append(ts_out_path)
     return output_paths
