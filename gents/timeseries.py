@@ -127,13 +127,13 @@ def generate_time_series(hf_paths, ts_out_dir, prefix=None, complevel=0, compres
         
         if overwrite and isfile(ts_out_path):
             remove(ts_out_path)
-        elif not isfile(ts_out_path):
-            ts_ds = netCDF4.Dataset(ts_out_path, mode="w")
-        elif check_timeseries_integrity(ts_ds):
-            continue
-        else:
-            remove(ts_out_path)
-            ts_ds = netCDF4.Dataset(ts_out_path, mode="w")
+        elif not overwrite and isfile(ts_out_path):
+            if check_timeseries_integrity(ts_ds):
+                continue
+            else:
+                remove(ts_out_path)
+
+        ts_ds = netCDF4.Dataset(ts_out_path, mode="w")
         
         for index, dim in enumerate(var_ds.dimensions):
             if dim == "time":
