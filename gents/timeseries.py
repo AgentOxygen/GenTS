@@ -88,6 +88,7 @@ def check_timeseries_integrity(ts_path: str):
         log(f"Corrupt timeseries output: '{ts_path}'")
     return False
 
+
 def generate_time_series(hf_paths, ts_out_dir, prefix=None, complevel=0, compression=None, overwrite=False):
     """
     Creates timeseries dataset from specified history file paths.
@@ -120,9 +121,13 @@ def generate_time_series(hf_paths, ts_out_dir, prefix=None, complevel=0, compres
         else:
             ts_out_path = f"{ts_out_dir}/{variable}.{ts_string}.nc"
 
-        if not ts_out_dir.exists():
-            makedirs(ts_out_dir)
-        
+        # Making directories is not thread-safe
+        try:
+            if not ts_out_dir.exists():
+                makedirs(ts_out_dir)
+        except FileExistsError:
+            pass
+            
         var_ds = agg_hf_ds[variable]
         
         if overwrite and isfile(ts_out_path):
