@@ -89,7 +89,7 @@ def check_timeseries_integrity(ts_path: str):
     return False
 
 
-def generate_time_series(hf_paths, ts_out_dir, prefix=None, complevel=0, compression=None, overwrite=False):
+def generate_time_series(hf_paths, ts_out_dir, prefix=None, complevel=0, compression=None, overwrite=False, target_variable=None):
     """
     Creates timeseries dataset from specified history file paths.
 
@@ -113,7 +113,13 @@ def generate_time_series(hf_paths, ts_out_dir, prefix=None, complevel=0, compres
             secondary_vars_data[variable] = agg_hf_ds[variable][:]
         else:
             primary_vars.append(variable)
-    
+
+    if target_variable is not None:
+        if target_variable in list(secondary_vars_data.keys()):
+            return output_paths
+        else:
+            primary_vars = [target_variable]
+        
     for variable in primary_vars:
         ts_string = get_timestamp_str(agg_hf_ds["time"])
         if prefix is not None:
