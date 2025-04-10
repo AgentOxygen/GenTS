@@ -161,11 +161,11 @@ def sort_hf_groups(hf_paths, delimiter=".", substring_index=2):
             substrings.append(parsed)
         
         for substring in np.unique(substrings):
-            hf_groups[f"{parent_path}/{substring}"] = []
+            hf_groups[f"{parent_path}/{substring}*"] = []
             for path in group_paths:
                 parsed = path.name[:find_all_indices(path.name, delimiter)[-1 * substring_index]]
                 if substring == parsed:
-                    hf_groups[f"{parent_path}/{substring}"].append(path)
+                    hf_groups[f"{parent_path}/{substring}*"].append(path)
         
     return hf_groups
 
