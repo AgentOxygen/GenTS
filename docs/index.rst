@@ -6,12 +6,8 @@
 GenTS documentation
 ===================
 
-Add your content using ``reStructuredText`` syntax. See the
-`reStructuredText <https://www.sphinx-doc.org/en/master/usage/restructuredtext/index.html>`_
-documentation for details.
-
+Generate Time Series (GenTS) is an open-source Python library and tool for converting output from Earth System Models and Global Climate models in the "history file" format to the "time series" format. This package and the documentation are still a work in progress.
 
 .. toctree::
-   :maxdepth: 2
-   :caption: Contents:
-
+    user
+    api

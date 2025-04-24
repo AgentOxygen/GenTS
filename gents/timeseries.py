@@ -99,6 +99,7 @@ def generate_time_series(hf_paths, ts_out_dir, prefix=None, complevel=0, compres
     :param complevel: Compression level to apply through netCDF4 API.
     :param compression: Compression algorithm to use through netCDF4 API.
     :param overwrite: Whether or not to delete existing time series files with the same names as those being generated.
+    :param target_variable: Primary variable to extract from history files.
     :return: List of paths to time series generated.
     """
     agg_hf_ds = netCDF4.MFDataset(hf_paths, aggdim="time")

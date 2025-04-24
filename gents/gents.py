@@ -15,6 +15,19 @@ from gents.timeseries import generate_time_series, is_var_secondary
 
 
 def generate_time_series_from_meta_groups(group_metas, input_head_dir, output_head_dir, parallel_by_vars=False, complevel=0, compression=None, overwrite=True, dask_client=None):
+    """
+    Generates time series files from history file groups defined by metadata class objects.
+
+    :param group_metas: Dictionary mapping group IDs (key) to history file metadata objects (value).
+    :param input_head_dir: Head directory to history file repository.
+    :param output_head_dir: Head directory to write time series files and subdirectory structure to.
+    :param parallel_by_vars: Parallelize by primary variables. Can have substantial performance uplift, but not well tested for netCDF3.
+    :param complevel: Compression level to apply
+    :param compression: Compression algorithm to use.
+    :param overwrite: Whether or not to overwrite existing time series files.
+    :param dask_client: Dask client to use, defaults to global client if unspecified.
+    :return: Paths to time series files generated.
+    """
     if dask_client is None:
         dask_client = dask.distributed.client._get_global_client()
 
@@ -46,6 +59,7 @@ def generate_time_series_from_meta_groups(group_metas, input_head_dir, output_he
             )
             dask_gents.append(delayed_func)
     ts_paths = dask.compute(*dask_gents)
+    return ts_paths
 
 
 def generate_time_series_from_directory(input_head_dir, output_head_dir, gents_config=None, parallel_by_vars=False, complevel=0, compression=None, overwrite=True, dask_client=None, slice_size_years=10):
@@ -104,4 +118,4 @@ def generate_time_series_from_directory(input_head_dir, output_head_dir, gents_c
     
     group_metas = check_groups_by_variables(sliced_groups)
     
-    generate_time_series_from_meta_groups(group_metas, input_head_dir, output_head_dir, parallel_by_vars, complevel, compression, overwrite, dask_client)
+    return generate_time_series_from_meta_groups(group_metas, input_head_dir, output_head_dir, parallel_by_vars, complevel, compression, overwrite, dask_client)
