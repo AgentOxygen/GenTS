@@ -16,52 +16,7 @@ import fnmatch
 import cftime
 import netCDF4
 import dask
-
-
-def is_ds_within_years(ds_meta, min_year, max_year):
-    time_bounds = ds_meta.get_cftime_bounds()[0]
-    year = (time_bounds[0].year + time_bounds[1].year) / 2
-
-    if min_year <= year <= max_year:
-        return True
-    else:
-        return False
-
-
-def apply_filter(meta_ds, filter_dict):
-    if "year_bounds" in filter_dict:
-        min_year, max_year = filter_dict["year_bounds"]
-        if is_ds_within_years(meta_ds, min_year, max_year):
-            return True
-    return False
-
-
-def apply_inclusive_filters(path_meta_map, filters):
-    filtered_mapping = {}
-
-    for path in path_meta_map:
-        meta_ds = path_meta_map[path]
-    
-        for tag in filters:
-            if tag in str(path) and apply_filter(meta_ds, filters[tag]):
-                filtered_mapping[path] = meta_ds
-                break
-    return filtered_mapping
-
-
-def apply_exclusive_filters(path_meta_map, filters):
-    filtered_mapping = {}
-    for path in path_meta_map:
-        tag_found = False
-        for tag in filters:
-            if tag in str(path):
-                tag_found = True
-                break
-
-        if not tag_found:
-            filtered_mapping[path] = path_meta_map[path]
-        
-    return filtered_mapping
+import warnings
 
 
 def check_config(config):
@@ -288,6 +243,16 @@ def generate_output_template(hf_head_dir, group_path_id, output_head_dir=None, d
     return output_template
 
 
+def is_ds_within_years(ds_meta, min_year, max_year):
+    time_bounds = ds_meta.get_cftime_bounds()[0]
+    year = (time_bounds[0].year + time_bounds[1].year) / 2
+
+    if min_year <= year <= max_year:
+        return True
+    else:
+        return False
+
+
 def filter_by_variables(meta_datasets):
     variable_sets = {}
     for index in range(len(meta_datasets)):
@@ -357,38 +322,9 @@ def check_groups_by_variables(sliced_groups):
     return filtered_sliced_groups
 
 
-def get_metas_from_paths(paths, dask_client=None):
-    if dask_client is None:
-        dask_client = dask.distributed.client._get_global_client()
-    
-    ds_metas_futures = []
-    for index in range(0, len(paths), 10000):
-        ds_metas_subset = dask_client.map(get_meta_from_path, paths[index:index + 10000])
-        ds_metas_futures += ds_metas_subset
-    
-    ds_metas = dask_client.gather(ds_metas_futures, direct=True)
-    del ds_metas_futures
-    
-    hf_to_meta_map = {path: ds_metas[index] for index, path in enumerate(paths) if ds_metas[index] is not None and ds_metas[index].get_cftime_bounds() is not None}
-    return hf_to_meta_map
-
-
-def get_groups_from_paths(paths, slice_size_years=10, dask_client=None):
-    if dask_client is None:
-        dask_client = dask.distributed.client._get_global_client()
-
-    hf_to_meta_map = get_metas_from_paths(paths, dask_client=dask_client)
-    
-    groups = sort_hf_groups(list(hf_to_meta_map.keys()))
-    sliced_groups = slice_hf_groups(groups, hf_to_meta_map, slice_size_years)
-    filtered_sliced_groups = check_groups_by_variables(sliced_groups)
-
-    return filtered_sliced_groups
-
-
 class HFCollection:
     def __init__(self, hf_dir, dask_client=None):
-        self.__raw_paths = find_files(input_head_dir, "*.nc")
+        self.__raw_paths = find_files(hf_dir, "*.nc")
 
         if dask_client is None:
             self.__client = dask.distributed.client._get_global_client()
@@ -435,7 +371,7 @@ class HFCollection:
             ds_metas_subset = self.__client.map(get_meta_from_path, paths[index:index + 10000])
             ds_metas_futures += ds_metas_subset
         
-        ds_metas = client.gather(ds_metas_futures, direct=True)
+        ds_metas = self.__client.gather(ds_metas_futures, direct=True)
         del ds_metas_futures
         
         for index, path in enumerate(paths):
@@ -461,9 +397,7 @@ class HFCollection:
 
     def include_years(self, start_year, end_year, glob_patterns=["*"]):
         self.check_pulled()
-
         remove_paths = []
-        
         for pattern in glob_patterns:
             for path in self.__hf_to_meta_map:
                 if fnmatch.fnmatch(path, pattern):
@@ -488,7 +422,7 @@ class HFCollection:
         
         for group in hf_groups:
             hf_paths = hf_groups[group]
-            if not fnmatch.fnmatch(group, pattern):
+            if pattern is not None and not fnmatch.fnmatch(group, pattern):
                 sliced_groups[group] = hf_paths
                 continue
             
@@ -496,7 +430,7 @@ class HFCollection:
                 warnings.warn("Cannot slice history file group of size 1.", RuntimeWarning)
                 continue
             else:
-                group_meta_map = {path: hf_to_meta_map[path] for path in hf_paths}
+                group_meta_map = {path: self.__hf_to_meta_map[path] for path in hf_paths}
                 
                 min_year, max_year = get_year_bounds(group_meta_map)
                 time_slices = calculate_year_slices(slice_size_years, min_year, max_year+1)
@@ -506,7 +440,7 @@ class HFCollection:
                 hf_slices = {}
                 variable_set = None
                 for hf_path in hf_paths:
-                    meta_ds = hf_to_meta_map[hf_path]
+                    meta_ds = self.__hf_to_meta_map[hf_path]
                     time_bnds = meta_ds.get_cftime_bounds()[0]
         
                     if time_bnds is not None:
@@ -523,6 +457,6 @@ class HFCollection:
                             break
         
                 for time_slice in hf_slices:
-                    sliced_groups[f"{group}*{time_slice[0]}-{time_slice[1]}"] = hf_slices[time_slice]
+                    sliced_groups[f"{group}{time_slice[0]}-{time_slice[1]}"] = hf_slices[time_slice]
         self.__hf_groups = sliced_groups
         return self.__hf_groups
