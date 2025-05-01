@@ -15,38 +15,6 @@ from gents.meta import get_attributes
 from gents.utils import get_version, log
 
 
-def is_var_secondary(variable: netCDF4._netCDF4._Variable,
-                     secondary_vars: list = ["time_bnds", "time_bnd", "time_bounds", "time_bound"],
-                     secondary_dims: list = ["nbnd", "chars", "string_length", "hist_interval"],
-                     max_num_dims: int = 1,
-                     primary_dims: list = ["time"]) -> bool:
-    """
-    Determines if a variable is secondary or not (and then should be included in all time series files).
-    Criteria are applied in order of the parameters described.
-
-    :param dimensions: Dimensions for the variable.
-    :param secondary_dims: List of secondary variable names
-    :param secondary_dims: List of dimensions that make a variable secondary
-    :param max_num_dims: Maximum number of dimensions a secondary variable should have.
-    :param primary_dims: List of dimensions that make a variable primary (thus not secondary).
-    :return: True if the variable is secondary, false if not.
-    """
-    if variable.name in secondary_vars:
-        return True
-        
-    dims = np.unique(variable.dimensions)
-
-    for tag in secondary_dims:
-        if tag in dims:
-            return True
-
-    if len(dims) > max_num_dims:
-        for tag in primary_dims:
-            if tag in dims:
-                return False
-
-    return True
-
 def get_timestamp_str(times):
     """
     Creates timestamp string to describe time range for netCDF dataset
@@ -54,29 +22,33 @@ def get_timestamp_str(times):
     :param times: Time values for netCDF dataset in integer form with units and calendar attributes.
     :return: String containing appropriate timestamp.
     """
-    start_t = num2date(times[0], units=times.units, calendar=times.calendar)
+    calendar = times.calendar
+    units = times.units
+    data = np.sort(times[:])
+    
+    start_t = num2date(data[0], units=units, calendar=calendar)
     if times.shape[0] == 1:
-        return start_t.strftime("%Y-%m-%d-%H:%M:%S")
+        return start_t.strftime("%Y%m%d%H")
     else:
-        dt = num2date(times[1], units=times.units, calendar=times.calendar) - start_t
+        dt = num2date(data[1], units=units, calendar=calendar) - start_t
         minutes = dt.total_seconds() / 60
         hours = minutes / 60
         days = hours / 24
         months = days / 30
     
         if minutes < 1:
-            time_format = "%Y-%m-%d-%H:%M:%S"
+            time_format = "%Y%m%d%H%M%S"
         elif hours < 1:
-            time_format = "%Y-%m-%d-%H"
+            time_format = "%Y%m%d%H"
         elif days < 1:
-            time_format = "%Y-%m-%d"
+            time_format = "%Y%m%d"
         elif months < 1:
-            time_format = "%Y-%m"
+            time_format = "%Y%m"
         else:
             time_format = "%Y"
         
-        end_t = num2date(times[-1], units=times.units, calendar=times.calendar)
-        return f"{start_t.strftime(time_format)}.{end_t.strftime(time_format)}"
+        end_t = num2date(data[-1], units=units, calendar=calendar)
+        return f"{start_t.strftime(time_format)}-{end_t.strftime(time_format)}"
 
 
 def check_timeseries_integrity(ts_path: str):
@@ -89,7 +61,7 @@ def check_timeseries_integrity(ts_path: str):
     return False
 
 
-def generate_time_series(hf_paths, ts_out_dir, prefix=None, complevel=0, compression=None, overwrite=False, target_variable=None):
+def generate_time_series(hf_paths, ts_path_template, primary_vars, secondary_vars, complevel=0, compression=None, overwrite=False):
     """
     Creates timeseries dataset from specified history file paths.
 
@@ -105,36 +77,16 @@ def generate_time_series(hf_paths, ts_out_dir, prefix=None, complevel=0, compres
     agg_hf_ds = netCDF4.MFDataset(hf_paths, aggdim="time")
     
     global_attrs = get_attributes(agg_hf_ds)
-    primary_vars = []
     secondary_vars_data = {}
     output_paths = []
     
-    for variable in agg_hf_ds.variables:
-        if is_var_secondary(agg_hf_ds[variable]):
-            secondary_vars_data[variable] = agg_hf_ds[variable][:]
-        else:
-            primary_vars.append(variable)
-
-    if target_variable is not None:
-        if target_variable in list(secondary_vars_data.keys()):
-            return output_paths
-        else:
-            primary_vars = [target_variable]
-        
+    for variable in secondary_vars:
+        secondary_vars_data[variable] = agg_hf_ds[variable][:]
+    
     for variable in primary_vars:
         ts_string = get_timestamp_str(agg_hf_ds["time"])
-        if prefix is not None:
-            ts_out_path = f"{ts_out_dir}/{prefix}.{variable}.{ts_string}.nc"
-        else:
-            ts_out_path = f"{ts_out_dir}/{variable}.{ts_string}.nc"
+        ts_out_path = f"{ts_path_template}.{variable}.{ts_string}.nc"
 
-        # Making directories is not thread-safe
-        try:
-            if not ts_out_dir.exists():
-                makedirs(ts_out_dir)
-        except FileExistsError:
-            pass
-            
         var_ds = agg_hf_ds[variable]
         
         if overwrite and isfile(ts_out_path):
