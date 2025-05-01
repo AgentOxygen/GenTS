@@ -1,31 +1,22 @@
 # **Gen**erate **T**ime **S**eries Tool (GenTS)
 
-This branch of `GenTS` features a refactored version of the package that targets a more modular API design and friendlier user experience.
+[![Available on pypi](https://img.shields.io/pypi/v/HDP-python.svg)](https://pypi.org/project/GenTS/)
+[![Docs](https://readthedocs.org/projects/hdp/badge/?version=latest)](https://gents.readthedocs.io/en/latest/)
+![GitHub License](https://img.shields.io/github/license/AgentOxygen/GenTS)
 
-Features:
+The GenTS (Generate Time Series) is an open-source Python Package designed to simplify the post-processing of history files into time series files. This package includes streamlined functions that require minimal input to operate and a documented API for custom workflows.
 
-- [x] Automatic directory structure and file name parsing
-- [x] Automatic hsitory file grouping (h0, h1, h2, etc.)
-- [x] Custom time slicing
-- [x] Custom compression
-- [x] Custom output directory structure
-- [x] Customizeable per history file group
-- [ ] Customizeable per variable
-- [ ] Resumeable process, can handle interrupts
-- [ ] Output validation
-- [ ] Automated unit testing
-- [ ] Command line interface
-- [ ] Automatic Dask cluster configuration
+## Installation
 
-Tasks
-- [x] Build barebones functional version
-- [ ] Benchmark against other tools (PyReshaper, NCO)
-- [ ] Build well-documented API
-- [ ] Test on CESM1/2/3 model components, compare against existing time series
-- [ ] Couple with CMOR process
-- [ ] Test portability on other machines
+GenTS can be installed using `pip`:
 
-## Quick Start
+```
+pip install gents
+```
+
+To install from source, please view the [ReadTheDocs Documentation](https://gents.readthedocs.io/en/latest/).
+
+## Example
 
 Barebones starting example:
 
@@ -47,3 +38,27 @@ hf_collection.include_years(0, 20)
 
 paths = generate_ts_from_hfcollection(hf_collection, output_head_dir, overwrite=True, dask_client=client)
 ```
+
+## Future Planning
+Features:
+
+- [x] Automatic directory structure and file name parsing
+- [x] Automatic hsitory file grouping (h0, h1, h2, etc.)
+- [x] Custom time slicing
+- [x] Custom compression
+- [x] Custom output directory structure
+- [x] Customizeable per history file group
+- [ ] Customizeable per variable
+- [x] Resumeable process, can handle interrupts
+- [ ] Output validation
+- [ ] Automated unit testing
+- [ ] Command line interface
+- [ ] Automatic Dask cluster configuration
+
+Tasks
+- [x] Build barebones functional version
+- [ ] Benchmark against other tools (PyReshaper, NCO)
+- [x] Build well-documented API
+- [ ] Test on CESM1/2/3 model components, compare against existing time series
+- [ ] Couple with CMOR process
+- [x] Test portability on other machines
