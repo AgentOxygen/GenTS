@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 """
-read.py
+hfcollection.py
 
 Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
-Last Header Update: 01/28/25
+Last Header Update: 04/30/25
 """
 from gents.utils import log
 from gents.meta import get_meta_from_path
@@ -329,6 +329,7 @@ class HFCollection:
 
         self.__meta_pulled = False
         self.__hf_groups = None
+        self.__hf_dir = hf_dir
 
     def __getitem__(self, key):
         return self.__hf_to_meta_map[key]
@@ -350,13 +351,17 @@ class HFCollection:
 
     def keys(self):
         return self.__hf_to_meta_map.keys()
+
+    def get_input_dir(self):
+        """Return the input directory"""
+        return self.__hf_dir
     
     def check_pulled(self):
         """Checks if metadata has been pulled. If not, then pull."""
         if not self.__meta_pulled:
             self.pull_metadata()
     
-    def pull_metadata(self):
+    def pull_metadata(self, check_valid=True):
         """Pulls metadata associated with each history file in the collection."""
         ds_metas_futures = []
         paths = list(self.__hf_to_meta_map.keys())
@@ -369,9 +374,23 @@ class HFCollection:
         del ds_metas_futures
         
         for index, path in enumerate(paths):
-            if ds_metas[index] is not None and ds_metas[index].get_cftime_bounds() is not None:
+            if ds_metas[index] is not None:
                 self.__hf_to_meta_map[path] = ds_metas[index]
         self.__meta_pulled = True
+        if check_valid:
+            self.check_validity()
+
+    def check_validity(self):
+        """Checks validity of metadata for each history file. Removes missing or incomplete metadata."""
+        new_map = {}
+        removed = {}
+        for path in self.__hf_to_meta_map:
+            if self.__hf_to_meta_map[path] is not None and self.__hf_to_meta_map[path].is_valid():
+                new_map[path] = self.__hf_to_meta_map[path]
+            else:
+                removed[path] = self.__hf_to_meta_map[path]
+        self.__hf_to_meta_map = new_map
+        return removed
     
     def include_patterns(self, glob_patterns):
         """
@@ -483,5 +502,4 @@ class HFCollection:
         
                 for time_slice in hf_slices:
                     sliced_groups[f"{group}{time_slice[0]}-{time_slice[1]}"] = hf_slices[time_slice]
-        self.__hf_groups = sliced_groups
         return self.__hf_groups
