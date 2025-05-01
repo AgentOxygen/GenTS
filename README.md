@@ -1,7 +1,7 @@
 # **Gen**erate **T**ime **S**eries Tool (GenTS)
 
-[![Available on pypi](https://img.shields.io/pypi/v/HDP-python.svg)](https://pypi.org/project/GenTS/)
-[![Docs](https://readthedocs.org/projects/hdp/badge/?version=latest)](https://gents.readthedocs.io/en/latest/)
+[![Available on pypi](https://img.shields.io/pypi/v/GenTS.svg)](https://pypi.org/project/GenTS/)
+[![Docs](https://readthedocs.org/projects/GenTS/badge/?version=latest)](https://gents.readthedocs.io/en/latest/)
 ![GitHub License](https://img.shields.io/github/license/AgentOxygen/GenTS)
 
 The GenTS (Generate Time Series) is an open-source Python Package designed to simplify the post-processing of history files into time series files. This package includes streamlined functions that require minimal input to operate and a documented API for custom workflows.
