@@ -8,7 +8,7 @@ Features:
 - [x] Automatic hsitory file grouping (h0, h1, h2, etc.)
 - [x] Custom time slicing
 - [x] Custom compression
-- [ ] Custom output directory structure
+- [x] Custom output directory structure
 - [x] Customizeable per history file group
 - [ ] Customizeable per variable
 - [ ] Resumeable process, can handle interrupts
@@ -30,29 +30,20 @@ Tasks
 Barebones starting example:
 
 ```
-from dask.distributed import LocalCluster, Client
-from gents import generate_time_series_from_directory
+from gents.hfcollection import HFCollection
+from gents.gents import generate_ts_from_hfcollection
+from dask.distributed import LocalCluster
+from dask.distributed import Client
 
-cluster = LocalCluster(n_workers=20, threads_per_worker=1, memory_limit="2GB")
+cluster = LocalCluster(n_workers=30, threads_per_worker=1, memory_limit="2GB")
 client = cluster.get_client()
 
-input_head_dir = "/projects/dgs/persad_research/CMOR_TEST_DATA/MODEL_OUTPUT/CESM3/BLT1850_1degree/lnd/"
-output_head_dir = "/local1/BLT1850_1degree/lnd/"
+input_head_dir = "... case directory with model output ..."
+output_head_dir = "... scratch directory to output time series to ..."
 
-generate_time_series_from_directory(input_head_dir, output_head_dir, dask_client=client)
-```
+hf_collection = HFCollection(input_head_dir)
+hf_collection.include_patterns(["*/lnd/*"])
+hf_collection.include_years(0, 20)
 
-For analyzing metadata:
-
-```
-from dask.distributed import LocalCluster, Client
-from gents.read import get_groups_from_path
-
-cluster = LocalCluster(n_workers=20, threads_per_worker=1, memory_limit="2GB")
-client = cluster.get_client()
-
-input_head_dir = "/projects/dgs/persad_research/CMOR_TEST_DATA/MODEL_OUTPUT/CESM3/BLT1850_1degree/lnd/"
-output_head_dir = "/local1/BLT1850_1degree/lnd/"
-
-group_metas = get_groups_from_path(input_head_dir, dask_client=client)
+paths = generate_ts_from_hfcollection(hf_collection, output_head_dir, overwrite=True, dask_client=client)
 ```

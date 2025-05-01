@@ -4,14 +4,14 @@ API
 .. automodule:: gents.gents
    :members:
 
-.. automodule:: gents.read
+.. automodule:: gents.hfcollection
    :members:
 
 .. automodule:: gents.meta
    :members:
 
-.. automodule:: gents.utils
+.. automodule:: gents.timeseries
    :members:
 
-.. automodule:: gents.timeseries
+.. automodule:: gents.utils
    :members:
