@@ -8,6 +8,7 @@ Last Header Update: 04/30/25
 """
 from gents.utils import log
 from gents.meta import get_meta_from_path
+from dask.distributed import client
 from cftime import num2date
 from pathlib import Path
 import numpy as np
@@ -364,14 +365,19 @@ class HFCollection:
     def pull_metadata(self, check_valid=True):
         """Pulls metadata associated with each history file in the collection."""
         ds_metas_futures = []
+        ds_metas = []
         paths = list(self.__hf_to_meta_map.keys())
-        
-        for index in range(0, len(paths), 10000):
-            ds_metas_subset = self.__client.map(get_meta_from_path, paths[index:index + 10000])
-            ds_metas_futures += ds_metas_subset
-        
-        ds_metas = self.__client.gather(ds_metas_futures, direct=True)
-        del ds_metas_futures
+
+        if self.__client is None:
+            for path in paths:
+                ds_metas.append(get_meta_from_path(path))
+        else:
+            for index in range(0, len(paths), 10000):
+                ds_metas_subset = self.__client.map(get_meta_from_path, paths[index:index + 10000])
+                ds_metas_futures += ds_metas_subset
+            
+            ds_metas = self.__client.gather(ds_metas_futures, direct=True)
+            del ds_metas_futures
         
         for index, path in enumerate(paths):
             if ds_metas[index] is not None:
