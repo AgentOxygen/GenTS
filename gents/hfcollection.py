@@ -312,7 +312,7 @@ def check_groups_by_variables(sliced_groups):
 
 class HFCollection:
     """History File Collection, holds paths to all history files and serves as an interface for interpreting the metadata."""
-    def __init__(self, hf_dir, dask_client=None):
+    def __init__(self, hf_dir, dask_client=None, meta_map=None):
         """
         :param hf_dir: Head directory to history files
         :param dask_client: Dask client object. If not given, the global client is used instead.
@@ -325,10 +325,18 @@ class HFCollection:
             self.__client = dask_client
 
         self.__hf_to_meta_map = {}
-        for path in self.__raw_paths:
-            self.__hf_to_meta_map[path] = None
+        if meta_map is None:
+            for path in self.__raw_paths:
+                self.__hf_to_meta_map[path] = None
+        else:
+            self.__hf_to_meta_map = meta_map
 
-        self.__meta_pulled = False
+        self.__meta_pulled = True
+        for path in self.__hf_to_meta_map:
+            if self.__hf_to_meta_map[path] is None:
+                self.__meta_pulled = False
+                break
+        
         self.__hf_groups = None
         self.__hf_dir = hf_dir
 
@@ -361,6 +369,13 @@ class HFCollection:
         """Checks if metadata has been pulled. If not, then pull."""
         if not self.__meta_pulled:
             self.pull_metadata()
+
+    def copy(self, dask_client=None, meta_map=None):
+        if dask_client is None:
+            dask_client = self.__client
+        if meta_map is None:
+            meta_map = self.__hf_to_meta_map
+        return HFCollection(self.__hf_dir, dask_client=dask_client, meta_map=meta_map)
     
     def pull_metadata(self, check_valid=True):
         """Pulls metadata associated with each history file in the collection."""
@@ -409,7 +424,7 @@ class HFCollection:
             for pattern in glob_patterns:
                 if fnmatch.fnmatch(str(path), pattern):
                     filtered_path_map[path] = self.__hf_to_meta_map[path]
-        self.__hf_to_meta_map = filtered_path_map
+        return self.copy(meta_map=filtered_path_map)
 
     def exclude_patterns(self, glob_patterns):
         """
@@ -422,7 +437,7 @@ class HFCollection:
             for pattern in glob_patterns:
                 if not fnmatch.fnmatch(str(path), pattern):
                     filtered_path_map[path] = self.__hf_to_meta_map[path]
-        self.__hf_to_meta_map = filtered_path_map
+        return self.copy(meta_map=filtered_path_map)
 
     def include_years(self, start_year, end_year, glob_patterns=["*"]):
         """
@@ -435,18 +450,21 @@ class HFCollection:
         :param glob_patterns: Glob patterns to match history files that recieve this filter.
         """
         self.check_pulled()
+        filtered_path_map = self.__hf_to_meta_map
         remove_paths = []
         for pattern in glob_patterns:
-            for path in self.__hf_to_meta_map:
+            for path in filtered_path_map:
                 if fnmatch.fnmatch(path, pattern):
-                    meta_ds = self.__hf_to_meta_map[path]
+                    meta_ds = filtered_path_map[path]
                     avg_year = np.mean([ts[0].year for ts in meta_ds.get_cftime_bounds()])
                     
                     if not start_year <= avg_year <= end_year:
                         remove_paths.append(path)
 
         for path in remove_paths:
-            del self.__hf_to_meta_map[path]
+            del filtered_path_map[path]
+
+        return self.copy(meta_map=filtered_path_map)
 
     def get_groups(self):
         """
