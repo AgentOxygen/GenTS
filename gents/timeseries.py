@@ -61,7 +61,7 @@ def check_timeseries_integrity(ts_path: str):
     return False
 
 
-def generate_time_series(hf_paths, ts_path_template, primary_vars, secondary_vars, complevel=0, compression=None, overwrite=False):
+def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars, complevel=0, compression=None, overwrite=False):
     """
     Creates timeseries dataset from specified history file paths.
 
@@ -78,77 +78,74 @@ def generate_time_series(hf_paths, ts_path_template, primary_vars, secondary_var
     
     global_attrs = get_attributes(agg_hf_ds)
     secondary_vars_data = {}
-    output_paths = []
     
     for variable in secondary_vars:
         secondary_vars_data[variable] = agg_hf_ds[variable][:]
     
-    for variable in primary_vars:
-        ts_string = get_timestamp_str(agg_hf_ds["time"])
-        ts_out_path = f"{ts_path_template}.{variable}.{ts_string}.nc"
+    ts_string = get_timestamp_str(agg_hf_ds["time"])
+    ts_out_path = f"{ts_path_template}.{variable}.{ts_string}.nc"
 
-        var_ds = agg_hf_ds[variable]
-        
-        if overwrite and isfile(ts_out_path):
-            remove(ts_out_path)
-        elif not overwrite and isfile(ts_out_path):
-            if check_timeseries_integrity(ts_ds):
-                continue
-            else:
-                remove(ts_out_path)
-
-        ts_ds = netCDF4.Dataset(ts_out_path, mode="w")
-        
-        for index, dim in enumerate(var_ds.dimensions):
-            if dim == "time":
-                ts_ds.createDimension(dim, None)
-            else:
-                ts_ds.createDimension(dim, var_ds.shape[index])
+    var_ds = agg_hf_ds[variable]
     
-        var_data = ts_ds.createVariable(variable,
-                                        var_ds.dtype,
-                                        var_ds.dimensions,
-                                        complevel=complevel,
-                                        compression=compression)
-        var_data.set_auto_mask(False)
-        var_data.set_auto_scale(False)
-        var_data.set_always_mask(False)
-        
-        ts_ds[variable].setncatts(get_attributes(var_ds))
-    
-        time_chunk_size = 1
-        if len(var_ds.shape) > 0 and "time" in var_ds.dimensions:
-            for i in range(0, var_ds.shape[0], time_chunk_size):
-                if i + time_chunk_size > var_ds.shape[0]:
-                    time_chunk_size = var_ds.shape[0] - i
-                var_data[i:i + time_chunk_size] = var_ds[i:i + time_chunk_size]
+    if overwrite and isfile(ts_out_path):
+        remove(ts_out_path)
+    elif not overwrite and isfile(ts_out_path):
+        if check_timeseries_integrity(ts_ds):
+            return ts_out_path
         else:
-            var_data[:] = var_ds[:]
+            remove(ts_out_path)
+
+    ts_ds = netCDF4.Dataset(ts_out_path, mode="w")
     
-        for secondary_var in secondary_vars_data:
-            svar_ds = agg_hf_ds[secondary_var]
-            
-            for index, dim in enumerate(svar_ds.dimensions):
-                if dim not in ts_ds.dimensions:
-                    if dim == "time":
-                        ts_ds.createDimension(dim, None)
-                    else:
-                        ts_ds.createDimension(dim, svar_ds.shape[index])
-            
-            svar_data = ts_ds.createVariable(secondary_var,
-                                             svar_ds.dtype,
-                                             svar_ds.dimensions,
-                                             complevel=complevel,
-                                             compression=compression)
-            
-            svar_data.set_auto_mask(False)
-            svar_data.set_auto_scale(False)
-            svar_data.set_always_mask(False)
+    for index, dim in enumerate(var_ds.dimensions):
+        if dim == "time":
+            ts_ds.createDimension(dim, None)
+        else:
+            ts_ds.createDimension(dim, var_ds.shape[index])
+
+    var_data = ts_ds.createVariable(variable,
+                                    var_ds.dtype,
+                                    var_ds.dimensions,
+                                    complevel=complevel,
+                                    compression=compression)
+    var_data.set_auto_mask(False)
+    var_data.set_auto_scale(False)
+    var_data.set_always_mask(False)
     
-            ts_ds[secondary_var].setncatts(get_attributes(svar_ds))
-            svar_data[:] = secondary_vars_data[secondary_var]
+    ts_ds[variable].setncatts(get_attributes(var_ds))
+
+    time_chunk_size = 1
+    if len(var_ds.shape) > 0 and "time" in var_ds.dimensions:
+        for i in range(0, var_ds.shape[0], time_chunk_size):
+            if i + time_chunk_size > var_ds.shape[0]:
+                time_chunk_size = var_ds.shape[0] - i
+            var_data[i:i + time_chunk_size] = var_ds[i:i + time_chunk_size]
+    else:
+        var_data[:] = var_ds[:]
+
+    for secondary_var in secondary_vars_data:
+        svar_ds = agg_hf_ds[secondary_var]
         
-        ts_ds.setncatts(global_attrs | {"gents_version": str(get_version())})
-        ts_ds.close()
-        output_paths.append(ts_out_path)
-    return output_paths
+        for index, dim in enumerate(svar_ds.dimensions):
+            if dim not in ts_ds.dimensions:
+                if dim == "time":
+                    ts_ds.createDimension(dim, None)
+                else:
+                    ts_ds.createDimension(dim, svar_ds.shape[index])
+        
+        svar_data = ts_ds.createVariable(secondary_var,
+                                         svar_ds.dtype,
+                                         svar_ds.dimensions,
+                                         complevel=complevel,
+                                         compression=compression)
+        
+        svar_data.set_auto_mask(False)
+        svar_data.set_auto_scale(False)
+        svar_data.set_always_mask(False)
+
+        ts_ds[secondary_var].setncatts(get_attributes(svar_ds))
+        svar_data[:] = secondary_vars_data[secondary_var]
+    
+    ts_ds.setncatts(global_attrs | {"gents_version": str(get_version())})
+    ts_ds.close()
+    return ts_out_path
