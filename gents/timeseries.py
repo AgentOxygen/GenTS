@@ -149,3 +149,120 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
     ts_ds.setncatts(global_attrs | {"gents_version": str(get_version())})
     ts_ds.close()
     return ts_out_path
+
+
+class TSCollection:
+    def __init__(self, hf_collection, output_dir, ts_orders=None, dask_client=None):
+        if dask_client is None:
+            self.__dask_client = dask.distributed.client._get_global_client()
+        
+        self.__hf_collection = hf_collection
+        self.__groups = sort_hf_groups(list(self.__hf_collection))
+        self.__output_dir = output_dir
+        
+        if ts_orders is None:
+            self.__orders = []
+            for glob_template in self.__groups:
+                output_template = glob_template.split(self.__hf_collection.get_input_dir())[1]
+                ts_path_template = f"{self.__output_dir}{output_template}"
+                hf_paths = self.__groups[glob_template]
+    
+                # Assuming history files are compatable, we should check that first
+                primary_vars = self.__hf_collection[hf_paths[0]].get_primary_variables()
+                secondary_vars = self.__hf_collection[hf_paths[0]].get_secondary_variables()
+    
+                for var in primary_vars:
+                    self.__orders.append({
+                        "hf_paths": hf_paths,
+                        "ts_path_template": ts_path_template[:-1],
+                        "primary_var": var,
+                        "secondary_vars": secondary_vars
+                    })
+        else:
+            self.__orders = ts_orders
+
+    def __contains__(self, key):
+        return key in self.__orders
+
+    def __iter__(self):
+        return iter(self.__orders)
+
+    def __getitem__(self, index):
+        return self.__orders[index]
+
+    def __len__(self):
+        return len(self.__orders)
+
+    def items(self):
+        return self.__orders.items()
+
+    def values(self):
+        return self.__orders.values()
+    
+    def get_hf_collection(self):
+        return self.__hf_collection
+    
+    def include(self, path_glob, var_glob="*"):
+        filtered_orders = []
+        for order_dict in self.__orders:
+            path_matched = False
+            for path in order_dict["hf_paths"]:
+                if fnmatch.fnmatch(path, path_glob):
+                    path_matched = True
+                    break
+            
+            if path_matched and fnmatch.fnmatch(order_dict["primary_var"], var_glob):
+                filtered_orders.append(order_dict)
+        return TSCollection(self.__hf_collection, self.__output_dir, ts_orders=filtered_orders)
+
+    def exclude(self, path_glob, var_glob="*"):
+        filtered_orders = []
+        for order_dict in self.__orders:
+            path_unmatched = True
+            for path in order_dict["hf_paths"]:
+                if fnmatch.fnmatch(path, path_glob):
+                    path_unmatched = False
+                    break
+            
+            if path_unmatched and not fnmatch.fnmatch(order_dict["primary_var"], var_glob):
+                filtered_orders.append(order_dict)
+        return TSCollection(self.__hf_collection, self.__output_dir, ts_orders=filtered_orders)
+
+
+    def add_args(self, path_glob="*", var_glob="*", level=None, alg=None, overwrite=None):
+        new_orders = []
+        for order_dict in self.__orders:
+            path_matched = False
+            for path in order_dict["hf_paths"]:
+                if fnmatch.fnmatch(path, path_glob):
+                    path_matched = True
+                    break
+            
+            if path_matched and fnmatch.fnmatch(order_dict["primary_var"], var_glob):
+                if level is not None:
+                    order_dict["complevel"] = level
+                if alg is not None:
+                    order_dict["compression"] = alg
+                if overwrite is not None:
+                    order_dict["compression"] = overwrite
+            new_orders.append(order_dict)
+
+        self.__orders = new_orders
+        return TSCollection(self.__hf_collection, self.__output_dir, ts_orders=new_orders)
+    
+    def apply_compression(self, level, alg, path_glob, var_glob="*"):
+        return self.add_args(path_glob=path_glob, var_glob=var_glob, level=level, alg=alg)
+
+    def apply_overwrite(self, path_glob, var_glob="*"):
+        return self.add_args(path_glob=path_glob, var_glob=var_glob, overwrite=True)
+
+    def remove_overwrite(self, path_glob, var_glob="*"):
+        return self.add_args(path_glob=path_glob, var_glob=var_glob, overwrite=False)
+
+    def get_dask_delayed(self):
+        delayed_orders = []
+        for args in self.__orders:
+            delayed_orders.append(dask.delayed(generate_time_series)(**args))
+    
+    def execute(self):
+        return self.__dask_client.compute(self.get_dask_delayed(), sync=True)
