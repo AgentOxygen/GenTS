@@ -85,7 +85,7 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
     ts_string = get_timestamp_str(agg_hf_ds["time"])
     ts_out_path = f"{ts_path_template}.{variable}.{ts_string}.nc"
 
-    var_ds = agg_hf_ds[variable]
+    var_ds = agg_hf_ds[primary_var]
     
     if overwrite and isfile(ts_out_path):
         remove(ts_out_path)
@@ -103,7 +103,7 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
         else:
             ts_ds.createDimension(dim, var_ds.shape[index])
 
-    var_data = ts_ds.createVariable(variable,
+    var_data = ts_ds.createVariable(primary_var,
                                     var_ds.dtype,
                                     var_ds.dimensions,
                                     complevel=complevel,
@@ -112,7 +112,7 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
     var_data.set_auto_scale(False)
     var_data.set_always_mask(False)
     
-    ts_ds[variable].setncatts(get_attributes(var_ds))
+    ts_ds[primary_var].setncatts(get_attributes(var_ds))
 
     time_chunk_size = 1
     if len(var_ds.shape) > 0 and "time" in var_ds.dimensions:
