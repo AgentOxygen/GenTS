@@ -160,7 +160,7 @@ class TSCollection:
             self.__dask_client = dask.distributed.client._get_global_client()
         
         self.__hf_collection = hf_collection
-        self.__groups = sort_hf_groups(list(self.__hf_collection))
+        self.__groups = self.__hf_collection.get_groups()
         self.__output_dir = output_dir
         
         if ts_orders is None:
