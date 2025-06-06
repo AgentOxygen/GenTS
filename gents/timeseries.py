@@ -8,9 +8,12 @@ Last Header Update: 01/31/25
 """
 import netCDF4
 import numpy as np
+import fnmatch
+import dask
 from os.path import isfile
 from os import remove, makedirs
 from cftime import num2date
+from pathlib import Path
 from gents.meta import get_attributes
 from gents.utils import get_version, log
 
@@ -244,7 +247,7 @@ class TSCollection:
                 if alg is not None:
                     order_dict["compression"] = alg
                 if overwrite is not None:
-                    order_dict["compression"] = overwrite
+                    order_dict["overwrite"] = overwrite
             new_orders.append(order_dict)
 
         self.__orders = new_orders
@@ -263,6 +266,12 @@ class TSCollection:
         delayed_orders = []
         for args in self.__orders:
             delayed_orders.append(dask.delayed(generate_time_series)(**args))
+        return delayed_orders
+
+    def create_directories(self, exist_ok=True):
+        for order_dict in self.__orders:
+            makedirs(Path(order_dict['ts_path_template']).parent, exist_ok=exist_ok)
     
     def execute(self):
+        self.create_directories()
         return self.__dask_client.compute(self.get_dask_delayed(), sync=True)
