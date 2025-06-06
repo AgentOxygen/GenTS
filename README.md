@@ -44,11 +44,11 @@ Features:
 
 - [x] Automatic directory structure and file name parsing
 - [x] Automatic hsitory file grouping (h0, h1, h2, etc.)
-- [x] Custom time slicing
+- [ ] Custom time slicing
 - [x] Custom compression
 - [x] Custom output directory structure
 - [x] Customizeable per history file group
-- [ ] Customizeable per variable
+- [x] Customizeable per variable
 - [x] Resumeable process, can handle interrupts
 - [ ] Output validation
 - [ ] Automated unit testing
@@ -59,6 +59,6 @@ Tasks
 - [x] Build barebones functional version
 - [ ] Benchmark against other tools (PyReshaper, NCO)
 - [x] Build well-documented API
-- [ ] Test on CESM1/2/3 model components, compare against existing time series
-- [ ] Couple with CMOR process
+- [x] Test on CESM1/2/3 model components, compare against existing time series
+- [x] Couple with CMOR process
 - [x] Test portability on other machines
