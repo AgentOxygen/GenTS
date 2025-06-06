@@ -83,7 +83,7 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
         secondary_vars_data[variable] = agg_hf_ds[variable][:]
     
     ts_string = get_timestamp_str(agg_hf_ds["time"])
-    ts_out_path = f"{ts_path_template}.{variable}.{ts_string}.nc"
+    ts_out_path = f"{ts_path_template}.{primary_var}.{ts_string}.nc"
 
     var_ds = agg_hf_ds[primary_var]
     
