@@ -25,7 +25,7 @@ The GenTS (Generate Time Series) is an open-source Python Package designed to si
     ts_collection.execute()
 
 
-The bulk of functionality in this package is provided by two Python classes: ``gents.hfcollection.HFCollection`` and ``gents.timeseries.TSCollection``. These classes centralize the organization of history files and provides an interface for customizing time series output through sequences of operations. In general, the user begins by spinning up a Dask cluster and then defining a ``HFCollection`` which searches recursively through a directory structure for history files. The user can then optionally apply filters to the selection to include only specific history file types. Once the desired history files have been identified, the class object automatically groups them by sub-directory and file name patterns. The user then creates a ``TSCollection`` from the populated ``HFCollection`` which organizes the history file groupings into a list of Dask delayed function calls that can be sent to a cluster for distributed computing.
+The bulk of functionality in this package is provided by two Python classes: ``gents.hfcollection.HFCollection`` and ``gents.timeseries.TSCollection``. These classes centralize the organization of history files and provides an interface for customizing time series output through sequences of operations. In general, the user begins by spinning up a Dask cluster and then defining a ``HFCollection`` which searches recursivelhttps://cfconventions.org/y through a directory structure for history files. The user can then optionally apply filters to the selection to include only specific history file types. Once the desired history files have been identified, the class object automatically groups them by sub-directory and file name patterns. The user then creates a ``TSCollection`` from the populated ``HFCollection`` which organizes the history file groupings into a list of Dask delayed function calls that can be sent to a cluster for distributed computing.
 
 Creating a Dask Cluster
 -----------------------
@@ -151,3 +151,16 @@ Once filtered, custom arguments can be applied to all time series or just a subs
 
 Note that add arguments modifies the existing ts_collection and does not return a copy. The first line sets all time series output to overwrite existing files. The second line applies level 5 compression using the "zlib" algorithm only to time series output derived from history files that contain "/atm/" in their path. The third line applies level 2 compression to all time series output with primary variables that contain the characters "HD". Note that line 3 overrides any possible overlap with line 2.
 
+``TSCollection`` stores all time series as dictionaries in a list. Each dictionary contains contains arguments that can be passed to ``gents.timeseries.generate_time_series`` to generate a time series file. 
+
+.. code-block:: python
+
+    print(list(ts_collection))
+
+The above code will print the list of time series dictionaries. By default, ``TSCollection`` compiles this list of arguments into a list of Dask delayed functions which can be executed across a Dask cluster. This allows the user to simply execute all time series generation functions in parallel:
+
+.. code-block:: python
+
+    ts_collection.execute()
+
+The list-type interface of ``TSCollection`` allows the user to directly modify the inputs to ``gents.timeseries.generate_time_series`` and build custom Dask workflows if necessary.
