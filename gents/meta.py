@@ -124,4 +124,5 @@ def get_meta_from_path(path):
     with netCDF4.Dataset(path, 'r') as ds:
         if "time" in ds.variables:
             ds_meta = netCDFMeta(ds)
+
     return ds_meta
