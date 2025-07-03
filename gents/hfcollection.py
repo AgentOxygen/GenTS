@@ -316,6 +316,7 @@ class HFCollection:
         """
         :param hf_dir: Head directory to history files
         :param dask_client: Dask client object. If not given, the global client is used instead.
+        :param meta_map: History file to metadata map to use (overrides recursive search with hf_dir).
         """
         self.__raw_paths = find_files(hf_dir, "*.nc")
 
@@ -371,6 +372,13 @@ class HFCollection:
             self.pull_metadata()
 
     def copy(self, dask_client=None, meta_map=None):
+        """
+        Copies data of this HFCollection into a new one.
+    
+        :param dask_client: Dask client to assign to copy.
+        :param meta_map: history file to metadata map to use when copying (defaults to existing).
+        :return: HFCollection that is a copy.
+        """
         if dask_client is None:
             dask_client = self.__client
         if meta_map is None:

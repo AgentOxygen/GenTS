@@ -55,6 +55,12 @@ def get_timestamp_str(times):
 
 
 def check_timeseries_integrity(ts_path: str):
+    """
+    Checks integrity of time series netCDF file by confirming `gents_version` attribute.
+
+    :param ts_path: Path to time series file.
+    :return: True if `gents_version` attribute is found. False if not (suggesting possible corruption).
+    """
     try:
         ts_ds = netCDF4.Dataset(path, mode="r")
         if "gents_version" in get_attributes(ts_ds):
@@ -155,7 +161,14 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
 
 
 class TSCollection:
-    def __init__(self, hf_collection, output_dir, ts_orders=None, dask_client=None):
+    """Time Series Collection that faciliates the creation of time series from a HFCollection."""
+    def __init__(self, hf_collection, output_dir, ts_orders, dask_client=None):
+        """
+        :param hf_collection: History file collection to derive time series from
+        :param output_dir: Directory to output time series files to
+        :param ts_orders: List of Dask delayed functions of generate_time_series
+        :param dask_client: Dask client to use when executing time series batches (Default: global client).
+        """
         if dask_client is None:
             self.__dask_client = dask.distributed.client._get_global_client()
         
@@ -206,6 +219,13 @@ class TSCollection:
         return self.__hf_collection
     
     def include(self, path_glob, var_glob="*"):
+        """
+        Applies inclusive filter to time series orders.
+
+        :param path_glob: Glob pattern to apply to source history files.
+        :param var_glob: Glob pattern to apply to primary variable names. Defaults to "*"
+        :return: A new TSCollection that only includes time series orders that match the filter.
+        """
         filtered_orders = []
         for order_dict in self.__orders:
             path_matched = False
@@ -219,6 +239,13 @@ class TSCollection:
         return TSCollection(self.__hf_collection, self.__output_dir, ts_orders=filtered_orders)
 
     def exclude(self, path_glob, var_glob="*"):
+        """
+        Applies exclusive filter to time series orders.
+
+        :param path_glob: Glob pattern to apply to source history files.
+        :param var_glob: Glob pattern to apply to primary variable names. Defaults to "*"
+        :return: A new TSCollection that excludes time series orders that match the filter.
+        """
         filtered_orders = []
         for order_dict in self.__orders:
             path_unmatched = True
@@ -233,6 +260,18 @@ class TSCollection:
 
 
     def add_args(self, path_glob="*", var_glob="*", level=None, alg=None, overwrite=None):
+        """
+        Applies arguments to pass to generate_time_series when processing time series orders.
+        Filters specify which time series orders should be updated. If value is None, then the
+        argument is not changed.
+
+        :param path_glob: Glob pattern to match to source history files. Defaults to "*".
+        :param var_glob: Glob pattern to match to primary variable names. Defaults to "*".
+        :param level: Level of compresison to pass to the netCDF4 backend. Defaults to None.
+        :param alg: Compression algorithm to pass to the netCDF4 backend. Defaults to None.
+        :param overwrite: Whether or not to overwrite a time series output file if it already exists. Defaults to None.
+        :return: A new TSCollection that includes time series orders with arguments applied.
+        """
         new_orders = []
         for order_dict in self.__orders:
             path_matched = False
@@ -254,24 +293,50 @@ class TSCollection:
         return TSCollection(self.__hf_collection, self.__output_dir, ts_orders=new_orders)
     
     def apply_compression(self, level, alg, path_glob, var_glob="*"):
+        """
+        Applies compression arguments to time series orders.
+
+        :param level: Level of compresison to pass to the netCDF4 backend.
+        :param alg: Compression algorithm to pass to the netCDF4 backend.
+        :param path_glob: Glob pattern to match to source history files.
+        :param var_glob: Glob pattern to match to primary variable names. Defaults to "*".
+        :return: A new TSCollection that includes time series orders with arguments applied.
+        """
         return self.add_args(path_glob=path_glob, var_glob=var_glob, level=level, alg=alg)
 
     def apply_overwrite(self, path_glob, var_glob="*"):
+        """
+        Applies overwrite argument to time series orders.
+
+        :param path_glob: Glob pattern to match to source history files.
+        :param var_glob: Glob pattern to match to primary variable names. Defaults to "*".
+        :return: A new TSCollection that includes time series orders with arguments applied.
+        """
         return self.add_args(path_glob=path_glob, var_glob=var_glob, overwrite=True)
 
     def remove_overwrite(self, path_glob, var_glob="*"):
+        """
+        Removes overwrite argument to time series orders.
+
+        :param path_glob: Glob pattern to match to source history files.
+        :param var_glob: Glob pattern to match to primary variable names. Defaults to "*".
+        :return: A new TSCollection that includes time series orders with arguments applied.
+        """
         return self.add_args(path_glob=path_glob, var_glob=var_glob, overwrite=False)
 
     def get_dask_delayed(self):
+        """Gets list of delayed time series generation functions."""
         delayed_orders = []
         for args in self.__orders:
             delayed_orders.append(dask.delayed(generate_time_series)(**args))
         return delayed_orders
 
     def create_directories(self, exist_ok=True):
+        """Creates directory structure to output time series files to."""
         for order_dict in self.__orders:
             makedirs(Path(order_dict['ts_path_template']).parent, exist_ok=exist_ok)
     
     def execute(self):
+        """Execute delayed time series generation functions across the Dask cluster."""
         self.create_directories()
         return self.__dask_client.compute(self.get_dask_delayed(), sync=True)
