@@ -151,6 +151,14 @@ Once filtered, custom arguments can be applied to all time series or just a subs
 
 Note that add arguments modifies the existing ts_collection and does not return a copy. The first line sets all time series output to overwrite existing files. The second line applies level 5 compression using the "zlib" algorithm only to time series output derived from history files that contain "/atm/" in their path. The third line applies level 2 compression to all time series output with primary variables that contain the characters "HD". Note that line 3 overrides any possible overlap with line 2.
 
+By default, the output path templates ("templates" are incompate path strings where only the file prefix is provided so that date time and variable name can be assigned during generation) used for writing the time series netCDF files mirror the directory structure of the given ``HFCollection``. To modify the path template, the user may replace substrings. For example, to replace the "/hist/" subdirectory with "/tseries/":
+
+.. code-block:: python
+
+    ts_collection.apply_path_swap("/hist", "/tseries/")
+
+Note that swaps are made using the built-in ``replace`` string function, so matches can be made to any part of the path string and should not use glob or re patterns.
+
 ``TSCollection`` stores all time series as dictionaries in a list. Each dictionary contains contains arguments that can be passed to ``gents.timeseries.generate_time_series`` to generate a time series file. 
 
 .. code-block:: python

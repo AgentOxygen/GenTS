@@ -258,7 +258,6 @@ class TSCollection:
                 filtered_orders.append(order_dict)
         return TSCollection(self.__hf_collection, self.__output_dir, ts_orders=filtered_orders)
 
-
     def add_args(self, path_glob="*", var_glob="*", level=None, alg=None, overwrite=None):
         """
         Applies arguments to pass to generate_time_series when processing time series orders.
@@ -291,7 +290,29 @@ class TSCollection:
 
         self.__orders = new_orders
         return TSCollection(self.__hf_collection, self.__output_dir, ts_orders=new_orders)
+
+    def apply_path_swap(self, string_match, string_swap, path_glob="*", var_glob="*"):
+        """
+        Iterates over time series output path templates, finds the ones that mach the filter, and
+        replaces the matching string with a swap string if it exists.
     
+        :param path_glob: Glob pattern to apply to source history files. Defaults to "*"
+        :param var_glob: Glob pattern to apply to primary variable names. Defaults to "*".
+        :param string_match: String to match to in output template path.
+        :param string_swap: String to replace match with, if found.
+        :return: A new TSCollection with updated output path templates
+        """
+        filtered_orders = []
+        for order_dict in self.__orders:
+            path_matched = False
+            for path in order_dict["hf_paths"]:
+                if fnmatch.fnmatch(path, path_glob):
+                    path_matched = True
+                    order_dict["ts_path_template"].replace(string_match, string_swap)
+            filtered_orders.append(order_dict)
+    
+        return TSCollection(self.__hf_collection, self.__output_dir, ts_orders=filtered_orders)
+        
     def apply_compression(self, level, alg, path_glob, var_glob="*"):
         """
         Applies compression arguments to time series orders.
