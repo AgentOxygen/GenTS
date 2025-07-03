@@ -1,0 +1,14 @@
+name: gents-dev
+channels:
+  - conda-forge
+dependencies:
+  - cftime
+  - netcdf4
+  - numpy
+  - dask
+  - pip
+  - python
+  - sphinx
+  - pip:
+    - pytest
+    - -e .
