@@ -62,7 +62,7 @@ def check_timeseries_integrity(ts_path: str):
     :return: True if `gents_version` attribute is found. False if not (suggesting possible corruption).
     """
     try:
-        ts_ds = netCDF4.Dataset(path, mode="r")
+        ts_ds = netCDF4.Dataset(ts_path, mode="r")
         if "gents_version" in get_attributes(ts_ds):
             return True
     except OSError:
@@ -99,7 +99,7 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
     if overwrite and isfile(ts_out_path):
         remove(ts_out_path)
     elif not overwrite and isfile(ts_out_path):
-        if check_timeseries_integrity(ts_ds):
+        if check_timeseries_integrity(ts_out_path):
             return ts_out_path
         else:
             remove(ts_out_path)
@@ -162,7 +162,7 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
 
 class TSCollection:
     """Time Series Collection that faciliates the creation of time series from a HFCollection."""
-    def __init__(self, hf_collection, output_dir, ts_orders, dask_client=None):
+    def __init__(self, hf_collection, output_dir, ts_orders=None, dask_client=None):
         """
         :param hf_collection: History file collection to derive time series from
         :param output_dir: Directory to output time series files to
@@ -179,7 +179,7 @@ class TSCollection:
         if ts_orders is None:
             self.__orders = []
             for glob_template in self.__groups:
-                output_template = glob_template.split(self.__hf_collection.get_input_dir())[1]
+                output_template = glob_template.split(str(self.__hf_collection.get_input_dir()))[1]
                 ts_path_template = f"{self.__output_dir}{output_template}"
                 hf_paths = self.__groups[glob_template]
     
@@ -360,4 +360,10 @@ class TSCollection:
     def execute(self):
         """Execute delayed time series generation functions across the Dask cluster."""
         self.create_directories()
-        return self.__dask_client.compute(self.get_dask_delayed(), sync=True)
+        results = []
+        if self.__dask_client is None:
+            for order in self.get_dask_delayed():
+                results.append(order.compute())
+        else:
+            results = self.__dask_client.compute(self.get_dask_delayed(), sync=True)
+        return results
