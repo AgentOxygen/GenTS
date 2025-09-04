@@ -83,6 +83,7 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
     :param target_variable: Primary variable to extract from history files.
     :return: List of paths to time series generated.
     """
+    print(f"Generating timeseries for {primary_var}")
     agg_hf_ds = netCDF4.MFDataset(hf_paths, aggdim="time")
     
     global_attrs = get_attributes(agg_hf_ds)

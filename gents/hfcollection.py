@@ -326,7 +326,7 @@ class HFCollection:
             self.__client = dask_client
 
         self.__hf_to_meta_map = {}
-        if meta_map is None:
+        if not meta_map:
             for path in self.__raw_paths:
                 self.__hf_to_meta_map[path] = None
         else:
