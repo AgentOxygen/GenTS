@@ -312,7 +312,7 @@ def check_groups_by_variables(sliced_groups):
 
 class HFCollection:
     """History File Collection, holds paths to all history files and serves as an interface for interpreting the metadata."""
-    def __init__(self, hf_dir, dask_client=None, meta_map=None):
+    def __init__(self, hf_dir, dask_client=None, meta_map=None, hf_groups=None):
         """
         :param hf_dir: Head directory to history files
         :param dask_client: Dask client object. If not given, the global client is used instead.
@@ -338,7 +338,7 @@ class HFCollection:
                 self.__meta_pulled = False
                 break
         
-        self.__hf_groups = None
+        self.__hf_groups = hf_groups
         self.__hf_dir = hf_dir
 
     def __getitem__(self, key):
@@ -371,7 +371,7 @@ class HFCollection:
         if not self.__meta_pulled:
             self.pull_metadata()
 
-    def copy(self, dask_client=None, meta_map=None):
+    def copy(self, dask_client=None, meta_map=None, hf_groups=None):
         """
         Copies data of this HFCollection into a new one.
     
@@ -383,7 +383,9 @@ class HFCollection:
             dask_client = self.__client
         if meta_map is None:
             meta_map = self.__hf_to_meta_map
-        return HFCollection(self.__hf_dir, dask_client=dask_client, meta_map=meta_map)
+        if hf_groups is None:
+            hf_groups = self.get_groups()
+        return HFCollection(self.__hf_dir, dask_client=dask_client, meta_map=meta_map, hf_groups=hf_groups)
     
     def pull_metadata(self, check_valid=True):
         """Pulls metadata associated with each history file in the collection."""
@@ -493,11 +495,10 @@ class HFCollection:
         :param pattern: Glob pattern to match history file grouping IDs to.
         :return: New groupings that are subset into time periods specified by 'slice_size_years'
         """
-        hf_groups = self.get_groups()
         sliced_groups = {}
         
-        for group in hf_groups:
-            hf_paths = hf_groups[group]
+        for group in self.get_groups():
+            hf_paths = self.get_groups()[group]
             if pattern is not None and not fnmatch.fnmatch(group, pattern):
                 sliced_groups[group] = hf_paths
                 continue
@@ -534,4 +535,4 @@ class HFCollection:
         
                 for time_slice in hf_slices:
                     sliced_groups[f"{group}{time_slice[0]}-{time_slice[1]}"] = hf_slices[time_slice]
-        return self.__hf_groups
+        return self.copy(hf_groups=sliced_groups)
