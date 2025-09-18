@@ -29,6 +29,8 @@ def test_simple_workflow(simple_case):
     ts_collection = TSCollection(hf_collection, output_head_dir)
     ts_paths = ts_collection.execute()
 
+    hf_collection.sort_along_time()
+
     assert len(ts_paths) == SIMPLE_NUM_VARS
     
     for path in ts_paths:
@@ -53,6 +55,8 @@ def test_scrambled_workflow(scrambled_case):
     hf_collection = HFCollection(input_head_dir)
     ts_collection = TSCollection(hf_collection, output_head_dir)
     ts_paths = ts_collection.execute()
+
+    hf_collection.sort_along_time()
 
     assert len(ts_paths) == SCRAMBLED_NUM_VARS
 
