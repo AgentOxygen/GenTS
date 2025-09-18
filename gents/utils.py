@@ -50,3 +50,32 @@ def enable_logging(verbose=False, output_path=None):
 
     logger.info(f"GenTS version {get_version()}")
     logger.info(f"Logging enabled (verbose={verbose}, output_path={output_path})")
+
+
+class ProgressBar:
+    def __init__(self, total, length=40):
+        """
+        Progress bar for visualizing various processes throughout the package.
+
+        :param total: Total number of iterations in the loop.
+        :param length: Length of the progress bar in characters. (Default is 40)
+        """
+        self.total = total
+        self.length = length
+        self.start_time = time()
+        self.count = 0
+
+    def step(self):
+        """Update the progress bar by a given step."""
+        self.count += 1
+        percent = self.count / self.total
+        filled_length = int(self.length * percent)
+        bar = "█" * filled_length + "-" * (self.length - filled_length)
+        elapsed = time() - self.start_time
+        sys.stdout.write(
+            f"\r|{bar}| {percent:6.2%}  {self.count}/{self.total}  Elapsed: {elapsed:5.1f}s"
+        )
+        sys.stdout.flush()
+
+        if self.count >= self.total:
+            sys.stdout.write("\n")
