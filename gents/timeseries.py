@@ -172,6 +172,8 @@ class TSCollection:
         if dask_client is None:
             self.__dask_client = dask.distributed.client._get_global_client()
         
+        hf_collection.sort_along_time()
+
         self.__hf_collection = hf_collection
         self.__groups = self.__hf_collection.get_groups()
         self.__output_dir = output_dir
@@ -182,11 +184,11 @@ class TSCollection:
                 output_template = glob_template.split(str(self.__hf_collection.get_input_dir()))[1]
                 ts_path_template = f"{self.__output_dir}{output_template}"
                 hf_paths = self.__groups[glob_template]
-    
+
                 # Assuming history files are compatable, we should check that first
                 primary_vars = self.__hf_collection[hf_paths[0]].get_primary_variables()
                 secondary_vars = self.__hf_collection[hf_paths[0]].get_secondary_variables()
-    
+
                 for var in primary_vars:
                     self.__orders.append({
                         "hf_paths": hf_paths,
