@@ -365,7 +365,7 @@ class HFCollection:
     def get_input_dir(self):
         """Return the input directory"""
         return self.__hf_dir
-    
+
     def check_pulled(self):
         """Checks if metadata has been pulled. If not, then pull."""
         if not self.__meta_pulled:
@@ -386,6 +386,16 @@ class HFCollection:
         if hf_groups is None:
             hf_groups = self.get_groups()
         return HFCollection(self.__hf_dir, dask_client=dask_client, meta_map=meta_map, hf_groups=hf_groups)
+
+    def sort_along_time(self):
+        """
+        Sorts the history files along the time dimension formed out of the time values pulled from metadata.
+        """
+        self.check_pulled()
+
+        sorted_map = dict(sorted(self.__hf_to_meta_map.items(), key=lambda item: item[1].get_float_times()))
+        self.__hf_to_meta_map = sorted_map
+        return self.copy(meta_map=sorted_map)
     
     def pull_metadata(self, check_valid=True):
         """Pulls metadata associated with each history file in the collection."""
