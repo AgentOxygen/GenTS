@@ -5,7 +5,6 @@ import pytest
 import numpy as np
 import random
 
-
 CASE_START_YEAR = 1850
 SIMPLE_NUM_TEST_HIST_FILES = 120
 SIMPLE_NUM_VARS = 6
