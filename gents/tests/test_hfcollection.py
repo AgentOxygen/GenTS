@@ -123,7 +123,7 @@ def test_structured_hfcollection(structured_case):
     assert len(hf_collection.check_validity()) == 0
 
 
-def test_copy(simple_case):
+def test_hfcollection_copy(simple_case):
     input_head_dir, output_head_dir = simple_case
     hf_collection = HFCollection(input_head_dir)
 
