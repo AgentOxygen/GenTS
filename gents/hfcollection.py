@@ -65,7 +65,7 @@ def find_files(head_path, pattern):
             if fnmatch.fnmatch(file, pattern):
                 matched_files.append(Path(os.path.join(root, file)))
 
-    return matched_files
+    return sorted(matched_files)
 
 
 def calculate_year_slices(slice_size_years, min_year, max_year):
