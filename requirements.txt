@@ -1,0 +1,4 @@
+numpy
+netcdf4
+dask[distributed]
+cftime

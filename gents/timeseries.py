@@ -15,8 +15,10 @@ from os import remove, makedirs
 from cftime import num2date
 from pathlib import Path
 from gents.meta import get_attributes
-from gents.utils import get_version, log
+from gents.utils import get_version
+import logging
 
+logger = logging.getLogger(__name__)
 
 def get_timestamp_str(times):
     """
@@ -62,7 +64,7 @@ def check_timeseries_integrity(ts_path: str):
     :return: True if `gents_version` attribute is found. False if not (suggesting possible corruption).
     """
     try:
-        ts_ds = netCDF4.Dataset(path, mode="r")
+        ts_ds = netCDF4.Dataset(ts_path, mode="r")
         if "gents_version" in get_attributes(ts_ds):
             return True
     except OSError:
@@ -99,7 +101,7 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
     if overwrite and isfile(ts_out_path):
         remove(ts_out_path)
     elif not overwrite and isfile(ts_out_path):
-        if check_timeseries_integrity(ts_ds):
+        if check_timeseries_integrity(ts_out_path):
             return ts_out_path
         else:
             remove(ts_out_path)
@@ -162,7 +164,7 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
 
 class TSCollection:
     """Time Series Collection that faciliates the creation of time series from a HFCollection."""
-    def __init__(self, hf_collection, output_dir, ts_orders, dask_client=None):
+    def __init__(self, hf_collection, output_dir, ts_orders=None, dask_client=None):
         """
         :param hf_collection: History file collection to derive time series from
         :param output_dir: Directory to output time series files to
@@ -172,6 +174,8 @@ class TSCollection:
         if dask_client is None:
             self.__dask_client = dask.distributed.client._get_global_client()
         
+        hf_collection.sort_along_time()
+
         self.__hf_collection = hf_collection
         self.__groups = self.__hf_collection.get_groups()
         self.__output_dir = output_dir
@@ -179,14 +183,14 @@ class TSCollection:
         if ts_orders is None:
             self.__orders = []
             for glob_template in self.__groups:
-                output_template = glob_template.split(self.__hf_collection.get_input_dir())[1]
+                output_template = glob_template.split(str(self.__hf_collection.get_input_dir()))[1]
                 ts_path_template = f"{self.__output_dir}{output_template}"
                 hf_paths = self.__groups[glob_template]
-    
+
                 # Assuming history files are compatable, we should check that first
                 primary_vars = self.__hf_collection[hf_paths[0]].get_primary_variables()
                 secondary_vars = self.__hf_collection[hf_paths[0]].get_secondary_variables()
-    
+
                 for var in primary_vars:
                     self.__orders.append({
                         "hf_paths": hf_paths,
@@ -194,6 +198,8 @@ class TSCollection:
                         "primary_var": var,
                         "secondary_vars": secondary_vars
                     })
+            logger.debug(f"TSCollection initialized at '{output_dir}'.")
+            logger.debug(f"{len(self.__orders)} timeseries orders generated.")
         else:
             self.__orders = ts_orders
 
@@ -218,6 +224,27 @@ class TSCollection:
     def get_hf_collection(self):
         return self.__hf_collection
     
+    def copy(self, hf_collection=None, output_dir=None, ts_orders=None, dask_client=None):
+        """
+        Copies data of this TSCollection into a new one.
+    
+        :param hf_collection: HFCollection to assign to copy (defaults to existing).
+        :param output_dir: Head output directory to assign to copy (defaults to existing).
+        :param ts_orders: Time series orders to assign to copy (defaults to existing).
+        :param dask_client: Dask client to assign to copy (defaults to existing).
+        :return: TSCollection that is a copy.
+        """
+        if hf_collection is None:
+            hf_collection = self.__hf_collection
+        if output_dir is None:
+            output_dir = self.__output_dir
+        if ts_orders is None:
+            ts_orders = self.__orders
+        if dask_client is None:
+            dask_client = self.__dask_client
+
+        return TSCollection(hf_collection=hf_collection, output_dir=output_dir, ts_orders=ts_orders, dask_client=dask_client)
+
     def include(self, path_glob, var_glob="*"):
         """
         Applies inclusive filter to time series orders.
@@ -236,7 +263,8 @@ class TSCollection:
             
             if path_matched and fnmatch.fnmatch(order_dict["primary_var"], var_glob):
                 filtered_orders.append(order_dict)
-        return TSCollection(self.__hf_collection, self.__output_dir, ts_orders=filtered_orders)
+        logger.debug(f"Inclusive filter(s) applied: '{var_glob}' to history files matching '{path_glob}'")
+        return self.copy(ts_orders=filtered_orders)
 
     def exclude(self, path_glob, var_glob="*"):
         """
@@ -256,7 +284,8 @@ class TSCollection:
             
             if path_unmatched and not fnmatch.fnmatch(order_dict["primary_var"], var_glob):
                 filtered_orders.append(order_dict)
-        return TSCollection(self.__hf_collection, self.__output_dir, ts_orders=filtered_orders)
+        logger.debug(f"Exclusive filter(s) applied: '{var_glob}' to history files matching '{path_glob}'")
+        return self.copy(ts_orders=filtered_orders)
 
     def add_args(self, path_glob="*", var_glob="*", level=None, alg=None, overwrite=None):
         """
@@ -289,7 +318,8 @@ class TSCollection:
             new_orders.append(order_dict)
 
         self.__orders = new_orders
-        return TSCollection(self.__hf_collection, self.__output_dir, ts_orders=new_orders)
+        logger.debug(f"Arguments applied (excluding None): ['level': {level}, 'alg': {alg}, 'overwrite': {overwrite}] to history files matching '{path_glob}' and variables matching '{var_glob}'.")
+        return self.copy(ts_orders=new_orders)
 
     def apply_path_swap(self, string_match, string_swap, path_glob="*", var_glob="*"):
         """
@@ -311,7 +341,8 @@ class TSCollection:
                     order_dict["ts_path_template"].replace(string_match, string_swap)
             filtered_orders.append(order_dict)
     
-        return TSCollection(self.__hf_collection, self.__output_dir, ts_orders=filtered_orders)
+        logger.debug(f"Path swap '{string_match}' -> '{string_swap}' to history files matching '{path_glob}' and variables matching '{var_glob}'.")
+        return self.copy(ts_orders=filtered_orders)
         
     def apply_compression(self, level, alg, path_glob, var_glob="*"):
         """
@@ -354,10 +385,19 @@ class TSCollection:
 
     def create_directories(self, exist_ok=True):
         """Creates directory structure to output time series files to."""
+        logger.info("Creating directory structure for time series output.")
         for order_dict in self.__orders:
             makedirs(Path(order_dict['ts_path_template']).parent, exist_ok=exist_ok)
-    
+
     def execute(self):
         """Execute delayed time series generation functions across the Dask cluster."""
         self.create_directories()
-        return self.__dask_client.compute(self.get_dask_delayed(), sync=True)
+        results = []
+        if self.__dask_client is None:
+            logger.info("No Dask client detected... proceeding in serial.")
+            for order in self.get_dask_delayed():
+                results.append(order.compute())
+        else:
+            logger.info("Dask client detected! Generating time series files in parallel.")
+            results = self.__dask_client.compute(self.get_dask_delayed(), sync=True)
+        return results

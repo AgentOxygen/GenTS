@@ -6,7 +6,6 @@ Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
 Last Header Update: 04/30/25
 """
-from gents.utils import log
 from gents.meta import get_meta_from_path
 from dask.distributed import client
 from cftime import num2date
@@ -18,6 +17,10 @@ import cftime
 import netCDF4
 import dask
 import warnings
+import logging
+
+logging.captureWarnings(True)
+logger = logging.getLogger(__name__)
 
 
 def check_config(config):
@@ -304,15 +307,15 @@ def check_groups_by_variables(sliced_groups):
             filtered_sliced_groups[group] = sort_metas_by_time(majority)
             if others is not None:
                 for meta_ds in others:
-                    log(f"Dataset has inconsistent variable list with directory group: {meta_ds.get_path()}")
+                    logger.warning(f"Dataset has inconsistent variable list with directory group: {meta_ds.get_path()}")
         else:
-            log(f"Unable to determine majority dataset, check variable configurations between directory groups, group ID: {group}")
+            logger.warning(f"Unable to determine majority dataset, check variable configurations between directory groups, group ID: {group}")
     return filtered_sliced_groups
 
 
 class HFCollection:
     """History File Collection, holds paths to all history files and serves as an interface for interpreting the metadata."""
-    def __init__(self, hf_dir, dask_client=None, meta_map=None):
+    def __init__(self, hf_dir, dask_client=None, meta_map=None, hf_groups=None):
         """
         :param hf_dir: Head directory to history files
         :param dask_client: Dask client object. If not given, the global client is used instead.
@@ -338,8 +341,12 @@ class HFCollection:
                 self.__meta_pulled = False
                 break
         
-        self.__hf_groups = None
+        self.__hf_groups = hf_groups
         self.__hf_dir = hf_dir
+
+        if meta_map is None and hf_groups is None:
+            logger.info(f"Initialized HFCollection at '{hf_dir}'")
+            logger.info(f"{len(self.__raw_paths)} netCDF files found.")
 
     def __getitem__(self, key):
         return self.__hf_to_meta_map[key]
@@ -365,13 +372,13 @@ class HFCollection:
     def get_input_dir(self):
         """Return the input directory"""
         return self.__hf_dir
-    
+
     def check_pulled(self):
         """Checks if metadata has been pulled. If not, then pull."""
         if not self.__meta_pulled:
             self.pull_metadata()
 
-    def copy(self, dask_client=None, meta_map=None):
+    def copy(self, dask_client=None, meta_map=None, hf_groups=None):
         """
         Copies data of this HFCollection into a new one.
     
@@ -383,10 +390,24 @@ class HFCollection:
             dask_client = self.__client
         if meta_map is None:
             meta_map = self.__hf_to_meta_map
-        return HFCollection(self.__hf_dir, dask_client=dask_client, meta_map=meta_map)
+        if hf_groups is None:
+            hf_groups = self.get_groups()
+        return HFCollection(self.__hf_dir, dask_client=dask_client, meta_map=meta_map, hf_groups=hf_groups)
+
+    def sort_along_time(self):
+        """
+        Sorts the history files along the time dimension formed out of the time values pulled from metadata.
+        """
+        self.check_pulled()
+
+        sorted_map = dict(sorted(self.__hf_to_meta_map.items(), key=lambda item: item[1].get_float_times()))
+        self.__hf_to_meta_map = sorted_map
+        logger.info(f"Sorted along time.")
+        return self.copy(meta_map=sorted_map)
     
     def pull_metadata(self, check_valid=True):
         """Pulls metadata associated with each history file in the collection."""
+        logger.info(f"Pulling metadata...")
         ds_metas_futures = []
         ds_metas = []
         paths = list(self.__hf_to_meta_map.keys())
@@ -408,9 +429,13 @@ class HFCollection:
         self.__meta_pulled = True
         if check_valid:
             self.check_validity()
+        else:
+            logger.warning(f"Skipping metadata validation may result in errors due to missing attributes or coordinate data.")
+        logger.info(f"Metadata pulled.")
 
     def check_validity(self):
         """Checks validity of metadata for each history file. Removes missing or incomplete metadata."""
+        logger.debug(f"Validating metadata...")
         new_map = {}
         removed = {}
         for path in self.__hf_to_meta_map:
@@ -418,7 +443,9 @@ class HFCollection:
                 new_map[path] = self.__hf_to_meta_map[path]
             else:
                 removed[path] = self.__hf_to_meta_map[path]
+                logger.warning(f"Could not pull valid/complete metadata for '{path}'.")
         self.__hf_to_meta_map = new_map
+        logger.debug(f"{len(new_map)} files valdiated ({len(removed)} removed).")
         return removed
     
     def include_patterns(self, glob_patterns):
@@ -432,6 +459,7 @@ class HFCollection:
             for pattern in glob_patterns:
                 if fnmatch.fnmatch(str(path), pattern):
                     filtered_path_map[path] = self.__hf_to_meta_map[path]
+        logger.debug(f"Inclusive filter(s) applied: '{glob_patterns}'")
         return self.copy(meta_map=filtered_path_map)
 
     def exclude_patterns(self, glob_patterns):
@@ -445,6 +473,7 @@ class HFCollection:
             for pattern in glob_patterns:
                 if not fnmatch.fnmatch(str(path), pattern):
                     filtered_path_map[path] = self.__hf_to_meta_map[path]
+        logger.debug(f"Exclusive filter(s) applied: '{glob_patterns}'")
         return self.copy(meta_map=filtered_path_map)
 
     def include_years(self, start_year, end_year, glob_patterns=["*"]):
@@ -472,6 +501,7 @@ class HFCollection:
         for path in remove_paths:
             del filtered_path_map[path]
 
+        logger.debug(f"Filtered from {start_year} to {end_year} applied to following glob patterns: '{glob_patterns}'")
         return self.copy(meta_map=filtered_path_map)
 
     def get_groups(self):
@@ -493,11 +523,10 @@ class HFCollection:
         :param pattern: Glob pattern to match history file grouping IDs to.
         :return: New groupings that are subset into time periods specified by 'slice_size_years'
         """
-        hf_groups = self.get_groups()
         sliced_groups = {}
         
-        for group in hf_groups:
-            hf_paths = hf_groups[group]
+        for group in self.get_groups():
+            hf_paths = self.get_groups()[group]
             if pattern is not None and not fnmatch.fnmatch(group, pattern):
                 sliced_groups[group] = hf_paths
                 continue
@@ -534,4 +563,5 @@ class HFCollection:
         
                 for time_slice in hf_slices:
                     sliced_groups[f"{group}{time_slice[0]}-{time_slice[1]}"] = hf_slices[time_slice]
-        return self.__hf_groups
+        logger.debug(f"Slicing groups into {slice_size_years} year long slices for '{pattern}'.")
+        return self.copy(hf_groups=sliced_groups)

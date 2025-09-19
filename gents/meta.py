@@ -9,7 +9,9 @@ Last Header Update: 07/03/25
 import netCDF4
 import numpy as np
 from cftime import num2date
+import logging
 
+logger = logging.getLogger(__name__)
 
 def is_var_secondary(variable: netCDF4._netCDF4._Variable,
                      secondary_vars: list = ["time_bnds", "time_bnd", "time_bounds", "time_bound"],
@@ -69,24 +71,34 @@ class netCDFMeta:
         """
         try:
             if 'time' in ds.variables:
-                self.__time_vals = num2date(ds['time'][:], units=ds["time"].units, calendar=ds["time"].calendar)
+                self.__time_vals = ds['time'][:]
+                self.__cftime_vals = num2date(ds['time'][:], units=ds["time"].units, calendar=ds["time"].calendar)
             else:
-                self.__time_vals = None
+                logger.warning(f"Unable to find 'time' variable.")
         except AttributeError:
             self.__time_vals = None
+            self.__cftime_vals = None
+            logger.warning(f"Unable to pull 'calendar' and/or 'units' attributes from 'time' variable.")
 
-        self.__time_bounds_vals = None
         try:
             if 'time_bnds' in ds.variables:
-                self.__time_bounds_vals = num2date(ds['time_bnds'][:], units=ds["time"].units, calendar=ds["time"].calendar)
+                self.__time_bounds_vals = ds['time_bnds'][:]
+                self.__cftime_bounds_vals = num2date(ds['time_bnds'][:], units=ds["time"].units, calendar=ds["time"].calendar)
             elif 'time_bnd' in ds.variables:
-                self.__time_bounds_vals = num2date(ds['time_bnd'][:], units=ds["time"].units, calendar=ds["time"].calendar)
+                self.__time_bounds_vals = ds['time_bnd'][:]
+                self.__cftime_bounds_vals = num2date(ds['time_bnd'][:], units=ds["time"].units, calendar=ds["time"].calendar)
             elif 'time_bounds' in ds.variables:
-                self.__time_bounds_vals = num2date(ds['time_bounds'][:], units=ds["time"].units, calendar=ds["time"].calendar)
+                self.__time_bounds_vals = ds['time_bounds'][:]
+                self.__cftime_bounds_vals = num2date(ds['time_bounds'][:], units=ds["time"].units, calendar=ds["time"].calendar)
             elif 'time_bound' in ds.variables:
-                self.__time_bounds_vals = num2date(ds['time_bound'][:], units=ds["time"].units, calendar=ds["time"].calendar)
+                self.__time_bounds_vals = ds['time_bound'][:]
+                self.__cftime_bounds_vals = num2date(ds['time_bound'][:], units=ds["time"].units, calendar=ds["time"].calendar)
+            else:
+                logger.warning(f"Unable to find equivalent 'time bounds' variable.")
         except AttributeError:
             self.__time_bounds_vals = None
+            self.__cftime_bounds_vals = None
+            logger.warning(f"Unable to pull 'calendar' and/or 'units' attributes from 'time bounds' equivalent variable.")
 
         self.__var_names = list(ds.variables)
         self.__primary_var_names = []
@@ -111,13 +123,25 @@ class netCDFMeta:
         """
         :return: Get time bounds variable as CFTime objects.
         """
+        return self.__cftime_bounds_vals
+
+    def get_float_time_bounds(self):
+        """
+        :return: Get time bounds variable as floats.
+        """
         return self.__time_bounds_vals
+
+    def get_float_times(self):
+        """
+        :return: Get array of floats from time dimension.
+        """
+        return self.__time_vals
 
     def get_cftimes(self):
         """
         :return: Get array of CFTime objects from time dimension.
         """
-        return self.__time_vals
+        return self.__cftime_vals
 
     def get_variables(self):
         """
