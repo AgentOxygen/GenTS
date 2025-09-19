@@ -317,7 +317,6 @@ class TSCollection:
                     order_dict["overwrite"] = overwrite
             new_orders.append(order_dict)
 
-        self.__orders = new_orders
         logger.debug(f"Arguments applied (excluding None): ['level': {level}, 'alg': {alg}, 'overwrite': {overwrite}] to history files matching '{path_glob}' and variables matching '{var_glob}'.")
         return self.copy(ts_orders=new_orders)
 
