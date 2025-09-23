@@ -173,6 +173,8 @@ class TSCollection:
         """
         if dask_client is None:
             self.__dask_client = dask.distributed.client._get_global_client()
+        else:
+            self.__dask_client = dask_client
         
         hf_collection.sort_along_time()
 
