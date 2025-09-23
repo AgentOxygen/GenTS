@@ -15,7 +15,7 @@ from os import remove, makedirs
 from cftime import num2date
 from pathlib import Path
 from gents.meta import get_attributes
-from gents.utils import get_version
+from gents.utils import get_version, ProgressBar
 import logging
 
 logger = logging.getLogger(__name__)
@@ -394,8 +394,10 @@ class TSCollection:
         results = []
         if self.__dask_client is None:
             logger.info("No Dask client detected... proceeding in serial.")
+            prog_bar = ProgressBar(total=len(self.get_dask_delayed()))
             for order in self.get_dask_delayed():
                 results.append(order.compute())
+                prog_bar.step()
         else:
             logger.info("Dask client detected! Generating time series files in parallel.")
             results = self.__dask_client.compute(self.get_dask_delayed(), sync=True)
