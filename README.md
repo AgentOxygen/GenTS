@@ -1,4 +1,4 @@
-# **Gen**erate **T**ime **S**eries Tool (GenTS)
+# **Gen**erate **T**ime **S**eries (GenTS)
 
 [![Available on pypi](https://img.shields.io/pypi/v/GenTS.svg)](https://pypi.org/project/GenTS/)
 [![Docs](https://readthedocs.org/projects/GenTS/badge/?version=latest)](https://gents.readthedocs.io/en/latest/)
@@ -22,9 +22,8 @@ Barebones starting example:
 
 ```
 from gents.hfcollection import HFCollection
-from gents.gents import generate_ts_from_hfcollection
-from dask.distributed import LocalCluster
-from dask.distributed import Client
+from gents.timeseries import TSCollection
+from dask.distributed import LocalCluster, Client
 
 cluster = LocalCluster(n_workers=30, threads_per_worker=1, memory_limit="2GB")
 client = cluster.get_client()
@@ -33,32 +32,17 @@ input_head_dir = "... case directory with model output ..."
 output_head_dir = "... scratch directory to output time series to ..."
 
 hf_collection = HFCollection(input_head_dir)
-hf_collection.include_patterns(["*/lnd/*"])
-hf_collection.include_years(0, 20)
+hf_collection = hf_collection.include_patterns(["*/atm/*", "*/ocn/*", "*.h4.*"])
+hf_collection.pull_metadata()
 
-paths = generate_ts_from_hfcollection(hf_collection, output_head_dir, overwrite=True, dask_client=client)
+ts_collection = TSCollection(hf_collection.include_years(0, 5), output_head_dir)
+ts_collection = ts_collection.apply_overwrite("*")
+ts_collection.execute()
 ```
 
-## Future Planning
-Features:
+## Contributor/Bug Reporting Guidelines
 
-- [x] Automatic directory structure and file name parsing
-- [x] Automatic hsitory file grouping (h0, h1, h2, etc.)
-- [ ] Custom time slicing
-- [x] Custom compression
-- [x] Custom output directory structure
-- [x] Customizeable per history file group
-- [x] Customizeable per variable
-- [x] Resumeable process, can handle interrupts
-- [ ] Output validation
-- [ ] Automated unit testing
-- [ ] Command line interface
-- [ ] Automatic Dask cluster configuration
+Please report all issues to the [GitHub issue tracker](https://github.com/AgentOxygen/GenTS/issues). When submitting a bug, run `gents.utils.enable_logging(verbose=True)` at the top of your script to include all log output. This will aid in reproducing the bug and quickly developing a solution.
 
-Tasks
-- [x] Build barebones functional version
-- [ ] Benchmark against other tools (PyReshaper, NCO)
-- [x] Build well-documented API
-- [x] Test on CESM1/2/3 model components, compare against existing time series
-- [x] Couple with CMOR process
-- [x] Test portability on other machines
+For development, it is recommended to use the [Docker method for testing](https://gents.readthedocs.io/en/latest/). These tests are automatically run in the GitHub workflow, but should be run before committing changes.
+
