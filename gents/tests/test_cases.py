@@ -65,7 +65,7 @@ def generate_history_file(path, time_val, time_bounds_val, num_vars=SIMPLE_NUM_V
     ds.close()
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def simple_case(tmp_path_factory):
     head_hf_dir = tmp_path_factory.mktemp("simple_history_files")
     head_ts_dir = tmp_path_factory.mktemp("simple_timeseries_files")
@@ -77,7 +77,7 @@ def simple_case(tmp_path_factory):
     return head_hf_dir, head_ts_dir
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def scrambled_case(tmp_path_factory):
     head_hf_dir = tmp_path_factory.mktemp("scrambled_history_files")
     head_ts_dir = tmp_path_factory.mktemp("scrambled_timeseries_files")
@@ -92,7 +92,7 @@ def scrambled_case(tmp_path_factory):
     return head_hf_dir, head_ts_dir
     
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def structured_case(tmp_path_factory):
     head_hf_dir = tmp_path_factory.mktemp("structured_history_files")
     head_ts_dir = tmp_path_factory.mktemp("structured_timeseries_files")

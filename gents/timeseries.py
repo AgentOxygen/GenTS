@@ -15,7 +15,7 @@ from os import remove, makedirs
 from cftime import num2date
 from pathlib import Path
 from gents.meta import get_attributes
-from gents.utils import get_version
+from gents.utils import get_version, ProgressBar
 import logging
 
 logger = logging.getLogger(__name__)
@@ -173,6 +173,8 @@ class TSCollection:
         """
         if dask_client is None:
             self.__dask_client = dask.distributed.client._get_global_client()
+        else:
+            self.__dask_client = dask_client
         
         hf_collection.sort_along_time()
 
@@ -317,7 +319,6 @@ class TSCollection:
                     order_dict["overwrite"] = overwrite
             new_orders.append(order_dict)
 
-        self.__orders = new_orders
         logger.debug(f"Arguments applied (excluding None): ['level': {level}, 'alg': {alg}, 'overwrite': {overwrite}] to history files matching '{path_glob}' and variables matching '{var_glob}'.")
         return self.copy(ts_orders=new_orders)
 
@@ -395,8 +396,10 @@ class TSCollection:
         results = []
         if self.__dask_client is None:
             logger.info("No Dask client detected... proceeding in serial.")
+            prog_bar = ProgressBar(total=len(self.get_dask_delayed()))
             for order in self.get_dask_delayed():
                 results.append(order.compute())
+                prog_bar.step()
         else:
             logger.info("Dask client detected! Generating time series files in parallel.")
             results = self.__dask_client.compute(self.get_dask_delayed(), sync=True)

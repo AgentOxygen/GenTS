@@ -7,6 +7,7 @@ Contact: cameron.cummins@utexas.edu
 Last Header Update: 04/30/25
 """
 from gents.meta import get_meta_from_path
+from gents.utils import ProgressBar
 from dask.distributed import client
 from cftime import num2date
 from pathlib import Path
@@ -413,12 +414,16 @@ class HFCollection:
         paths = list(self.__hf_to_meta_map.keys())
 
         if self.__client is None:
+            prog_bar = ProgressBar(total=len(paths))
             for path in paths:
                 ds_metas.append(get_meta_from_path(path))
+                prog_bar.step()
         else:
+            prog_bar = ProgressBar(total=np.min(1, len(paths) // 10000))
             for index in range(0, len(paths), 10000):
                 ds_metas_subset = self.__client.map(get_meta_from_path, paths[index:index + 10000])
                 ds_metas_futures += ds_metas_subset
+                prog_bar.step()
             
             ds_metas = self.__client.gather(ds_metas_futures, direct=True)
             del ds_metas_futures
@@ -524,7 +529,7 @@ class HFCollection:
         :return: New groupings that are subset into time periods specified by 'slice_size_years'
         """
         sliced_groups = {}
-        
+
         for group in self.get_groups():
             hf_paths = self.get_groups()[group]
             if pattern is not None and not fnmatch.fnmatch(group, pattern):
