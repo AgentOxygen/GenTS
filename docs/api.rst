@@ -1,9 +1,6 @@
 API
 ===
 
-.. automodule:: gents.gents
-   :members:
-
 .. automodule:: gents.hfcollection
    :members:
 
