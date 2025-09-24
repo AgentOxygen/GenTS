@@ -15,9 +15,10 @@ GenTS consolidates the conversion of history files to time series files into thr
 
 #. Detect and read the metadata for all history files into a ``HFCollection`` 
 #. Apply filters to include/exclude certain history files and then group them by model component (sub directory) and namelist (file name).
-#. Generate an embarrasingly parallel workload that reads each variable across all of the history files within each of the formed groups, concatenate, and write them out as time series files.
+#. Derive a ``TSCollection`` from the ``HFCollection`` and apply configurations/filters to obtain the desired time series files
+#. Generate an embarrasingly parallel workload that can be executed using a Dask cluster to generate each fo the time series files
 
-Each of these steps requires the use of a Dask cluster, either created locally (using a LocalCluster) or connected to over a distributed system (such as PBS or SLURM using Dask-Jobqueue). This process is visualized below.
+Each of these steps can be accelerated by a Dask cluster, either created locally (using a LocalCluster) or connected to over a distributed system (such as PBS or SLURM using Dask-Jobqueue). This process is visualized below.
 
 Note that after groups are created, the user can specify additional group settings such as slicing the timeseries into chunks of a specified length (10 years by default). All filtering and grouping functions are described in the User Guide (with more to come in the future).
 
@@ -28,3 +29,4 @@ Note that after groups are created, the user can specify additional group settin
     install
     user
     api
+    tests

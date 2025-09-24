@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "GenTS"
-version = "0.8.0"
+version = "0.9.0"
 authors = [
   { name="Cameron Cummins", email="cameron.cummins@utexas.edu" },
 ]
@@ -29,6 +29,3 @@ Issues = "https://github.com/AgentOxygen/GenTS"
 
 [tool.setuptools]
 packages = ["gents"]
-
-[project.scripts]
-gents = "gents.cli:main"

@@ -6,9 +6,8 @@ The GenTS (Generate Time Series) is an open-source Python Package designed to si
 .. code-block:: python
 
     from gents.hfcollection import HFCollection
-    from gents.gents import generate_ts_from_hfcollection
-    from dask.distributed import LocalCluster
-    from dask.distributed import Client
+    from gents.timeseries import TSCollection
+    from dask.distributed import LocalCluster, Client
     
     cluster = LocalCluster(n_workers=30, threads_per_worker=1, memory_limit="2GB")
     client = cluster.get_client()
@@ -50,7 +49,7 @@ The ``HFCollection`` class provides an intuitive interface for the user to inter
 .. code-block:: python
 
     from gents.hfcollection import HFCollection
-    hf_collection = HFCollection("my/file/system/scratch/GCM_run/output/history_files/")
+    hf_collection = HFCollection(hf_dir="my/file/system/scratch/GCM_run/output/history_files/")
 
 ``hf_collection`` now contains an internal dictionary that maps history files to metadata stored in the ``gents.meta.netCDFMeta`` class. For example, to print all history files by path and obtain the first entry's metadata:
 
@@ -76,7 +75,7 @@ Similarly, we can exclude patterns using ``HFCollection.exclude_patterns`` too:
 
 .. code-block:: python
 
-    hf_collection = hf_collection.exclude_patterns(["*.once.*", "*/rof/*"])
+    hf_collection = hf_collection.exclude_patterns(glob_patterns=["*.once.*", "*/rof/*"])
     first_entry_path = list(hf_collection)[0]
     hf_collection.pull_metadata()
     first_entry_meta = hf_collection[first_entry_path]
@@ -85,9 +84,9 @@ Note that the user can specify multiple entries as glob patterns which can filte
 
 .. code-block:: python
 
-    hf_atm_only = hf_collection.include_patterns(["*/atm/*"])
-    hf_ocn_only = hf_collection.include_patterns(["*/ocn/*"])
-    hf_lnd_only = hf_collection.include_patterns(["*/lnd/*"])
+    hf_atm_only = hf_collection.include_patterns(glob_patterns=["*/atm/*"])
+    hf_ocn_only = hf_collection.include_patterns(glob_patterns=["*/ocn/*"])
+    hf_lnd_only = hf_collection.include_patterns(glob_patterns=["*/lnd/*"])
 
 Note that pulling metadata for ``hf_atm_only`` in this case does not pull metadata for the other two collections. However, if metadata was pulled for ``hf_collection``, all three sub-collections would inherit those metadata objects (and thus would not need to pull again).
 
@@ -95,7 +94,7 @@ A common step may be to filter by a date-time string in the file name:
 
 .. code-block:: python
 
-    hf_2010_2019 = hf_collection.include_patterns(["*20100101-20191231.nc"])
+    hf_2010_2019 = hf_collection.include_patterns(glob_patterns=["*20100101-20191231.nc"])
 
 This may work in most cases, but file names are not always reliable and may be difficult to apply across multiple model components. A more robust way of filtering is to operate over the time bounds provided in the metadata. This requires a metadata pull before running, so there is a performance hit for large datasets, but for smaller datasets the decrease is negligible:
 
@@ -124,29 +123,29 @@ Metadata for ``hf_collection`` will automatically  be pulled if not done so alre
 
 .. code-block:: python
 
-    ts_tmax_only = ts_collection.include("*", "TMAX")
-    ts_prec_only = ts_collection.include("*", "PREC*")
-    ts_h1_prec_only = ts_collection.include("*.h1.*", "PREC*")
+    ts_tmax_only = ts_collection.include(path_glob="*", var_glob="TMAX")
+    ts_prec_only = ts_collection.include(path_glob="*", var_glob="PREC*")
+    ts_h1_prec_only = ts_collection.include(path_glob="*.h1.*", var_glob="PREC*")
 
 Note that the last inclusive filter only includes history files with a path that contains ".h1." and only derives time series for variables that start with "PREC". You can also exclude time series in the same manner:
 
 .. code-block:: python
 
-    ts_without_h4_hurs = ts_collection.exclude("*.h4.*", "HURS")
+    ts_without_h4_hurs = ts_collection.exclude(path_glob="*.h4.*", var_glob="HURS")
 
 Just like with ``HFCollection``, both ``TSCollection.include`` and ``TSCollection.exclude`` operations return copies, allowing for advanced filtering:
 
 .. code-block:: python
 
-    ts_h2_temps_only = ts_collection.include("*.h2.*", "T*")
-    ts_h2_temps_no_pop = ts_h2_only.exclude("*.pop.*", "*")
+    ts_h2_temps_only = ts_collection.include(path_glob="*.h2.*", var_glob="T*")
+    ts_h2_temps_no_pop = ts_h2_only.exclude(path_glob="*.pop.*", var_glob="*")
 
 Once filtered, custom arguments can be applied to all time series or just a subset. Currently supported arguments include whether to overwrite existing time series, compression level, and compression algorithm. These arguments are passed to the ``netCDF4 Python API <https://unidata.github.io/netcdf4-python/>``_. The arguments can be applied using glob patterns for both paths and variable names:
 
 .. code-block:: python
 
     ts_collection.add_args("*", "*", overwrite=True)
-    ts_collection.add_args("*/atm/*", "*", alg="zlib", level=5)
+    ts_collection.apply_compression(alg="zlib", level=5, path_glob="*/atm/*", var_glob="*")
     ts_collection.add_args("*", "*HD*", alg="zlib", level=2)
 
 Note that add arguments modifies the existing ts_collection and does not return a copy. The first line sets all time series output to overwrite existing files. The second line applies level 5 compression using the "zlib" algorithm only to time series output derived from history files that contain "/atm/" in their path. The third line applies level 2 compression to all time series output with primary variables that contain the characters "HD". Note that line 3 overrides any possible overlap with line 2.
@@ -155,7 +154,7 @@ By default, the output path templates ("templates" are incompate path strings wh
 
 .. code-block:: python
 
-    ts_collection.apply_path_swap("/hist", "/tseries/")
+    ts_collection.apply_path_swap(string_match="/hist", string_swap="/tseries/")
 
 Note that swaps are made using the built-in ``replace`` string function, so matches can be made to any part of the path string and should not use glob or re patterns.
 
