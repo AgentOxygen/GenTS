@@ -218,7 +218,10 @@ def is_ds_within_years(ds_meta, min_year, max_year):
     :return: True if time bounds are within the year range, false if not.
     """
     time_bounds = ds_meta.get_cftime_bounds()[0]
-    year = (time_bounds[0].year + time_bounds[1].year) / 2
+    if time_bounds is not None:
+        year = (time_bounds[0].year + time_bounds[1].year) / 2
+    else:
+        year = ds_meta.get_cftimes()[0]
 
     if min_year <= year <= max_year:
         return True
@@ -498,7 +501,10 @@ class HFCollection:
             for path in filtered_path_map:
                 if fnmatch.fnmatch(path, pattern):
                     meta_ds = filtered_path_map[path]
-                    avg_year = np.mean([ts[0].year for ts in meta_ds.get_cftime_bounds()])
+                    if meta_ds.get_cftime_bounds() is not None:
+                        avg_year = np.mean([ts.year for ts in meta_ds.get_cftime_bounds()])
+                    else:
+                        avg_year = np.mean([ts.year for ts in meta_ds.get_cftimes()])
                     
                     if not start_year <= avg_year <= end_year:
                         remove_paths.append(path)
@@ -551,7 +557,7 @@ class HFCollection:
                 variable_set = None
                 for hf_path in hf_paths:
                     meta_ds = self.__hf_to_meta_map[hf_path]
-                    time_bnds = meta_ds.get_cftime_bounds()[0]
+                    time_bnds = meta_ds.get_cftime_bounds()
         
                     if time_bnds is not None:
                         time = time_bnds[0] + (time_bnds[1] - time_bnds[0]) / 2
