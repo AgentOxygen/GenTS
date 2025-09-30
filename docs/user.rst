@@ -24,7 +24,7 @@ The GenTS (Generate Time Series) is an open-source Python Package designed to si
     ts_collection.execute()
 
 
-The bulk of functionality in this package is provided by two Python classes: ``gents.hfcollection.HFCollection`` and ``gents.timeseries.TSCollection``. These classes centralize the organization of history files and provides an interface for customizing time series output through sequences of operations. In general, the user begins by spinning up a Dask cluster and then defining a ``HFCollection`` which searches recursivelhttps://cfconventions.org/y through a directory structure for history files. The user can then optionally apply filters to the selection to include only specific history file types. Once the desired history files have been identified, the class object automatically groups them by sub-directory and file name patterns. The user then creates a ``TSCollection`` from the populated ``HFCollection`` which organizes the history file groupings into a list of Dask delayed function calls that can be sent to a cluster for distributed computing.
+The bulk of functionality in this package is provided by two Python classes: ``gents.hfcollection.HFCollection`` and ``gents.timeseries.TSCollection``. These classes centralize the organization of history files and provides an interface for customizing time series output through sequences of operations. In general, the user begins by spinning up a Dask cluster and then defining a ``HFCollection`` which searches recursively through a directory structure for history files. The user can then optionally apply filters to the selection to include only specific history file types. Once the desired history files have been identified, the class object automatically groups them by sub-directory and file name patterns. The user then creates a ``TSCollection`` from the populated ``HFCollection`` which organizes the history file groupings into a list of Dask delayed function calls that can be sent to a cluster for distributed computing.
 
 Creating a Dask Cluster
 -----------------------
@@ -140,7 +140,7 @@ Just like with ``HFCollection``, both ``TSCollection.include`` and ``TSCollectio
     ts_h2_temps_only = ts_collection.include(path_glob="*.h2.*", var_glob="T*")
     ts_h2_temps_no_pop = ts_h2_only.exclude(path_glob="*.pop.*", var_glob="*")
 
-Once filtered, custom arguments can be applied to all time series or just a subset. Currently supported arguments include whether to overwrite existing time series, compression level, and compression algorithm. These arguments are passed to the ``netCDF4 Python API <https://unidata.github.io/netcdf4-python/>``_. The arguments can be applied using glob patterns for both paths and variable names:
+Once filtered, custom arguments can be applied to all time series or just a subset. Currently supported arguments include whether to overwrite existing time series, compression level, and compression algorithm. These arguments are passed to the `netCDF4 Python API <https://unidata.github.io/netcdf4-python/>`_. The arguments can be applied using glob patterns for both paths and variable names:
 
 .. code-block:: python
 
