@@ -386,10 +386,13 @@ class TSCollection:
 
     def get_dask_delayed(self):
         """Gets list of delayed time series generation functions."""
-        delayed_orders = []
-        for args in self.__orders:
-            delayed_orders.append(dask.delayed(generate_time_series)(**args))
-        return delayed_orders
+        if DASK_INSTALLED:
+            delayed_orders = []
+            for args in self.__orders:
+                delayed_orders.append(dask.delayed(generate_time_series)(**args))
+            return delayed_orders
+        else:
+            raise ImportError("Dask not installed!")
 
     def create_directories(self, exist_ok=True):
         """Creates directory structure to output time series files to."""
@@ -403,9 +406,9 @@ class TSCollection:
         results = []
         if self.__dask_client is None:
             logger.info("No Dask client detected... proceeding in serial.")
-            prog_bar = ProgressBar(total=len(self.get_dask_delayed()))
-            for order in self.get_dask_delayed():
-                results.append(order.compute())
+            prog_bar = ProgressBar(total=len(self.__orders))
+            for args in self.__orders:
+                results.append(generate_time_series(**args))
                 prog_bar.step()
         else:
             logger.info("Dask client detected! Generating time series files in parallel.")
