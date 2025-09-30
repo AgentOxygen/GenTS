@@ -8,7 +8,6 @@ Last Header Update: 04/30/25
 """
 from gents.meta import get_meta_from_path
 from gents.utils import ProgressBar
-from dask.distributed import client
 from cftime import num2date
 from pathlib import Path
 import numpy as np
@@ -16,12 +15,19 @@ import os
 import fnmatch
 import cftime
 import netCDF4
-import dask
 import warnings
 import logging
 
 logging.captureWarnings(True)
 logger = logging.getLogger(__name__)
+
+try:
+    from dask.distributed import client
+    import dask
+    DASK_INSTALLED = True
+except ImportError:
+    DASK_INSTALLED = False
+    logger.debug("Dask not installed. Proceeding in serial.")
 
 
 def check_config(config):
@@ -217,8 +223,11 @@ def is_ds_within_years(ds_meta, min_year, max_year):
     :param max_year: Maximum year in range.
     :return: True if time bounds are within the year range, false if not.
     """
-    time_bounds = ds_meta.get_cftime_bounds()[0]
-    year = (time_bounds[0].year + time_bounds[1].year) / 2
+    time_bounds = ds_meta.get_cftime_bounds()
+    if time_bounds is not None:
+        year = (time_bounds[0].year + time_bounds[1].year) / 2
+    else:
+        year = ds_meta.get_cftimes()[0]
 
     if min_year <= year <= max_year:
         return True
@@ -324,7 +333,7 @@ class HFCollection:
         """
         self.__raw_paths = find_files(hf_dir, "*.nc")
 
-        if dask_client is None:
+        if dask_client is None and DASK_INSTALLED:
             self.__client = dask.distributed.client._get_global_client()
         else:
             self.__client = dask_client
@@ -498,7 +507,10 @@ class HFCollection:
             for path in filtered_path_map:
                 if fnmatch.fnmatch(path, pattern):
                     meta_ds = filtered_path_map[path]
-                    avg_year = np.mean([ts[0].year for ts in meta_ds.get_cftime_bounds()])
+                    if meta_ds.get_cftime_bounds() is not None:
+                        avg_year = np.mean([ts.year for ts in meta_ds.get_cftime_bounds()[0]])
+                    else:
+                        avg_year = np.mean([ts.year for ts in meta_ds.get_cftimes()])
                     
                     if not start_year <= avg_year <= end_year:
                         remove_paths.append(path)
@@ -551,9 +563,9 @@ class HFCollection:
                 variable_set = None
                 for hf_path in hf_paths:
                     meta_ds = self.__hf_to_meta_map[hf_path]
-                    time_bnds = meta_ds.get_cftime_bounds()[0]
         
-                    if time_bnds is not None:
+                    if meta_ds.get_cftime_bounds() is not None:
+                        time_bnds = meta_ds.get_cftime_bounds()[0]
                         time = time_bnds[0] + (time_bnds[1] - time_bnds[0]) / 2
                     else:
                         time = meta_ds.get_cftimes()[0]

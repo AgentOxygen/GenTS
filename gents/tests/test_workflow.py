@@ -50,6 +50,35 @@ def test_simple_workflow(simple_case):
                         assert ts_ds[var_name].getncattr(key) == hf_ds[var_name].getncattr(key)
 
 
+def test_no_time_bounds_workflow(no_time_bounds_case):
+    input_head_dir, output_head_dir = no_time_bounds_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+    ts_paths = ts_collection.execute()
+
+    hf_collection.sort_along_time()
+    hf_collection = hf_collection.include_years(0, 99999)
+    hf_collection = hf_collection.slice_groups(99999)
+
+    assert len(ts_paths) == SIMPLE_NUM_VARS
+    
+    for path in ts_paths:
+        with Dataset(path, 'r') as ts_ds:
+            assert ts_ds["time"].size == SIMPLE_NUM_TEST_HIST_FILES
+            assert ts_ds.getncattr("gents_version") == get_version()
+            var_name = path.split(".")[-3]
+            
+            for index in range(ts_ds["time"].size):
+                with Dataset(list(hf_collection)[index], 'r') as hf_ds:
+                    assert (ts_ds[var_name][index] == hf_ds[var_name]).all()
+
+                    for key in hf_ds.ncattrs():
+                        assert ts_ds.getncattr(key) == hf_ds.getncattr(key)
+                    
+                    for key in hf_ds[var_name].ncattrs():
+                        assert ts_ds[var_name].getncattr(key) == hf_ds[var_name].getncattr(key)
+
+
 def test_scrambled_workflow(scrambled_case):
     input_head_dir, output_head_dir = scrambled_case
     hf_collection = HFCollection(input_head_dir)

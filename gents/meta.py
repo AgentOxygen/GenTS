@@ -69,6 +69,8 @@ class netCDFMeta:
         """
         :param ds: netCDF dataset read of history file (not this is not the path).
         """
+        self.__time_vals = None
+        self.__cftime_vals = None
         try:
             if 'time' in ds.variables:
                 self.__time_vals = ds['time'][:]
@@ -76,29 +78,27 @@ class netCDFMeta:
             else:
                 logger.warning(f"Unable to find 'time' variable.")
         except AttributeError:
-            self.__time_vals = None
-            self.__cftime_vals = None
             logger.warning(f"Unable to pull 'calendar' and/or 'units' attributes from 'time' variable.")
 
+        self.__time_bounds_vals = None
+        self.__cftime_bounds_vals = None
         try:
             if 'time_bnds' in ds.variables:
                 self.__time_bounds_vals = ds['time_bnds'][:]
-                self.__cftime_bounds_vals = num2date(ds['time_bnds'][:], units=ds["time"].units, calendar=ds["time"].calendar)
+                self.__cftime_bounds_vals = num2date(ds['time_bnds'][:], units=ds["time_bnds"].units, calendar=ds["time_bnds"].calendar)
             elif 'time_bnd' in ds.variables:
                 self.__time_bounds_vals = ds['time_bnd'][:]
-                self.__cftime_bounds_vals = num2date(ds['time_bnd'][:], units=ds["time"].units, calendar=ds["time"].calendar)
+                self.__cftime_bounds_vals = num2date(ds['time_bnd'][:], units=ds["time_bnd"].units, calendar=ds["time_bnd"].calendar)
             elif 'time_bounds' in ds.variables:
                 self.__time_bounds_vals = ds['time_bounds'][:]
-                self.__cftime_bounds_vals = num2date(ds['time_bounds'][:], units=ds["time"].units, calendar=ds["time"].calendar)
+                self.__cftime_bounds_vals = num2date(ds['time_bounds'][:], units=ds["time_bounds"].units, calendar=ds["time_bounds"].calendar)
             elif 'time_bound' in ds.variables:
                 self.__time_bounds_vals = ds['time_bound'][:]
-                self.__cftime_bounds_vals = num2date(ds['time_bound'][:], units=ds["time"].units, calendar=ds["time"].calendar)
+                self.__cftime_bounds_vals = num2date(ds['time_bound'][:], units=ds["time_bound"].units, calendar=ds["time_bound"].calendar)
             else:
-                logger.warning(f"Unable to find equivalent 'time bounds' variable.")
+                logger.warning(f"Unable to find equivalent 'time bounds' variable. Defaulting to 'time'.")
         except AttributeError:
-            self.__time_bounds_vals = None
-            self.__cftime_bounds_vals = None
-            logger.warning(f"Unable to pull 'calendar' and/or 'units' attributes from 'time bounds' equivalent variable.")
+            logger.warning(f"Unable to pull 'calendar' and/or 'units' attributes from 'time_bounds' equivalent variable.")
 
         self.__var_names = list(ds.variables)
         self.__primary_var_names = []
@@ -171,7 +171,7 @@ class netCDFMeta:
         """
         :return: Whether or not all necessary information is available for GenTS to create a time series.
         """
-        if self.get_cftime_bounds() is None:
+        if self.get_cftime_bounds() is None and self.get_cftimes() is None:
             return False
         elif len(self.get_primary_variables()) == 0:
             return False

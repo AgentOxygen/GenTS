@@ -9,7 +9,6 @@ Last Header Update: 01/31/25
 import netCDF4
 import numpy as np
 import fnmatch
-import dask
 from os.path import isfile
 from os import remove, makedirs
 from cftime import num2date
@@ -19,6 +18,14 @@ from gents.utils import get_version, ProgressBar
 import logging
 
 logger = logging.getLogger(__name__)
+
+try:
+    import dask
+    DASK_INSTALLED = True
+except ImportError:
+    DASK_INSTALLED = False
+    logger.debug("Dask not installed. Proceeding in serial.")
+
 
 def get_timestamp_str(times):
     """
@@ -171,7 +178,7 @@ class TSCollection:
         :param ts_orders: List of Dask delayed functions of generate_time_series
         :param dask_client: Dask client to use when executing time series batches (Default: global client).
         """
-        if dask_client is None:
+        if dask_client is None and DASK_INSTALLED:
             self.__dask_client = dask.distributed.client._get_global_client()
         else:
             self.__dask_client = dask_client
@@ -379,10 +386,13 @@ class TSCollection:
 
     def get_dask_delayed(self):
         """Gets list of delayed time series generation functions."""
-        delayed_orders = []
-        for args in self.__orders:
-            delayed_orders.append(dask.delayed(generate_time_series)(**args))
-        return delayed_orders
+        if DASK_INSTALLED:
+            delayed_orders = []
+            for args in self.__orders:
+                delayed_orders.append(dask.delayed(generate_time_series)(**args))
+            return delayed_orders
+        else:
+            raise ImportError("Dask not installed!")
 
     def create_directories(self, exist_ok=True):
         """Creates directory structure to output time series files to."""
@@ -396,9 +406,9 @@ class TSCollection:
         results = []
         if self.__dask_client is None:
             logger.info("No Dask client detected... proceeding in serial.")
-            prog_bar = ProgressBar(total=len(self.get_dask_delayed()))
-            for order in self.get_dask_delayed():
-                results.append(order.compute())
+            prog_bar = ProgressBar(total=len(self.__orders))
+            for args in self.__orders:
+                results.append(generate_time_series(**args))
                 prog_bar.step()
         else:
             logger.info("Dask client detected! Generating time series files in parallel.")

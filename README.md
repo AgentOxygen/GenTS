@@ -11,8 +11,10 @@ The GenTS (Generate Time Series) is an open-source Python Package designed to si
 GenTS can be installed using `pip`:
 
 ```
-pip install gents
+pip install gents['parallel']
 ```
+
+Although it is reccomended to use the Dask implementation, you may wish to implement your own parallel solution for large datasets. If you then don't want to include Dask in your installation, you may omit `['parallel']` from the command (this limits GenTS to only run in serial).
 
 To install from source, please view the [ReadTheDocs Documentation](https://gents.readthedocs.io/en/latest/).
 
@@ -27,6 +29,24 @@ from dask.distributed import LocalCluster, Client
 
 cluster = LocalCluster(n_workers=30, threads_per_worker=1, memory_limit="2GB")
 client = cluster.get_client()
+
+input_head_dir = "... case directory with model output ..."
+output_head_dir = "... scratch directory to output time series to ..."
+
+hf_collection = HFCollection(input_head_dir)
+hf_collection = hf_collection.include_patterns(["*/atm/*", "*/ocn/*", "*.h4.*"])
+hf_collection.pull_metadata()
+
+ts_collection = TSCollection(hf_collection.include_years(0, 5), output_head_dir)
+ts_collection = ts_collection.apply_overwrite("*")
+ts_collection.execute()
+```
+
+The serial equivalent (without Dask) is the same, just without the Dask `Client` or `LocalCluster`:
+
+```
+from gents.hfcollection import HFCollection
+from gents.timeseries import TSCollection
 
 input_head_dir = "... case directory with model output ..."
 output_head_dir = "... scratch directory to output time series to ..."

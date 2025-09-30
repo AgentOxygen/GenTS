@@ -47,15 +47,16 @@ def generate_history_file(path, time_val, time_bounds_val, num_vars=SIMPLE_NUM_V
         "long_name": "time"
     })
 
-    time_bnds_data = ds.createVariable(f"time_bounds", np.double, ("time", "bnds"))
-    time_bnds_data[:] = [time_bounds_val]
-    time_bnds_data.setncatts({
-        "calendar": "360_day",
-        "units": "days since 1850-01-01",
-        "standard_name": "time_bounds",
-        "long_name": "time_bounds"
-    })
-    
+    if time_bounds_val is not None:
+        time_bnds_data = ds.createVariable(f"time_bounds", np.double, ("time", "bnds"))
+        time_bnds_data[:] = time_bounds_val
+        time_bnds_data.setncatts({
+            "calendar": "360_day",
+            "units": "days since 1850-01-01",
+            "standard_name": "time_bounds",
+            "long_name": "time_bounds"
+        })
+        
     ds.setncatts({
         "source": "GenTS testing suite",
         "description": "Synthetic data used for testing with the GenTS package.",
@@ -72,7 +73,7 @@ def simple_case(tmp_path_factory):
     
     hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):
-        generate_history_file(path, (file_index+1)*30, [file_index*30, (file_index+1)*30])
+        generate_history_file(path, [(file_index+1)*30], [[file_index*30, (file_index+1)*30]])
 
     return head_hf_dir, head_ts_dir
 
@@ -88,7 +89,7 @@ def scrambled_case(tmp_path_factory):
     random.shuffle(hf_paths)
     
     for file_index, path in enumerate(hf_paths):
-        generate_history_file(path, (file_index+1)*30, [file_index*30, (file_index+1)*30], num_vars=SCRAMBLED_NUM_VARS)
+        generate_history_file(path, [(file_index+1)*30], [[file_index*30, (file_index+1)*30]], num_vars=SCRAMBLED_NUM_VARS)
     return head_hf_dir, head_ts_dir
     
 
@@ -104,5 +105,17 @@ def structured_case(tmp_path_factory):
             
             for file_index in range(STRUCTURED_NUM_TEST_HIST_FILES):
                 path = f"{dir_path}/testing.hf.{str(file_index).zfill(5)}.nc" 
-                generate_history_file(path, (file_index+1)*30, [file_index*30, (file_index+1)*30], num_vars=SCRAMBLED_NUM_VARS)
+                generate_history_file(path, [(file_index+1)*30], [[file_index*30, (file_index+1)*30]], num_vars=SCRAMBLED_NUM_VARS)
+    return head_hf_dir, head_ts_dir
+
+
+@pytest.fixture(scope="function")
+def no_time_bounds_case(tmp_path_factory):
+    head_hf_dir = tmp_path_factory.mktemp("no_tb_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("no_tb_timeseries_files")
+    
+    hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
+    for file_index, path in enumerate(hf_paths):
+        generate_history_file(path, [(file_index+1)*30], None)
+
     return head_hf_dir, head_ts_dir
