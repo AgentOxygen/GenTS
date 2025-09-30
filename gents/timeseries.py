@@ -9,7 +9,6 @@ Last Header Update: 01/31/25
 import netCDF4
 import numpy as np
 import fnmatch
-import dask
 from os.path import isfile
 from os import remove, makedirs
 from cftime import num2date
@@ -19,6 +18,14 @@ from gents.utils import get_version, ProgressBar
 import logging
 
 logger = logging.getLogger(__name__)
+
+try:
+    import dask
+    DASK_INSTALLED = True
+except ImportError:
+    DASK_INSTALLED = False
+    logger.debug("Dask not installed. Proceeding in serial.")
+
 
 def get_timestamp_str(times):
     """
@@ -171,7 +178,7 @@ class TSCollection:
         :param ts_orders: List of Dask delayed functions of generate_time_series
         :param dask_client: Dask client to use when executing time series batches (Default: global client).
         """
-        if dask_client is None:
+        if dask_client is None and DASK_INSTALLED:
             self.__dask_client = dask.distributed.client._get_global_client()
         else:
             self.__dask_client = dask_client

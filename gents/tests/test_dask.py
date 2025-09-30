@@ -1,15 +1,16 @@
-from dask.distributed import LocalCluster, Client
 from gents.hfcollection import HFCollection
 from gents.timeseries import TSCollection
 from test_cases import *
 from test_workflow import is_monotonic
 from netCDF4 import Dataset
+from pytest import importorskip
 
 
 def test_dask_simple_workflow(simple_case):
+    daskd = importorskip("dask.distributed", reason="Dask distributed not installed.")
     input_head_dir, output_head_dir = simple_case
 
-    cluster = LocalCluster(n_workers=2, threads_per_worker=1, memory_limit="2GB")
+    cluster = daskd.LocalCluster(n_workers=2, threads_per_worker=1, memory_limit="2GB")
     client = cluster.get_client()
 
     hf_collection = HFCollection(input_head_dir, dask_client=client)
@@ -39,9 +40,10 @@ def test_dask_simple_workflow(simple_case):
 
 
 def test_dask_scrambled_workflow(scrambled_case):
+    daskd = importorskip("dask.distributed", reason="Dask distributed not installed.")
     input_head_dir, output_head_dir = scrambled_case
 
-    cluster = LocalCluster(n_workers=2, threads_per_worker=1, memory_limit="2GB")
+    cluster = daskd.LocalCluster(n_workers=2, threads_per_worker=1, memory_limit="2GB")
     client = cluster.get_client()
 
     hf_collection = HFCollection(input_head_dir, dask_client=client)
@@ -61,9 +63,10 @@ def test_dask_scrambled_workflow(scrambled_case):
 
 
 def test_dask_structured_workflow(structured_case):
+    daskd = importorskip("dask.distributed", reason="Dask distributed not installed.")
     input_head_dir, output_head_dir = structured_case
 
-    cluster = LocalCluster(n_workers=2, threads_per_worker=1, memory_limit="2GB")
+    cluster = daskd.LocalCluster(n_workers=2, threads_per_worker=1, memory_limit="2GB")
     client = cluster.get_client()
 
     hf_collection = HFCollection(input_head_dir, dask_client=client)

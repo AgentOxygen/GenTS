@@ -8,7 +8,6 @@ Last Header Update: 04/30/25
 """
 from gents.meta import get_meta_from_path
 from gents.utils import ProgressBar
-from dask.distributed import client
 from cftime import num2date
 from pathlib import Path
 import numpy as np
@@ -16,12 +15,19 @@ import os
 import fnmatch
 import cftime
 import netCDF4
-import dask
 import warnings
 import logging
 
 logging.captureWarnings(True)
 logger = logging.getLogger(__name__)
+
+try:
+    from dask.distributed import client
+    import dask
+    DASK_INSTALLED = True
+except ImportError:
+    DASK_INSTALLED = False
+    logger.debug("Dask not installed. Proceeding in serial.")
 
 
 def check_config(config):
@@ -327,7 +333,7 @@ class HFCollection:
         """
         self.__raw_paths = find_files(hf_dir, "*.nc")
 
-        if dask_client is None:
+        if dask_client is None and DASK_INSTALLED:
             self.__client = dask.distributed.client._get_global_client()
         else:
             self.__client = dask_client
