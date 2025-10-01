@@ -1,6 +1,7 @@
 from test_cases import *
 from gents.hfcollection import *
 from gents.meta import netCDFMeta
+from gents.utils import enable_logging
 from pathlib import PosixPath
 from os.path import isfile
 import numpy as np
@@ -64,7 +65,7 @@ def test_get_year_bounds(simple_case, scrambled_case, structured_case):
     assert get_year_bounds(hf_collection) == (CASE_START_YEAR, int(CASE_START_YEAR+((STRUCTURED_NUM_TEST_HIST_FILES-1)/12)))
 
 
-def test_simple_hfcollection(simple_case):
+def test_simple_hfcollection(simple_case, caplog):
     input_head_dir, output_head_dir = simple_case
     hf_collection = HFCollection(input_head_dir)
     
@@ -82,9 +83,19 @@ def test_simple_hfcollection(simple_case):
     assert len(included) == 1
     assert hf_collection is not excluded
     assert hf_collection is not included
-    
+
+    assert not hf_collection.is_pulled()
+
     hf_collection.pull_metadata()
-    
+
+    assert hf_collection.is_pulled()
+
+    meta_data_pulled = False
+    for path in hf_collection:
+        if hf_collection[path] is not None:
+            meta_data_pulled = True
+            break
+
     valid_checks = hf_collection.check_validity()
     assert type(valid_checks) is dict
     assert len(valid_checks) == 0
@@ -101,6 +112,8 @@ def test_simple_hfcollection(simple_case):
     
     sliced_groups = hf_collection.slice_groups(slice_size_years=1).get_groups()
     assert len(sliced_groups) == int(np.ceil(SIMPLE_NUM_TEST_HIST_FILES / 12))
+
+    assert len(caplog.text) == 0
 
 
 def test_scrambled_hfcollection(scrambled_case):

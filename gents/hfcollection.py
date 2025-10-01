@@ -345,11 +345,7 @@ class HFCollection:
         else:
             self.__hf_to_meta_map = meta_map
 
-        self.__meta_pulled = True
-        for path in self.__hf_to_meta_map:
-            if self.__hf_to_meta_map[path] is None:
-                self.__meta_pulled = False
-                break
+        self.__meta_pulled = self.is_pulled()
         
         self.__hf_groups = hf_groups
         self.__hf_dir = hf_dir
@@ -379,6 +375,13 @@ class HFCollection:
     def keys(self):
         return self.__hf_to_meta_map.keys()
 
+    def is_pulled(self):
+        """Returns true if all metadata has been pulled. False if not."""
+        for path in self.__hf_to_meta_map:
+            if self.__hf_to_meta_map[path] is None:
+                return False
+        return True
+
     def get_input_dir(self):
         """Return the input directory"""
         return self.__hf_dir
@@ -400,7 +403,7 @@ class HFCollection:
             dask_client = self.__client
         if meta_map is None:
             meta_map = self.__hf_to_meta_map
-        if hf_groups is None:
+        if hf_groups is None and self.__meta_pulled:
             hf_groups = self.get_groups()
         return HFCollection(self.__hf_dir, dask_client=dask_client, meta_map=meta_map, hf_groups=hf_groups)
 
