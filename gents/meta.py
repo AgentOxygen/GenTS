@@ -73,7 +73,13 @@ class netCDFMeta:
         self.__cftime_vals = None
         try:
             if 'time' in ds.variables:
-                self.__time_vals = np.squeeze(ds['time'][:])
+                self.__time_vals = ds['time'][:]
+
+                if len(self.__time_vals.shape) > 1:
+                    self.__time_vals = np.squeeze(self.__time_vals)
+                elif len(self.__time_vals.shape) == 0:
+                    self.__time_vals = np.array([self.__time_vals])
+
                 self.__cftime_vals = num2date(self.__time_vals, units=ds["time"].units, calendar=ds["time"].calendar)
             else:
                 logger.warning(f"Unable to find 'time' variable.")
@@ -97,6 +103,14 @@ class netCDFMeta:
         
         if time_bnds_eqv:
             self.__time_bounds_vals = ds[time_bnds_eqv][:]
+
+            if len(self.__time_bounds_vals.shape) > 2:
+                self.__time_bounds_vals = np.squeeze(self.__time_bounds_vals)
+            elif len(self.__time_bounds_vals.shape) == 1:
+                self.__time_bounds_vals = np.array([self.__time_bounds_vals])
+            elif len(self.__time_bounds_vals.shape) == 0:
+                raise ValueError(f"Found a 'time_bounds' equivalent variable, but it was a single value. It must have two values (one for each boundary).")
+
             try:
                 self.__cftime_bounds_vals = num2date(self.__time_bounds_vals, units=ds[time_bnds_eqv].units, calendar=ds[time_bnds_eqv].calendar)
             except AttributeError:
