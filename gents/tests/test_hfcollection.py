@@ -164,4 +164,12 @@ def test_hfcollection_copy(simple_case):
     assert type(hf_copy) == HFCollection
     assert list(hf_copy) == list(hf_collection)
     assert hf_copy is not hf_collection
-    
+
+
+def test_missing_time_bounds_attrs(simple_case_missing_attrs):
+    input_head_dir, output_head_dir = simple_case_missing_attrs
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection.pull_metadata()
+
+    for entry in hf_collection:
+        assert hf_collection[entry].is_valid()

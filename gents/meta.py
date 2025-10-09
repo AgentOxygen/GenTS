@@ -74,7 +74,13 @@ class netCDFMeta:
         try:
             if 'time' in ds.variables:
                 self.__time_vals = ds['time'][:]
-                self.__cftime_vals = num2date(ds['time'][:], units=ds["time"].units, calendar=ds["time"].calendar)
+
+                if len(self.__time_vals.shape) > 1:
+                    self.__time_vals = np.squeeze(self.__time_vals)
+                elif len(self.__time_vals.shape) == 0:
+                    self.__time_vals = np.array([self.__time_vals])
+
+                self.__cftime_vals = num2date(self.__time_vals, units=ds["time"].units, calendar=ds["time"].calendar)
             else:
                 logger.warning(f"Unable to find 'time' variable.")
         except AttributeError:
@@ -82,23 +88,34 @@ class netCDFMeta:
 
         self.__time_bounds_vals = None
         self.__cftime_bounds_vals = None
-        try:
-            if 'time_bnds' in ds.variables:
-                self.__time_bounds_vals = ds['time_bnds'][:]
-                self.__cftime_bounds_vals = num2date(ds['time_bnds'][:], units=ds["time_bnds"].units, calendar=ds["time_bnds"].calendar)
-            elif 'time_bnd' in ds.variables:
-                self.__time_bounds_vals = ds['time_bnd'][:]
-                self.__cftime_bounds_vals = num2date(ds['time_bnd'][:], units=ds["time_bnd"].units, calendar=ds["time_bnd"].calendar)
-            elif 'time_bounds' in ds.variables:
-                self.__time_bounds_vals = ds['time_bounds'][:]
-                self.__cftime_bounds_vals = num2date(ds['time_bounds'][:], units=ds["time_bounds"].units, calendar=ds["time_bounds"].calendar)
-            elif 'time_bound' in ds.variables:
-                self.__time_bounds_vals = ds['time_bound'][:]
-                self.__cftime_bounds_vals = num2date(ds['time_bound'][:], units=ds["time_bound"].units, calendar=ds["time_bound"].calendar)
-            else:
-                logger.warning(f"Unable to find equivalent 'time bounds' variable. Defaulting to 'time'.")
-        except AttributeError:
-            logger.warning(f"Unable to pull 'calendar' and/or 'units' attributes from 'time_bounds' equivalent variable.")
+        time_bnds_eqv = None
+
+        if 'time_bnds' in ds.variables:
+            time_bnds_eqv = 'time_bnds'
+        elif 'time_bnd' in ds.variables:
+            time_bnds_eqv = 'time_bnd'
+        elif 'time_bounds' in ds.variables:
+            time_bnds_eqv = 'time_bounds'
+        elif 'time_bound' in ds.variables:
+            time_bnds_eqv = 'time_bound'
+        else:
+            logger.warning(f"Unable to find equivalent 'time_bounds' variable.")
+        
+        if time_bnds_eqv:
+            self.__time_bounds_vals = ds[time_bnds_eqv][:]
+
+            if len(self.__time_bounds_vals.shape) > 2:
+                self.__time_bounds_vals = np.squeeze(self.__time_bounds_vals)
+            elif len(self.__time_bounds_vals.shape) == 1:
+                self.__time_bounds_vals = np.array([self.__time_bounds_vals])
+            elif len(self.__time_bounds_vals.shape) == 0:
+                raise ValueError(f"Found a 'time_bounds' equivalent variable, but it was a single value. It must have two values (one for each boundary).")
+
+            try:
+                self.__cftime_bounds_vals = num2date(self.__time_bounds_vals, units=ds[time_bnds_eqv].units, calendar=ds[time_bnds_eqv].calendar)
+            except AttributeError:
+                logger.warning(f"Unable to pull 'calendar' and/or 'units' attributes from 'time_bounds' equivalent variable. Using 'time' attributes instead.")
+                self.__cftime_bounds_vals = num2date(self.__time_bounds_vals, units=ds['time'].units, calendar=ds['time'].calendar)
 
         self.__var_names = list(ds.variables)
         self.__primary_var_names = []
