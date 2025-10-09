@@ -15,7 +15,7 @@ STRUCTURED_NUM_VARS = 2
 STRUCTURED_NUM_DIRS = 3
 STRUCTURED_NUM_SUBDIRS = 2
 
-def generate_history_file(path, time_val, time_bounds_val, num_vars=SIMPLE_NUM_VARS, nc_format="NETCDF4_CLASSIC"):
+def generate_history_file(path, time_val, time_bounds_val, num_vars=SIMPLE_NUM_VARS, nc_format="NETCDF4_CLASSIC", time_bounds_attrs=True):
     ds = Dataset(path, "w", format=nc_format)
 
     dim_shapes = {
@@ -50,12 +50,13 @@ def generate_history_file(path, time_val, time_bounds_val, num_vars=SIMPLE_NUM_V
     if time_bounds_val is not None:
         time_bnds_data = ds.createVariable(f"time_bounds", np.double, ("time", "bnds"))
         time_bnds_data[:] = time_bounds_val
-        time_bnds_data.setncatts({
-            "calendar": "360_day",
-            "units": "days since 1850-01-01",
-            "standard_name": "time_bounds",
-            "long_name": "time_bounds"
-        })
+        if time_bounds_attrs:
+            time_bnds_data.setncatts({
+                "calendar": "360_day",
+                "units": "days since 1850-01-01",
+                "standard_name": "time_bounds",
+                "long_name": "time_bounds"
+            })
         
     ds.setncatts({
         "source": "GenTS testing suite",
@@ -117,5 +118,17 @@ def no_time_bounds_case(tmp_path_factory):
     hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):
         generate_history_file(path, [(file_index+1)*30], None)
+
+    return head_hf_dir, head_ts_dir
+
+
+@pytest.fixture(scope="function")
+def simple_case_missing_attrs(tmp_path_factory):
+    head_hf_dir = tmp_path_factory.mktemp("simple_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("simple_timeseries_files")
+    
+    hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
+    for file_index, path in enumerate(hf_paths):
+        generate_history_file(path, [(file_index+1)*30], [[file_index*30, (file_index+1)*30]], time_bounds_attrs=False)
 
     return head_hf_dir, head_ts_dir
