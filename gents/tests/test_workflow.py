@@ -102,3 +102,18 @@ def test_structured_workflow(structured_case):
     ts_paths = ts_collection.execute()
     
     assert len(ts_paths) == SCRAMBLED_NUM_VARS*STRUCTURED_NUM_DIRS*STRUCTURED_NUM_SUBDIRS
+
+
+def test_multistep_workflow(multistep_case):
+    input_head_dir, output_head_dir = multistep_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+    ts_paths = ts_collection.execute()
+
+    hf_collection.sort_along_time()
+
+    assert len(ts_paths) == SIMPLE_NUM_VARS
+
+    for path in ts_paths:
+        with Dataset(path, 'r') as ts_ds:
+            assert is_monotonic(ts_ds["time"][:])

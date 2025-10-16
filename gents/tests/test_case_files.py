@@ -29,3 +29,13 @@ def test_time_bounds_missing_attrs_case(simple_case_missing_attrs):
         assert 'units' not in hf_ds['time_bounds'].ncattrs()
         assert 'calendar' not in hf_ds['time_bounds'].ncattrs()
         hf_ds.close()
+
+
+def test_multistep_case(multistep_case):
+    input_head_dir, output_head_dir = multistep_case
+    assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
+    for file_name in listdir(input_head_dir):
+        hf_ds = Dataset(f"{input_head_dir}/{file_name}", 'r')
+        assert hf_ds['time'].size == 3
+        assert hf_ds['time_bounds'].size == hf_ds['time'].size*2
+        hf_ds.close()

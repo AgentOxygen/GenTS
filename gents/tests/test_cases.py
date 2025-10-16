@@ -31,7 +31,7 @@ def generate_history_file(path, time_val, time_bounds_val, num_vars=SIMPLE_NUM_V
 
     for index in range(num_vars):
         var_data = ds.createVariable(f"VAR{index}", float, ("time", "lat", "lon"))
-        var_data[:] = np.random.random((1, dim_shapes["lat"], dim_shapes["lon"])).astype(float)
+        var_data[:] = np.random.random((len(time_val), dim_shapes["lat"], dim_shapes["lon"])).astype(float)
         var_data.setncatts({
             "units": "kg/g/m^2/K",
             "standard_name": f"VAR{index}",
@@ -130,5 +130,19 @@ def simple_case_missing_attrs(tmp_path_factory):
     hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):
         generate_history_file(path, [(file_index+1)*30], [[file_index*30, (file_index+1)*30]], time_bounds_attrs=False)
+
+    return head_hf_dir, head_ts_dir
+
+
+@pytest.fixture(scope="function")
+def multistep_case(tmp_path_factory):
+    head_hf_dir = tmp_path_factory.mktemp("multistep_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("multistep_timeseries_files")
+    
+    hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
+    index = 0
+    for  path in hf_paths:
+        generate_history_file(path, [(index)*30, (index+1)*30, (index+2)*30], [[(index)*30, (index+1)*30], [(index+1)*30, (index+2)*30], [(index+2)*30, (index+3)*30]])
+        index += 3
 
     return head_hf_dir, head_ts_dir
