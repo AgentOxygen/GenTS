@@ -413,7 +413,7 @@ class HFCollection:
         """
         self.check_pulled()
 
-        sorted_map = dict(sorted(self.__hf_to_meta_map.items(), key=lambda item: item[1].get_float_times()))
+        sorted_map = dict(sorted(self.__hf_to_meta_map.items(), key=lambda item: item[1].get_float_times()[0]))
         self.__hf_to_meta_map = sorted_map
         logger.info(f"Sorted along time.")
         return self.copy(meta_map=sorted_map)
