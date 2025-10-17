@@ -3,7 +3,7 @@ from gents.hfcollection import HFCollection
 from gents.timeseries import TSCollection
 from test_cases import *
 from netCDF4 import Dataset
-from os import listdir, makedirs
+from os import listdir, makedirs, rename
 import pytest
 import numpy as np
 import random
@@ -131,3 +131,20 @@ def test_auxiliary_workflow(auxiliary_case):
         assert is_monotonic(ts_ds["time"][:])
         for var_index in range(SIMPLE_NUM_VARS):
             assert f"VAR{var_index}" in ts_ds.variables
+
+
+def test_modified_extensions_workflow(simple_case):
+    input_head_dir, output_head_dir = simple_case
+
+    for index, file_name in enumerate(listdir(input_head_dir)):
+        rename(f"{input_head_dir}/{file_name}", f"{input_head_dir}/test.hf.modified_ext_simple.nc.{index}")
+
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+    ts_paths = ts_collection.execute()
+
+    assert len(ts_paths) == SIMPLE_NUM_VARS
+    
+    for path in ts_paths:
+        with Dataset(path, 'r') as ts_ds:
+            assert ts_ds["time"].size == SIMPLE_NUM_TEST_HIST_FILES
