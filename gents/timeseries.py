@@ -101,10 +101,12 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
         secondary_vars_data[variable] = agg_hf_ds[variable][:]
     
     ts_string = get_timestamp_str(agg_hf_ds["time"])
-    ts_out_path = f"{ts_path_template}.{primary_var}.{ts_string}.nc"
 
-    var_ds = agg_hf_ds[primary_var]
-    
+    if primary_var is not None:
+        ts_out_path = f"{ts_path_template}.{primary_var}.{ts_string}.nc"
+    else:
+        ts_out_path = f"{ts_path_template}.auxiliary.{ts_string}.nc"
+
     if overwrite and isfile(ts_out_path):
         remove(ts_out_path)
     elif not overwrite and isfile(ts_out_path):
@@ -114,32 +116,35 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
             remove(ts_out_path)
 
     ts_ds = netCDF4.Dataset(ts_out_path, mode="w")
-    
-    for index, dim in enumerate(var_ds.dimensions):
-        if dim == "time":
-            ts_ds.createDimension(dim, None)
+
+    if primary_var is not None:
+        var_ds = agg_hf_ds[primary_var]
+        
+        for index, dim in enumerate(var_ds.dimensions):
+            if dim == "time":
+                ts_ds.createDimension(dim, None)
+            else:
+                ts_ds.createDimension(dim, var_ds.shape[index])
+
+        var_data = ts_ds.createVariable(primary_var,
+                                        var_ds.dtype,
+                                        var_ds.dimensions,
+                                        complevel=complevel,
+                                        compression=compression)
+        var_data.set_auto_mask(False)
+        var_data.set_auto_scale(False)
+        var_data.set_always_mask(False)
+        
+        ts_ds[primary_var].setncatts(get_attributes(var_ds))
+
+        time_chunk_size = 1
+        if len(var_ds.shape) > 0 and "time" in var_ds.dimensions:
+            for i in range(0, var_ds.shape[0], time_chunk_size):
+                if i + time_chunk_size > var_ds.shape[0]:
+                    time_chunk_size = var_ds.shape[0] - i
+                var_data[i:i + time_chunk_size] = var_ds[i:i + time_chunk_size]
         else:
-            ts_ds.createDimension(dim, var_ds.shape[index])
-
-    var_data = ts_ds.createVariable(primary_var,
-                                    var_ds.dtype,
-                                    var_ds.dimensions,
-                                    complevel=complevel,
-                                    compression=compression)
-    var_data.set_auto_mask(False)
-    var_data.set_auto_scale(False)
-    var_data.set_always_mask(False)
-    
-    ts_ds[primary_var].setncatts(get_attributes(var_ds))
-
-    time_chunk_size = 1
-    if len(var_ds.shape) > 0 and "time" in var_ds.dimensions:
-        for i in range(0, var_ds.shape[0], time_chunk_size):
-            if i + time_chunk_size > var_ds.shape[0]:
-                time_chunk_size = var_ds.shape[0] - i
-            var_data[i:i + time_chunk_size] = var_ds[i:i + time_chunk_size]
-    else:
-        var_data[:] = var_ds[:]
+            var_data[:] = var_ds[:]
 
     for secondary_var in secondary_vars_data:
         svar_ds = agg_hf_ds[secondary_var]
@@ -190,23 +195,32 @@ class TSCollection:
         self.__output_dir = output_dir
         
         if ts_orders is None:
+            self.__hf_collection.pull_metadata()
             self.__orders = []
             for glob_template in self.__groups:
                 output_template = glob_template.split(str(self.__hf_collection.get_input_dir()))[1]
                 ts_path_template = f"{self.__output_dir}{output_template}"
                 hf_paths = self.__groups[glob_template]
 
-                # Assuming history files are compatable, we should check that first
                 primary_vars = self.__hf_collection[hf_paths[0]].get_primary_variables()
                 secondary_vars = self.__hf_collection[hf_paths[0]].get_secondary_variables()
 
-                for var in primary_vars:
+                if len(primary_vars) > 0:
+                    for var in primary_vars:
+                        self.__orders.append({
+                            "hf_paths": hf_paths,
+                            "ts_path_template": ts_path_template[:-1],
+                            "primary_var": var,
+                            "secondary_vars": secondary_vars
+                        })
+                else:
                     self.__orders.append({
                         "hf_paths": hf_paths,
                         "ts_path_template": ts_path_template[:-1],
-                        "primary_var": var,
+                        "primary_var": None,
                         "secondary_vars": secondary_vars
                     })
+
             logger.debug(f"TSCollection initialized at '{output_dir}'.")
             logger.debug(f"{len(self.__orders)} timeseries orders generated.")
         else:

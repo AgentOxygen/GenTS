@@ -15,7 +15,7 @@ STRUCTURED_NUM_VARS = 2
 STRUCTURED_NUM_DIRS = 3
 STRUCTURED_NUM_SUBDIRS = 2
 
-def generate_history_file(path, time_val, time_bounds_val, num_vars=SIMPLE_NUM_VARS, nc_format="NETCDF4_CLASSIC", time_bounds_attrs=True):
+def generate_history_file(path, time_val, time_bounds_val, num_vars=SIMPLE_NUM_VARS, nc_format="NETCDF4_CLASSIC", time_bounds_attrs=True, auxiliary=False):
     ds = Dataset(path, "w", format=nc_format)
 
     dim_shapes = {
@@ -30,13 +30,24 @@ def generate_history_file(path, time_val, time_bounds_val, num_vars=SIMPLE_NUM_V
         ds.createDimension(dim, dim_shapes[dim])
 
     for index in range(num_vars):
-        var_data = ds.createVariable(f"VAR{index}", float, ("time", "lat", "lon"))
-        var_data[:] = np.random.random((len(time_val), dim_shapes["lat"], dim_shapes["lon"])).astype(float)
-        var_data.setncatts({
-            "units": "kg/g/m^2/K",
-            "standard_name": f"VAR{index}",
-            "long_name": f"variable_{index}"
-        })
+        if auxiliary:
+            var_data = ds.createVariable(f"VAR{index}", float, ("time"))
+
+            var_data[:] = np.random.random((len(time_val))).astype(float)
+            var_data.setncatts({
+                "units": "kg/g/m^2/K",
+                "standard_name": f"VAR{index}",
+                "long_name": f"variable_{index}"
+            })
+        else:
+            var_data = ds.createVariable(f"VAR{index}", float, ("time", "lat", "lon"))
+
+            var_data[:] = np.random.random((len(time_val), dim_shapes["lat"], dim_shapes["lon"])).astype(float)
+            var_data.setncatts({
+                "units": "kg/g/m^2/K",
+                "standard_name": f"VAR{index}",
+                "long_name": f"variable_{index}"
+            })
 
     time_data = ds.createVariable(f"time", np.double, "time")
     time_data[:] = time_val
@@ -144,5 +155,17 @@ def multistep_case(tmp_path_factory):
     for  path in hf_paths:
         generate_history_file(path, [(index)*30, (index+1)*30, (index+2)*30], [[(index)*30, (index+1)*30], [(index+1)*30, (index+2)*30], [(index+2)*30, (index+3)*30]])
         index += 3
+
+    return head_hf_dir, head_ts_dir
+
+
+@pytest.fixture(scope="function")
+def auxiliary_case(tmp_path_factory):
+    head_hf_dir = tmp_path_factory.mktemp("auxiliary_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("auxiliary_timeseries_files")
+    
+    hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
+    for file_index, path in enumerate(hf_paths):
+        generate_history_file(path, [(file_index+1)*30], [[file_index*30, (file_index+1)*30]], auxiliary=True)
 
     return head_hf_dir, head_ts_dir

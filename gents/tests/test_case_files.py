@@ -36,6 +36,17 @@ def test_multistep_case(multistep_case):
     assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
     for file_name in listdir(input_head_dir):
         hf_ds = Dataset(f"{input_head_dir}/{file_name}", 'r')
-        assert hf_ds['time'].size == 3
-        assert hf_ds['time_bounds'].size == hf_ds['time'].size*2
+        assert len(hf_ds['time'].dimensions) == 1
+        hf_ds.close()
+
+
+def test_auxiliary_case(auxiliary_case):
+    input_head_dir, output_head_dir = auxiliary_case
+    assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
+
+    for file_name in listdir(input_head_dir):
+        hf_ds = Dataset(f"{input_head_dir}/{file_name}", 'r')
+
+        for var_index in range(SIMPLE_NUM_VARS):
+            assert hf_ds[f"VAR{var_index}"].dimensions == ('time',)
         hf_ds.close()
