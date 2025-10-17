@@ -40,19 +40,14 @@ def test_generate_time_series(simple_case):
     assert isfile(ts_path)
     assert check_timeseries_integrity(ts_path)
 
-    ts_ds = Dataset(ts_path, 'r')
-    assert ts_ds["time"][:].size == len(hf_paths)
-    
-    for index in range(len(hf_paths)):
-        hf_ds = Dataset(hf_paths[index], 'r')
-
-        assert (ts_ds[var_name][:][index] == hf_ds[var_name][:]).all()
-        hf_ds.close()
-
-    assert "time" in ts_ds.variables
-    assert "time_bounds" in ts_ds.variables
-
-    ts_ds.close()
+    with Dataset(ts_path, 'r') as ts_ds:
+        assert ts_ds["time"][:].size == len(hf_paths)
+        
+        for index in range(len(hf_paths)):
+            with Dataset(hf_paths[index], 'r') as hf_ds:
+                assert (ts_ds[var_name][:][index] == hf_ds[var_name][:]).all()
+        assert "time" in ts_ds.variables
+        assert "time_bounds" in ts_ds.variables
 
     original_size = getsize(ts_path)
     ts_path = generate_time_series(hf_paths, f"{output_head_dir}/test_ts.", var_name, ["time", "time_bounds"], complevel=9, compression="zlib", overwrite=True)

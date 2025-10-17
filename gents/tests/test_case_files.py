@@ -25,19 +25,17 @@ def test_structured_case(structured_case):
 def test_time_bounds_missing_attrs_case(simple_case_missing_attrs):
     input_head_dir, output_head_dir = simple_case_missing_attrs
     for file_name in listdir(input_head_dir):
-        hf_ds = Dataset(f"{input_head_dir}/{file_name}", 'r')
-        assert 'units' not in hf_ds['time_bounds'].ncattrs()
-        assert 'calendar' not in hf_ds['time_bounds'].ncattrs()
-        hf_ds.close()
+        with Dataset(f"{input_head_dir}/{file_name}", 'r') as hf_ds:
+            assert 'units' not in hf_ds['time_bounds'].ncattrs()
+            assert 'calendar' not in hf_ds['time_bounds'].ncattrs()
 
 
 def test_multistep_case(multistep_case):
     input_head_dir, output_head_dir = multistep_case
     assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
     for file_name in listdir(input_head_dir):
-        hf_ds = Dataset(f"{input_head_dir}/{file_name}", 'r')
-        assert len(hf_ds['time'].dimensions) == 1
-        hf_ds.close()
+        with Dataset(f"{input_head_dir}/{file_name}", 'r') as hf_ds:
+            assert len(hf_ds['time'].dimensions) == 1
 
 
 def test_auxiliary_case(auxiliary_case):
@@ -45,8 +43,7 @@ def test_auxiliary_case(auxiliary_case):
     assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
 
     for file_name in listdir(input_head_dir):
-        hf_ds = Dataset(f"{input_head_dir}/{file_name}", 'r')
+        with Dataset(f"{input_head_dir}/{file_name}", 'r') as hf_ds:
+            for var_index in range(SIMPLE_NUM_VARS):
+                assert hf_ds[f"VAR{var_index}"].dimensions == ('time',)
 
-        for var_index in range(SIMPLE_NUM_VARS):
-            assert hf_ds[f"VAR{var_index}"].dimensions == ('time',)
-        hf_ds.close()
