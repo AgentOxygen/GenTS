@@ -325,13 +325,15 @@ def check_groups_by_variables(sliced_groups):
 
 class HFCollection:
     """History File Collection, holds paths to all history files and serves as an interface for interpreting the metadata."""
-    def __init__(self, hf_dir, dask_client=None, meta_map=None, hf_groups=None):
+    def __init__(self, hf_dir, dask_client=None, meta_map=None, hf_groups=None, hf_glob_pattern="*.nc*"):
         """
         :param hf_dir: Head directory to history files
         :param dask_client: Dask client object. If not given, the global client is used instead.
-        :param meta_map: History file to metadata map to use (overrides recursive search with hf_dir).
+        :param meta_map: History file to metadata map to use if deriving from existing HFCollection (overrides recursive search with hf_dir).
+        :param hf_groups: History file groups if deriving from existing HFCollection (overrides recursive search with hf_dir).
+        :param hf_glob_pattern: Glob pattern to match files against when searching recursively through the head directory.
         """
-        self.__raw_paths = find_files(hf_dir, "*.nc")
+        self.__raw_paths = find_files(hf_dir, hf_glob_pattern)
 
         if dask_client is None and DASK_INSTALLED:
             self.__client = dask.distributed.client._get_global_client()
