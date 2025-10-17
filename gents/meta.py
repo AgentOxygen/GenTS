@@ -190,7 +190,7 @@ class netCDFMeta:
         """
         if self.get_cftime_bounds() is None and self.get_cftimes() is None:
             return False
-        elif len(self.get_primary_variables()) == 0:
+        elif len(self.get_primary_variables()) + len(self.get_secondary_variables()) == 0:
             return False
         elif "gents_version" in self.get_attributes():
             return False
