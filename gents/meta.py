@@ -9,6 +9,7 @@ Last Header Update: 07/03/25
 import netCDF4
 import numpy as np
 from cftime import num2date
+from gents.utils import LOG_LEVEL_IO_WARNING
 import logging
 
 logger = logging.getLogger(__name__)
@@ -82,9 +83,9 @@ class netCDFMeta:
 
                 self.__cftime_vals = num2date(self.__time_vals, units=ds["time"].units, calendar=ds["time"].calendar)
             else:
-                logger.warning(f"Unable to find 'time' variable.")
+                logger.log(LOG_LEVEL_IO_WARNING, f"Unable to find 'time' variable.")
         except AttributeError:
-            logger.warning(f"Unable to pull 'calendar' and/or 'units' attributes from 'time' variable.")
+            logger.log(LOG_LEVEL_IO_WARNING, f"Unable to pull 'calendar' and/or 'units' attributes from 'time' variable.")
 
         self.__time_bounds_vals = None
         self.__cftime_bounds_vals = None
@@ -114,7 +115,7 @@ class netCDFMeta:
             try:
                 self.__cftime_bounds_vals = num2date(self.__time_bounds_vals, units=ds[time_bnds_eqv].units, calendar=ds[time_bnds_eqv].calendar)
             except AttributeError:
-                logger.warning(f"Unable to pull 'calendar' and/or 'units' attributes from 'time_bounds' equivalent variable. Using 'time' attributes instead.")
+                logger.log(LOG_LEVEL_IO_WARNING, f"Unable to pull 'calendar' and/or 'units' attributes from 'time_bounds' equivalent variable. Using 'time' attributes instead.")
                 self.__cftime_bounds_vals = num2date(self.__time_bounds_vals, units=ds['time'].units, calendar=ds['time'].calendar)
 
         self.__var_names = list(ds.variables)
