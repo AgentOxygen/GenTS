@@ -14,7 +14,7 @@ from os import remove, makedirs
 from cftime import num2date
 from pathlib import Path
 from gents.meta import get_attributes
-from gents.utils import get_version, ProgressBar
+from gents.utils import get_version, LOG_LEVEL_IO_WARNING, ProgressBar
 import logging
 
 logger = logging.getLogger(__name__)
@@ -76,7 +76,7 @@ def check_timeseries_integrity(ts_path: str):
         if "gents_version" in attrs:
             return True
     except OSError:
-        log(f"Corrupt timeseries output: '{ts_path}'")
+        logger.log(LOG_LEVEL_IO_WARNING, f"Corrupt timeseries output: '{ts_path}'")
     return False
 
 

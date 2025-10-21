@@ -7,7 +7,7 @@ Contact: cameron.cummins@utexas.edu
 Last Header Update: 04/30/25
 """
 from gents.meta import get_meta_from_path
-from gents.utils import ProgressBar
+from gents.utils import ProgressBar, LOG_LEVEL_IO_WARNING
 from cftime import num2date
 from pathlib import Path
 import numpy as np
@@ -317,9 +317,9 @@ def check_groups_by_variables(sliced_groups):
             filtered_sliced_groups[group] = sort_metas_by_time(majority)
             if others is not None:
                 for meta_ds in others:
-                    logger.warning(f"Dataset has inconsistent variable list with directory group: {meta_ds.get_path()}")
+                    logger.log(LOG_LEVEL_IO_WARNING, f"Dataset has inconsistent variable list with directory group: {meta_ds.get_path()}")
         else:
-            logger.warning(f"Unable to determine majority dataset, check variable configurations between directory groups, group ID: {group}")
+            logger.log(LOG_LEVEL_IO_WARNING, f"Unable to determine majority dataset, check variable configurations between directory groups, group ID: {group}")
     return filtered_sliced_groups
 
 
@@ -462,7 +462,7 @@ class HFCollection:
                 new_map[path] = self.__hf_to_meta_map[path]
             else:
                 removed[path] = self.__hf_to_meta_map[path]
-                logger.warning(f"Could not pull valid/complete metadata for '{path}'.")
+                logger.log(LOG_LEVEL_IO_WARNING, f"Could not pull valid/complete metadata for '{path}'.")
         self.__hf_to_meta_map = new_map
         logger.debug(f"{len(new_map)} files valdiated ({len(removed)} removed).")
         return removed

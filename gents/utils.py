@@ -12,6 +12,8 @@ import logging
 import sys
 import datetime
 
+LOG_LEVEL_IO_WARNING = 5
+
 
 def get_time_stamp():
     """Returns system date-time timestamp."""
@@ -27,7 +29,7 @@ def enable_logging(verbose=False, output_path=None):
     """
     Initializes logger to output GenTS logs.
     
-    :param verbose: If true, all logs will be output. Otherwise, only messages with level INFO or higher will be output. (Defautls to False)
+    :param verbose: If true, all logs will be output including messages for individual file paths. Otherwise, only messages with level DEBUG or higher will be output. (Defaults to False)
     :param output_path: File path to output logs to. (Defaults to None)
     """
     logger = logging.getLogger("gents")
@@ -42,9 +44,9 @@ def enable_logging(verbose=False, output_path=None):
         logger.addHandler(file_handler)
 
     if verbose:
-        logger.setLevel(logging.DEBUG)
+        logger.setLevel(LOG_LEVEL_IO_WARNING)
     else:
-        logger.setLevel(logging.INFO)
+        logger.setLevel(logging.DEBUG)
 
     logger.addHandler(stdout_handler)
 
