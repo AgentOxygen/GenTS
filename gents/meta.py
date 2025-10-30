@@ -131,6 +131,16 @@ class netCDFMeta:
         self.__attrs = get_attributes(ds)
         self.__path = ds.filepath()
 
+        self.__dim_bounds = {}
+
+        for dim_variable in ds.dimensions:
+            if dim_variable in ds.variables:
+                dim_data = ds[dim_variable][:]
+                if dim_data.shape[0] >= 2:
+                    self.__dim_bounds[dim_variable] = [np.min(dim_data), np.max(dim_data)]
+                else:
+                    self.__dim_bounds[dim_variable] = [np.min(dim_data)]
+
     def get_path(self):
         """
         :return: Get path to history file represented by this metadata class.
@@ -196,6 +206,12 @@ class netCDFMeta:
         elif "gents_version" in self.get_attributes():
             return False
         return True
+
+    def get_dim_bounds(self):
+        """
+        :return: Dictionary containing the bounds for each dimension coordinate variable.
+        """
+        return self.__dim_bounds
 
 def get_meta_from_path(path: str):
     """
