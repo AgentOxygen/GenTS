@@ -148,3 +148,20 @@ def test_modified_extensions_workflow(simple_case):
     for path in ts_paths:
         with Dataset(path, 'r') as ts_ds:
             assert ts_ds["time"].size == SIMPLE_NUM_TEST_HIST_FILES
+
+
+def test_spatially_fragmented_workflow(spatial_fragment_case):
+    input_head_dir, output_head_dir = spatial_fragment_case
+    hf_collection = HFCollection(input_head_dir)
+    
+    hf_collection.get_groups(check_fragmented=True)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+    ts_paths = ts_collection.execute()
+
+    assert len(ts_paths) == SIMPLE_NUM_VARS
+
+    for path in ts_paths:
+        with Dataset(path, 'r') as ds:
+            assert ds["lat"].size == FRAGMENTED_NUM_LAT_FILES*FRAGMENTED_NUM_LAT_PTS_PER_HF
+            assert ds["lon"].size == FRAGMENTED_NUM_LON_FILES*FRAGMENTED_NUM_LON_PTS_PER_HF
+            assert ds["time"].size == FRAGMENTED_NUM_TIMESTEPS

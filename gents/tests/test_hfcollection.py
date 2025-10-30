@@ -173,3 +173,15 @@ def test_missing_time_bounds_attrs(simple_case_missing_attrs):
 
     for entry in hf_collection:
         assert hf_collection[entry].is_valid()
+
+
+def test_spatially_fragmented_hf(spatial_fragment_case):
+    input_head_dir, output_head_dir = spatial_fragment_case
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection.pull_metadata()
+
+    assert len(hf_collection) == FRAGMENTED_NUM_TIMESTEPS*FRAGMENTED_NUM_LAT_FILES*FRAGMENTED_NUM_LON_FILES
+
+    groups = hf_collection.get_groups(check_fragmented=True)
+
+    assert len(groups) == 1

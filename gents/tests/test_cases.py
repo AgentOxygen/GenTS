@@ -14,20 +14,29 @@ STRUCTURED_NUM_TEST_HIST_FILES = 2
 STRUCTURED_NUM_VARS = 2
 STRUCTURED_NUM_DIRS = 3
 STRUCTURED_NUM_SUBDIRS = 2
+FRAGMENTED_NUM_LAT_FILES = 3
+FRAGMENTED_NUM_LON_FILES = 2
+FRAGMENTED_NUM_LAT_PTS_PER_HF = 2
+FRAGMENTED_NUM_LON_PTS_PER_HF = 1
+FRAGMENTED_NUM_TIMESTEPS = 20
 
-def generate_history_file(path, time_val, time_bounds_val, num_vars=SIMPLE_NUM_VARS, nc_format="NETCDF4_CLASSIC", time_bounds_attrs=True, auxiliary=False):
-    with Dataset(path, "w", format=nc_format) as ds:
 
+def generate_history_file(path, time_val, time_bounds_val, num_vars=SIMPLE_NUM_VARS, nc_format="NETCDF4_CLASSIC", time_bounds_attrs=True, auxiliary=False, dim_shapes=None, dim_vals={}):
+    if dim_shapes is None: 
         dim_shapes = {
             "time": None,
             "bnds": 2,
             "lat": 3,
             "lon": 4,
-            "lev": 5
+            "lev": 1
         }
-        
+    
+    with Dataset(path, "w", format=nc_format) as ds:
         for dim in dim_shapes:
             ds.createDimension(dim, dim_shapes[dim])
+            if dim in dim_vals:
+                dim_data = ds.createVariable(dim, float, (dim))
+                dim_data[:] = dim_vals[dim]
 
         for index in range(num_vars):
             if auxiliary:
@@ -42,7 +51,7 @@ def generate_history_file(path, time_val, time_bounds_val, num_vars=SIMPLE_NUM_V
             else:
                 var_data = ds.createVariable(f"VAR{index}", float, ("time", "lat", "lon"))
 
-                var_data[:] = np.random.random((len(time_val), dim_shapes["lat"], dim_shapes["lon"])).astype(float)
+                var_data[:] = index*np.ones((len(time_val), dim_shapes["lat"], dim_shapes["lon"])).astype(float)
                 var_data.setncatts({
                     "units": "kg/g/m^2/K",
                     "standard_name": f"VAR{index}",
@@ -165,5 +174,36 @@ def auxiliary_case(tmp_path_factory):
     hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):
         generate_history_file(path, [(file_index+1)*30], [[file_index*30, (file_index+1)*30]], auxiliary=True)
+
+    return head_hf_dir, head_ts_dir
+
+
+@pytest.fixture(scope="function")
+def spatial_fragment_case(tmp_path_factory):
+    head_hf_dir = tmp_path_factory.mktemp("fragmented_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("fragmented_timeseries_files")
+    
+    base_hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(FRAGMENTED_NUM_TIMESTEPS)]
+
+    lat_range = np.linspace(-90, 90, FRAGMENTED_NUM_LAT_FILES*FRAGMENTED_NUM_LAT_PTS_PER_HF)
+    lon_range = np.linspace(-180, 180, FRAGMENTED_NUM_LON_FILES*FRAGMENTED_NUM_LON_PTS_PER_HF)
+
+    dim_shapes = {
+        "time": None,
+        "bnds": 2,
+        "lat": FRAGMENTED_NUM_LAT_PTS_PER_HF,
+        "lon": FRAGMENTED_NUM_LON_PTS_PER_HF
+    }
+
+    for file_index, path in enumerate(base_hf_paths):
+        tile_index = 0
+        for lat_index in range(0, lat_range.size, FRAGMENTED_NUM_LAT_PTS_PER_HF):
+            for lon_index in range(0, lon_range.size, FRAGMENTED_NUM_LON_PTS_PER_HF):
+                dim_vals = {
+                    "lat": lat_range[lat_index:lat_index+FRAGMENTED_NUM_LAT_PTS_PER_HF],
+                    "lon": lon_range[lon_index:lon_index+FRAGMENTED_NUM_LON_PTS_PER_HF]
+                }
+                generate_history_file(f"{path}.{tile_index}", [(file_index+1)*180], [[file_index*180, (file_index+1)*180]], dim_shapes=dim_shapes, dim_vals=dim_vals)
+                tile_index += 1
 
     return head_hf_dir, head_ts_dir
