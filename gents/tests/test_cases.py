@@ -1,8 +1,7 @@
-from gents.utils import get_time_stamp, get_version
+from gents.utils import generate_history_file
 from netCDF4 import Dataset
-from os import listdir, makedirs
+from os import makedirs
 import pytest
-import numpy as np
 import random
 
 CASE_START_YEAR = 1850
@@ -14,66 +13,6 @@ STRUCTURED_NUM_TEST_HIST_FILES = 2
 STRUCTURED_NUM_VARS = 2
 STRUCTURED_NUM_DIRS = 3
 STRUCTURED_NUM_SUBDIRS = 2
-
-def generate_history_file(path, time_val, time_bounds_val, num_vars=SIMPLE_NUM_VARS, nc_format="NETCDF4_CLASSIC", time_bounds_attrs=True, auxiliary=False):
-    with Dataset(path, "w", format=nc_format) as ds:
-
-        dim_shapes = {
-            "time": None,
-            "bnds": 2,
-            "lat": 3,
-            "lon": 4,
-            "lev": 5
-        }
-        
-        for dim in dim_shapes:
-            ds.createDimension(dim, dim_shapes[dim])
-
-        for index in range(num_vars):
-            if auxiliary:
-                var_data = ds.createVariable(f"VAR{index}", float, ("time"))
-
-                var_data[:] = np.random.random((len(time_val))).astype(float)
-                var_data.setncatts({
-                    "units": "kg/g/m^2/K",
-                    "standard_name": f"VAR{index}",
-                    "long_name": f"variable_{index}"
-                })
-            else:
-                var_data = ds.createVariable(f"VAR{index}", float, ("time", "lat", "lon"))
-
-                var_data[:] = np.random.random((len(time_val), dim_shapes["lat"], dim_shapes["lon"])).astype(float)
-                var_data.setncatts({
-                    "units": "kg/g/m^2/K",
-                    "standard_name": f"VAR{index}",
-                    "long_name": f"variable_{index}"
-                })
-
-        time_data = ds.createVariable(f"time", np.double, "time")
-        time_data[:] = time_val
-        time_data.setncatts({
-            "calendar": "360_day",
-            "units": f"days since {CASE_START_YEAR}-01-01",
-            "standard_name": "time",
-            "long_name": "time"
-        })
-
-        if time_bounds_val is not None:
-            time_bnds_data = ds.createVariable(f"time_bounds", np.double, ("time", "bnds"))
-            time_bnds_data[:] = time_bounds_val
-            if time_bounds_attrs:
-                time_bnds_data.setncatts({
-                    "calendar": "360_day",
-                    "units": "days since 1850-01-01",
-                    "standard_name": "time_bounds",
-                    "long_name": "time_bounds"
-                })
-            
-        ds.setncatts({
-            "source": "GenTS testing suite",
-            "description": "Synthetic data used for testing with the GenTS package.",
-            "frequency": "month",
-        })
 
 
 @pytest.fixture(scope="function")

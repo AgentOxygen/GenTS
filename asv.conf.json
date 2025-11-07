@@ -1,0 +1,16 @@
+{
+    "version": 1,
+    "project": "gents",
+    "project_url": "https://gents.readthedocs.io/en/latest/",
+    "repo": ".",
+    "build_command": "",
+    "install_command": ["python -m pip install -e ."],
+    "uninstall_command": ["return-code=any python -m pip uninstall -y {project}"],
+    "show_commit_url": "https://github.com/AgentOxygen/GenTS/commits/",
+    "branches": ["main"],
+    "environment_type": "virtualenv",
+    "env_dir": ".asv/env",
+    "results_dir": ".asv/results",
+    "html_dir": ".asv/html",
+    "pythons": ["3.11"]
+}
