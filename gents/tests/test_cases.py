@@ -1,6 +1,7 @@
 from gents.utils import generate_history_file
 from netCDF4 import Dataset
 from os import makedirs
+import numpy as np
 import pytest
 import random
 
