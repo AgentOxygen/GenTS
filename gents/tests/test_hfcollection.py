@@ -1,4 +1,4 @@
-from test_cases import *
+from gents.tests.test_cases import *
 from gents.hfcollection import *
 from gents.meta import netCDFMeta
 from gents.utils import enable_logging
