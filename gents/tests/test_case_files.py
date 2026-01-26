@@ -1,6 +1,6 @@
 from os import listdir
 from netCDF4 import Dataset
-from test_cases import *
+from gents.tests.test_cases import *
 
 
 def test_simple_case(simple_case):

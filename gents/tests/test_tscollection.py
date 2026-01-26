@@ -1,4 +1,4 @@
-from test_cases import *
+from gents.tests.test_cases import *
 from gents.hfcollection import HFCollection, find_files
 from gents.timeseries import *
 from os.path import isfile, getsize
