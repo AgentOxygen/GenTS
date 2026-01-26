@@ -1,8 +1,7 @@
-from gents.utils import get_time_stamp, get_version
+from gents.utils import generate_history_file
 from netCDF4 import Dataset
-from os import listdir, makedirs
+from os import makedirs
 import pytest
-import numpy as np
 import random
 
 CASE_START_YEAR = 1850

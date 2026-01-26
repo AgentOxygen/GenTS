@@ -1,7 +1,8 @@
 from gents.hfcollection import HFCollection
 from gents.timeseries import TSCollection
-from test_cases import *
-from test_workflow import is_monotonic
+from gents.utils import get_version
+from gents.tests.test_cases import *
+from gents.tests.test_workflow import is_monotonic
 from netCDF4 import Dataset
 from pytest import importorskip
 

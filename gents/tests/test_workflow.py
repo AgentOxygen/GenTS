@@ -1,7 +1,7 @@
 from gents.utils import get_version
 from gents.hfcollection import HFCollection
 from gents.timeseries import TSCollection
-from test_cases import *
+from gents.tests.test_cases import *
 from netCDF4 import Dataset
 from os import listdir, makedirs, rename
 import pytest
