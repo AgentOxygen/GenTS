@@ -323,6 +323,51 @@ def check_groups_by_variables(sliced_groups):
     return filtered_sliced_groups
 
 
+def merge_fragmented_groups(hf_groups, hf_meta_map):
+    """
+    Iterates through grouped history files and merges groups that have identical time values, variable names,
+    but differing values on other dimensions.
+    
+    :param groups: Grouped history file dictionary to iterate through.
+    :return: New grouped history file dictionary with fragmented groups merged together. 
+    """
+    new_groups = {}
+    fragmented_groups = {}
+
+    for pattern in hf_groups:
+        init_path = str(hf_groups[pattern][0])
+        if init_path[-3:] == '.nc':
+            new_groups[pattern] = hf_groups[pattern]
+        else:
+            fragmented_groups[pattern] = hf_groups[pattern]
+
+    if len(fragmented_groups) > 0:
+        num_fragmented_files = sum([len(fragmented_groups[pattern]) for pattern in fragmented_groups])
+        logger.info(f"Found {num_fragmented_files} spatially fragmented files.")
+
+    dim_hashes = {}
+    for pattern in fragmented_groups:
+        dims = hf_meta_map[fragmented_groups[pattern][0]].get_dim_bounds()
+        dims = {variable: dims[variable] for variable in dims if "time" not in dims}
+        dims_hash = str(dims)
+
+        if dims_hash not in dim_hashes:
+            dim_hashes[dims_hash] = []
+        
+        for path in fragmented_groups[pattern]:
+            dim_hashes[dims_hash].append(path)
+
+    for dim_hash in dim_hashes:
+        paths = dim_hashes[dim_hash]
+        label = str(paths[0]).split(".nc")[0] + "*"
+        if label not in new_groups:
+            new_groups[label] = paths
+        else:
+            raise KeyError(f"Fragmentation merge failed! History file group '{label}' already exists. Try filtering to fragmented files only to minimize confusion with non-fragmented history files.")
+
+    return new_groups
+
+
 class HFCollection:
     """History File Collection, holds paths to all history files and serves as an interface for interpreting the metadata."""
     def __init__(self, hf_dir, dask_client=None, meta_map=None, hf_groups=None, hf_glob_pattern="*.nc*"):
@@ -526,15 +571,21 @@ class HFCollection:
         logger.debug(f"Filtered from {start_year} to {end_year} applied to following glob patterns: '{glob_patterns}'")
         return self.copy(meta_map=filtered_path_map)
 
-    def get_groups(self):
+    def get_groups(self, check_fragmented=True):
         """
         Returns history file groupings.
 
+        :param check_fragmented: Checks if any of the history files are spatially fragmented/tiled.
         :return: Dictionary containing group ID (key) and history file metadatas (value).
         """
         if self.__hf_groups is None:
             self.check_pulled()
             self.__hf_groups = sort_hf_groups(list(self.__hf_to_meta_map.keys()))
+        
+        if check_fragmented:
+            self.check_pulled()
+            self.__hf_groups = merge_fragmented_groups(self.__hf_groups, self.__hf_to_meta_map)
+
         return self.__hf_groups
 
     def slice_groups(self, slice_size_years=10, pattern=None):
@@ -578,9 +629,9 @@ class HFCollection:
                     for time_slice in time_slices:
                         if time_slice[0] <= time.year <= time_slice[1]:
                             if time_slice in hf_slices:
-                                hf_slices[time_slice].append(meta_ds)
+                                hf_slices[time_slice].append(meta_ds.get_path())
                             else:
-                                hf_slices[time_slice] = [meta_ds]
+                                hf_slices[time_slice] = [meta_ds.get_path()]
                             break
         
                 for time_slice in hf_slices:

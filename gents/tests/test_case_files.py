@@ -1,5 +1,6 @@
 from os import listdir
 from netCDF4 import Dataset
+import numpy as np
 from gents.tests.test_cases import *
 
 
@@ -47,3 +48,23 @@ def test_auxiliary_case(auxiliary_case):
             for var_index in range(SIMPLE_NUM_VARS):
                 assert hf_ds[f"VAR{var_index}"].dimensions == ('time',)
 
+
+def test_fragmented_case(spatial_fragment_case):
+    input_head_dir, output_head_dir = spatial_fragment_case
+    assert len(listdir(input_head_dir)) == FRAGMENTED_NUM_TIMESTEPS*FRAGMENTED_NUM_LAT_FILES*FRAGMENTED_NUM_LON_FILES
+    
+    dim_hashes = []
+
+    for file_name in listdir(input_head_dir):
+        with Dataset(f"{input_head_dir}/{file_name}", 'r') as hf_ds:
+            for var_index in range(SIMPLE_NUM_VARS):
+                assert hf_ds["lat"].size == FRAGMENTED_NUM_LAT_PTS_PER_HF
+                assert hf_ds["lon"].size == FRAGMENTED_NUM_LON_PTS_PER_HF
+                assert np.unique(hf_ds["lat"][:]).size == hf_ds["lat"].size
+                assert np.unique(hf_ds["lon"][:]).size == hf_ds["lon"].size
+            
+            dim_hash = str([hf_ds["lat"][:], hf_ds["lon"][:]])
+            if dim_hash not in dim_hashes:
+                dim_hashes.append(dim_hash)
+    
+    assert len(dim_hashes) == FRAGMENTED_NUM_LAT_FILES*FRAGMENTED_NUM_LON_FILES
