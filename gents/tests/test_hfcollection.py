@@ -116,6 +116,14 @@ def test_simple_hfcollection(simple_case, caplog):
     assert len(caplog.text) == 0
 
 
+def test_time_bounds_case(time_bounds_case):
+    input_head_dir, output_head_dir = time_bounds_case
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection.pull_metadata()
+
+    assert len(hf_collection) == TIME_NUM_TEST_HIST_FILES
+
+
 def test_scrambled_hfcollection(scrambled_case):
     input_head_dir, output_head_dir = scrambled_case
     hf_collection = HFCollection(input_head_dir)

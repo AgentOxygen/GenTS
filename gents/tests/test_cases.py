@@ -7,6 +7,8 @@ import random
 CASE_START_YEAR = 1850
 SIMPLE_NUM_TEST_HIST_FILES = 120
 SIMPLE_NUM_VARS = 6
+TIME_NUM_TEST_HIST_FILES = 2
+TIME_NUM_VARS = 1
 SCRAMBLED_NUM_TEST_HIST_FILES = 36
 SCRAMBLED_NUM_VARS = 2
 STRUCTURED_NUM_TEST_HIST_FILES = 2
@@ -20,10 +22,22 @@ FRAGMENTED_NUM_LON_PTS_PER_HF = 1
 FRAGMENTED_NUM_TIMESTEPS = 20
 
 
-def generate_history_file(path, time_val, time_bounds_val, num_vars=SIMPLE_NUM_VARS, nc_format="NETCDF4_CLASSIC", time_bounds_attrs=True, auxiliary=False, dim_shapes=None, dim_vals={}):
+def generate_history_file(
+        path,
+        time_val,
+        time_bounds_val,
+        num_vars=SIMPLE_NUM_VARS,
+        nc_format="NETCDF4_CLASSIC",
+        time_bounds_attrs=True,
+        time_name="time",
+        time_bounds_name="time_bounds",
+        auxiliary=False,
+        dim_shapes=None,
+        dim_vals={}
+    ):
     if dim_shapes is None: 
         dim_shapes = {
-            "time": None,
+            time_name: None,
             "bnds": 2,
             "lat": 3,
             "lon": 4,
@@ -39,7 +53,7 @@ def generate_history_file(path, time_val, time_bounds_val, num_vars=SIMPLE_NUM_V
 
         for index in range(num_vars):
             if auxiliary:
-                var_data = ds.createVariable(f"VAR{index}", float, ("time"))
+                var_data = ds.createVariable(f"VAR{index}", float, (time_name))
 
                 var_data[:] = np.random.random((len(time_val))).astype(float)
                 var_data.setncatts({
@@ -48,7 +62,7 @@ def generate_history_file(path, time_val, time_bounds_val, num_vars=SIMPLE_NUM_V
                     "long_name": f"variable_{index}"
                 })
             else:
-                var_data = ds.createVariable(f"VAR{index}", float, ("time", "lat", "lon"))
+                var_data = ds.createVariable(f"VAR{index}", float, (time_name, "lat", "lon"))
 
                 var_data[:] = index*np.ones((len(time_val), dim_shapes["lat"], dim_shapes["lon"])).astype(float)
                 var_data.setncatts({
@@ -57,24 +71,24 @@ def generate_history_file(path, time_val, time_bounds_val, num_vars=SIMPLE_NUM_V
                     "long_name": f"variable_{index}"
                 })
 
-        time_data = ds.createVariable(f"time", np.double, "time")
+        time_data = ds.createVariable(time_name, np.double, time_name)
         time_data[:] = time_val
         time_data.setncatts({
             "calendar": "360_day",
             "units": f"days since {CASE_START_YEAR}-01-01",
-            "standard_name": "time",
-            "long_name": "time"
+            "standard_name": time_name,
+            "long_name": time_name
         })
 
         if time_bounds_val is not None:
-            time_bnds_data = ds.createVariable(f"time_bounds", np.double, ("time", "bnds"))
+            time_bnds_data = ds.createVariable(time_bounds_name, np.double, (time_name, "bnds"))
             time_bnds_data[:] = time_bounds_val
             if time_bounds_attrs:
                 time_bnds_data.setncatts({
                     "calendar": "360_day",
                     "units": "days since 1850-01-01",
-                    "standard_name": "time_bounds",
-                    "long_name": "time_bounds"
+                    "standard_name": time_bounds_name,
+                    "long_name": time_bounds_name
                 })
             
         ds.setncatts({
@@ -82,6 +96,18 @@ def generate_history_file(path, time_val, time_bounds_val, num_vars=SIMPLE_NUM_V
             "description": "Synthetic data used for testing with the GenTS package.",
             "frequency": "month",
         })
+
+
+@pytest.fixture(scope="function")
+def time_bounds_case(tmp_path_factory):
+    head_hf_dir = tmp_path_factory.mktemp("time_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("time_timeseries_files")
+    
+    hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(TIME_NUM_TEST_HIST_FILES)]
+    for file_index, path in enumerate(hf_paths):
+        generate_history_file(path, [(file_index+1)*30], [[file_index*30, (file_index+1)*30]], num_vars=TIME_NUM_VARS, time_bounds_name="Time_Bounds", time_name="Time")
+
+    return head_hf_dir, head_ts_dir
 
 
 @pytest.fixture(scope="function")
