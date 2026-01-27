@@ -124,6 +124,13 @@ def test_time_bounds_case(time_bounds_case):
     assert len(hf_collection) == TIME_NUM_TEST_HIST_FILES
 
 
+def test_no_times_case(no_time_case):
+    input_head_dir, output_head_dir = no_time_case
+    hf_collection = HFCollection(input_head_dir)
+    with pytest.raises(Exception) as ValueError:
+        hf_collection.pull_metadata()
+
+
 def test_scrambled_hfcollection(scrambled_case):
     input_head_dir, output_head_dir = scrambled_case
     hf_collection = HFCollection(input_head_dir)
