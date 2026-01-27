@@ -9,6 +9,15 @@ def test_simple_case(simple_case):
     assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
 
 
+def test_time_bounds_case(time_bounds_case):
+    input_head_dir, output_head_dir = time_bounds_case
+    assert len(listdir(input_head_dir)) == TIME_NUM_TEST_HIST_FILES
+    for file_name in listdir(input_head_dir):
+        with Dataset(f"{input_head_dir}/{file_name}", 'r') as hf_ds:
+            assert 'Time_Bounds' in hf_ds.variables
+            assert 'Time' in hf_ds.variables
+
+
 def test_scrambled_case(scrambled_case):
     input_head_dir, output_head_dir = scrambled_case
     assert len(listdir(input_head_dir)) == SCRAMBLED_NUM_TEST_HIST_FILES

@@ -50,6 +50,19 @@ def test_simple_workflow(simple_case):
                         assert ts_ds[var_name].getncattr(key) == hf_ds[var_name].getncattr(key)
 
 
+def test_time_bounds_workflow(time_bounds_case):
+    input_head_dir, output_head_dir = time_bounds_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+    ts_paths = ts_collection.execute()
+
+    for path in ts_paths:
+        with Dataset(path, 'r') as ts_ds:
+            assert "Time_Bounds" in ts_ds.variables
+            assert "Time" in ts_ds.variables
+            assert "Time" in ts_ds.dimensions
+
+
 def test_no_time_bounds_workflow(no_time_bounds_case):
     input_head_dir, output_head_dir = no_time_bounds_case
     hf_collection = HFCollection(input_head_dir)
