@@ -7,12 +7,14 @@ RUN apt-get update \
 
 WORKDIR /project
 
-COPY . .
-
 RUN pip install --upgrade pip
 RUN pip install pytest asv sphinx sphinx-autobuild
 
+COPY . .
+
 RUN pip install -e .[parallel]
+
+RUN git config --global --add safe.directory /project/.git
 
 EXPOSE 8000
 
