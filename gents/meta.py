@@ -80,12 +80,6 @@ def get_time_variables_names(ds):
             time_bnds_eqv = var_name
         elif lowercase_name == 'time_bound':
             time_bnds_eqv = var_name
-
-    if time_eqv is None:
-        logger.log(LOG_LEVEL_IO_WARNING, f"Unable to find 'time' variable.")
-
-    if time_bnds_eqv is None:
-        logger.warning(f"Unable to find equivalent 'time_bounds' variable.")
     
     return time_eqv, time_bnds_eqv
 
@@ -100,6 +94,14 @@ class netCDFMeta:
         self.__cftime_vals = None
 
         time_eqv, time_bnds_eqv = get_time_variables_names(ds)
+        
+        if time_bnds_eqv is None:
+            logger.warning(f"Unable to find equivalent 'time_bounds' variable.")
+
+        if time_eqv is None:
+            logger.log(LOG_LEVEL_IO_WARNING, f"Unable to find 'time' variable.")
+            raise ValueError(f"No equivalent time variable found to concatenate over.")
+
         try:
             self.__time_vals = ds[time_eqv][:]
 
