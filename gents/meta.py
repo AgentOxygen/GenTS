@@ -64,6 +64,32 @@ def get_attributes(dataset):
     return attrs
 
 
+def get_time_variables_names(ds):
+    time_eqv = None
+    time_bnds_eqv = None
+
+    for var_name in ds.variables:
+        lowercase_name = str(var_name).lower()
+        if lowercase_name == 'time':
+            time_eqv = var_name
+        elif lowercase_name == 'time_bnds':
+            time_bnds_eqv = var_name
+        elif lowercase_name == 'time_bnd':
+            time_bnds_eqv = var_name
+        elif lowercase_name == 'time_bounds':
+            time_bnds_eqv = var_name
+        elif lowercase_name == 'time_bound':
+            time_bnds_eqv = var_name
+
+    if time_eqv is None:
+        logger.log(LOG_LEVEL_IO_WARNING, f"Unable to find 'time' variable.")
+
+    if time_bnds_eqv is None:
+        logger.warning(f"Unable to find equivalent 'time_bounds' variable.")
+    
+    return time_eqv, time_bnds_eqv
+
+
 class netCDFMeta:
     """Stores and provides interface for accessing necessary metadata for individual history files."""
     def __init__(self, ds: netCDF4.Dataset):
@@ -72,35 +98,22 @@ class netCDFMeta:
         """
         self.__time_vals = None
         self.__cftime_vals = None
+
+        time_eqv, time_bnds_eqv = get_time_variables_names(ds)
         try:
-            if 'time' in ds.variables:
-                self.__time_vals = ds['time'][:]
+            self.__time_vals = ds[time_eqv][:]
 
-                if len(self.__time_vals.shape) > 1:
-                    self.__time_vals = np.squeeze(self.__time_vals)
-                elif len(self.__time_vals.shape) == 0:
-                    self.__time_vals = np.array([self.__time_vals])
+            if len(self.__time_vals.shape) > 1:
+                self.__time_vals = np.squeeze(self.__time_vals)
+            elif len(self.__time_vals.shape) == 0:
+                self.__time_vals = np.array([self.__time_vals])
 
-                self.__cftime_vals = num2date(self.__time_vals, units=ds["time"].units, calendar=ds["time"].calendar)
-            else:
-                logger.log(LOG_LEVEL_IO_WARNING, f"Unable to find 'time' variable.")
+            self.__cftime_vals = num2date(self.__time_vals, units=ds[time_eqv].units, calendar=ds[time_eqv].calendar)
         except AttributeError:
             logger.log(LOG_LEVEL_IO_WARNING, f"Unable to pull 'calendar' and/or 'units' attributes from 'time' variable.")
 
         self.__time_bounds_vals = None
         self.__cftime_bounds_vals = None
-        time_bnds_eqv = None
-
-        if 'time_bnds' in ds.variables:
-            time_bnds_eqv = 'time_bnds'
-        elif 'time_bnd' in ds.variables:
-            time_bnds_eqv = 'time_bnd'
-        elif 'time_bounds' in ds.variables:
-            time_bnds_eqv = 'time_bounds'
-        elif 'time_bound' in ds.variables:
-            time_bnds_eqv = 'time_bound'
-        else:
-            logger.warning(f"Unable to find equivalent 'time_bounds' variable.")
         
         if time_bnds_eqv:
             self.__time_bounds_vals = ds[time_bnds_eqv][:]
@@ -116,7 +129,7 @@ class netCDFMeta:
                 self.__cftime_bounds_vals = num2date(self.__time_bounds_vals, units=ds[time_bnds_eqv].units, calendar=ds[time_bnds_eqv].calendar)
             except AttributeError:
                 logger.log(LOG_LEVEL_IO_WARNING, f"Unable to pull 'calendar' and/or 'units' attributes from 'time_bounds' equivalent variable. Using 'time' attributes instead.")
-                self.__cftime_bounds_vals = num2date(self.__time_bounds_vals, units=ds['time'].units, calendar=ds['time'].calendar)
+                self.__cftime_bounds_vals = num2date(self.__time_bounds_vals, units=ds[time_eqv].units, calendar=ds[time_eqv].calendar)
 
         self.__var_names = list(ds.variables)
         self.__primary_var_names = []
@@ -223,7 +236,6 @@ def get_meta_from_path(path: str):
     """
     ds_meta = None
     with netCDF4.Dataset(path, 'r') as ds:
-        if "time" in ds.variables:
-            ds_meta = netCDFMeta(ds)
+        ds_meta = netCDFMeta(ds)
 
     return ds_meta
