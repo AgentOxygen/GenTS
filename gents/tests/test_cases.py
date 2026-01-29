@@ -5,7 +5,7 @@ import pytest
 import random
 
 CASE_START_YEAR = 1850
-SIMPLE_NUM_TEST_HIST_FILES = 120
+SIMPLE_NUM_TEST_HIST_FILES = 40
 SIMPLE_NUM_VARS = 6
 TIME_NUM_TEST_HIST_FILES = 2
 TIME_NUM_VARS = 1
@@ -20,6 +20,7 @@ FRAGMENTED_NUM_LON_FILES = 2
 FRAGMENTED_NUM_LAT_PTS_PER_HF = 2
 FRAGMENTED_NUM_LON_PTS_PER_HF = 1
 FRAGMENTED_NUM_TIMESTEPS = 20
+UNSTRUCT_GRID_NUM_NCOLS = 8
 
 
 def generate_history_file(
@@ -32,8 +33,11 @@ def generate_history_file(
         time_name="time",
         time_bounds_name="time_bounds",
         auxiliary=False,
+        aux_dim="time",
         dim_shapes=None,
-        dim_vals={}
+        dim_vals={},
+        var_dims=None,
+        var_shape=None
     ):
     if dim_shapes is None: 
         dim_shapes = {
@@ -51,25 +55,32 @@ def generate_history_file(
                 dim_data = ds.createVariable(dim, float, (dim))
                 dim_data[:] = dim_vals[dim]
 
+        if var_shape is None:
+            var_shape = (len(time_val), dim_shapes["lat"], dim_shapes["lon"])
+
+        if var_dims is None:
+            var_dims = (time_name, "lat", "lon")
+
         for index in range(num_vars):
             if auxiliary:
-                var_data = ds.createVariable(f"VAR{index}", float, (time_name))
-
-                var_data[:] = np.random.random((len(time_val))).astype(float)
+                var_data = ds.createVariable(f"VAR_AUX_{index}", float, (aux_dim))
+                aux_shape = 1
+                if dim_shapes[aux_dim] is not None:
+                    aux_shape = dim_shapes[aux_dim]
+                var_data[:] = np.random.random((aux_shape)).astype(float)
                 var_data.setncatts({
                     "units": "kg/g/m^2/K",
                     "standard_name": f"VAR{index}",
                     "long_name": f"variable_{index}"
                 })
-            else:
-                var_data = ds.createVariable(f"VAR{index}", float, (time_name, "lat", "lon"))
+            var_data = ds.createVariable(f"VAR{index}", float, var_dims)
 
-                var_data[:] = index*np.ones((len(time_val), dim_shapes["lat"], dim_shapes["lon"])).astype(float)
-                var_data.setncatts({
-                    "units": "kg/g/m^2/K",
-                    "standard_name": f"VAR{index}",
-                    "long_name": f"variable_{index}"
-                })
+            var_data[:] = index*np.ones(var_shape).astype(float)
+            var_data.setncatts({
+                "units": "kg/g/m^2/K",
+                "standard_name": f"VAR{index}",
+                "long_name": f"variable_{index}"
+            })
 
         time_data = ds.createVariable(time_name, np.double, time_name)
         time_data[:] = time_val
@@ -118,6 +129,19 @@ def simple_case(tmp_path_factory):
     hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):
         generate_history_file(path, [(file_index+1)*30], [[file_index*30, (file_index+1)*30]])
+
+    return head_hf_dir, head_ts_dir
+
+
+@pytest.fixture(scope="function")
+def unstructured_grid_case(tmp_path_factory):
+    head_hf_dir = tmp_path_factory.mktemp("unstructured_grid_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("unstructured_grid_timeseries_files")
+    
+    hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
+    for file_index, path in enumerate(hf_paths):
+        time_vals, time_bnds = [(file_index+1)*30], [[file_index*30, (file_index+1)*30]]
+        generate_history_file(path, time_vals, time_bnds, auxiliary=True, aux_dim="ncol", dim_shapes={"time": None, "ncol": UNSTRUCT_GRID_NUM_NCOLS, "bnds": 2}, var_dims=("time", "ncol"), var_shape=(len(time_vals), UNSTRUCT_GRID_NUM_NCOLS))
 
     return head_hf_dir, head_ts_dir
 
@@ -204,13 +228,14 @@ def multistep_case(tmp_path_factory):
 
 
 @pytest.fixture(scope="function")
-def auxiliary_case(tmp_path_factory):
-    head_hf_dir = tmp_path_factory.mktemp("auxiliary_history_files")
-    head_ts_dir = tmp_path_factory.mktemp("auxiliary_timeseries_files")
+def with_auxiliary_case(tmp_path_factory):
+    head_hf_dir = tmp_path_factory.mktemp("with_auxiliary_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("with_auxiliary_timeseries_files")
     
     hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):
-        generate_history_file(path, [(file_index+1)*30], [[file_index*30, (file_index+1)*30]], auxiliary=True)
+        time_vals, time_bnds = [(file_index+1)*30], [[file_index*30, (file_index+1)*30]]
+        generate_history_file(path, time_vals, None, auxiliary=True, time_name="time", dim_shapes={"time": None}, var_dims=("time"), var_shape=(len(time_vals)))
 
     return head_hf_dir, head_ts_dir
 

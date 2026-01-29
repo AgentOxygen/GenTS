@@ -148,6 +148,9 @@ class MHFDataset:
         if var_name in self.__data_coords:
             return self.__data_coords[var_name]
 
+        if "time" not in self.get_var_dimensions(var_name):
+            return self.__hf_datasets[0][var_name][:]
+
         time_vals = self.get_time_vals()[time_index_start:time_index_end]
         data_shape = self.get_var_data_shape(var_name)
         data_shape[0] = len(time_vals)

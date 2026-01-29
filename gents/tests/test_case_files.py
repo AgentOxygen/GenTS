@@ -9,6 +9,16 @@ def test_simple_case(simple_case):
     assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
 
 
+def test_unstructured_grid_case(unstructured_grid_case):
+    input_head_dir, output_head_dir = unstructured_grid_case
+    assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
+
+    with Dataset(f"{input_head_dir}/{listdir(input_head_dir)[0]}", 'r') as hf_ds:
+        assert hf_ds["VAR_AUX_0"].size == UNSTRUCT_GRID_NUM_NCOLS
+        assert hf_ds["VAR_AUX_0"].dimensions == ("ncol",)
+        assert hf_ds["VAR0"].dimensions == ("time", "ncol",)
+
+
 def test_time_bounds_case(time_bounds_case):
     input_head_dir, output_head_dir = time_bounds_case
     assert len(listdir(input_head_dir)) == TIME_NUM_TEST_HIST_FILES
@@ -56,14 +66,14 @@ def test_multistep_case(multistep_case):
             assert len(hf_ds['time'].dimensions) == 1
 
 
-def test_auxiliary_case(auxiliary_case):
-    input_head_dir, output_head_dir = auxiliary_case
+def test_with_auxiliary_case(with_auxiliary_case):
+    input_head_dir, output_head_dir = with_auxiliary_case
     assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
 
     for file_name in listdir(input_head_dir):
         with Dataset(f"{input_head_dir}/{file_name}", 'r') as hf_ds:
             for var_index in range(SIMPLE_NUM_VARS):
-                assert hf_ds[f"VAR{var_index}"].dimensions == ('time',)
+                assert hf_ds[f"VAR_AUX_{var_index}"].dimensions == ('time',)
 
 
 def test_fragmented_case(spatial_fragment_case):
