@@ -166,6 +166,18 @@ def no_time_bounds_case(tmp_path_factory):
 
 
 @pytest.fixture(scope="function")
+def no_time_case(tmp_path_factory):
+    head_hf_dir = tmp_path_factory.mktemp("no_time_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("no_time_timeseries_files")
+    
+    hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
+    for file_index, path in enumerate(hf_paths):
+        generate_history_file(path, [(file_index+1)*30], None, time_name="nottime")
+
+    return head_hf_dir, head_ts_dir
+
+
+@pytest.fixture(scope="function")
 def simple_case_missing_attrs(tmp_path_factory):
     head_hf_dir = tmp_path_factory.mktemp("simple_history_files")
     head_ts_dir = tmp_path_factory.mktemp("simple_timeseries_files")

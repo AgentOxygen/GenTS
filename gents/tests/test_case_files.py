@@ -40,6 +40,14 @@ def test_time_bounds_missing_attrs_case(simple_case_missing_attrs):
             assert 'calendar' not in hf_ds['time_bounds'].ncattrs()
 
 
+def test_no_time_case(no_time_case):
+    input_head_dir, output_head_dir = no_time_case
+    for file_name in listdir(input_head_dir):
+        with Dataset(f"{input_head_dir}/{file_name}", 'r') as hf_ds:
+            assert 'time' not in hf_ds.variables
+            assert 'time_bounds' not in hf_ds.variables
+
+
 def test_multistep_case(multistep_case):
     input_head_dir, output_head_dir = multistep_case
     assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
