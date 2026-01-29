@@ -50,6 +50,16 @@ def test_simple_workflow(simple_case):
                         assert ts_ds[var_name].getncattr(key) == hf_ds[var_name].getncattr(key)
 
 
+def test_unstructured_grid_workflow(unstructured_grid_case):
+    input_head_dir, output_head_dir = unstructured_grid_case
+
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+    ts_paths = ts_collection.execute()
+
+    assert len(ts_paths) == SIMPLE_NUM_VARS
+
+
 def test_time_bounds_workflow(time_bounds_case):
     input_head_dir, output_head_dir = time_bounds_case
     hf_collection = HFCollection(input_head_dir)
@@ -132,8 +142,8 @@ def test_multistep_workflow(multistep_case):
             assert is_monotonic(ts_ds["time"][:])
 
 
-def test_auxiliary_workflow(auxiliary_case):
-    input_head_dir, output_head_dir = auxiliary_case
+def test_with_auxiliary_workflow(with_auxiliary_case):
+    input_head_dir, output_head_dir = with_auxiliary_case
     hf_collection = HFCollection(input_head_dir)
     ts_collection = TSCollection(hf_collection, output_head_dir)
     ts_paths = ts_collection.execute()
@@ -143,7 +153,8 @@ def test_auxiliary_workflow(auxiliary_case):
     with Dataset(ts_paths[0], 'r') as ts_ds:
         assert is_monotonic(ts_ds["time"][:])
         for var_index in range(SIMPLE_NUM_VARS):
-            assert f"VAR{var_index}" in ts_ds.variables
+            assert f"VAR_AUX_{var_index}" in ts_ds.variables
+            assert len(ts_ds[f"VAR_AUX_{var_index}"].shape) == 1
 
 
 def test_modified_extensions_workflow(simple_case):
