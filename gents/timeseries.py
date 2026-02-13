@@ -261,7 +261,7 @@ class TSCollection:
         Applies exclusive filter to time series orders.
 
         :param path_glob: Glob pattern to apply to source history files.
-        :param var_glob: Glob pattern to apply to primary variable names. Defaults to "*"
+        :param var_glob: Glob pattern to apply to primary variable names. Defaults to ""
         :return: A new TSCollection that excludes time series orders that match the filter.
         """
         filtered_orders = []

@@ -76,8 +76,8 @@ def test_simple_hfcollection(simple_case, caplog):
         assert isfile(path)
 
 
-    excluded = hf_collection.exclude_patterns(["*.00001.nc"])
-    included = hf_collection.include_patterns(["*.00001.nc"])
+    excluded = hf_collection.exclude(["*.00001.nc"])
+    included = hf_collection.include(["*.00001.nc"])
     
     assert len(excluded) == SIMPLE_NUM_TEST_HIST_FILES - 1
     assert len(included) == 1
@@ -160,12 +160,12 @@ def test_hfcollection_copy(simple_case):
     assert list(hf_copy) == list(hf_collection)
     assert hf_copy is not hf_collection
 
-    hf_copy = hf_collection.include_patterns("*.nc")
+    hf_copy = hf_collection.include("*.nc")
     assert type(hf_copy) == HFCollection
     assert list(hf_copy) == list(hf_collection)
     assert hf_copy is not hf_collection
 
-    hf_copy = hf_collection.exclude_patterns("*.txt")
+    hf_copy = hf_collection.exclude("*.txt")
     assert type(hf_copy) == HFCollection
     assert list(hf_copy) == list(hf_collection)
     assert hf_copy is not hf_collection

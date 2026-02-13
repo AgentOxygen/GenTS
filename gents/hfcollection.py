@@ -513,6 +513,14 @@ class HFCollection:
         return removed
     
     def include_patterns(self, glob_patterns):
+        warnings.warn("TSCollection.include_patterns is deprecated in favor of TSCollection.include")
+        return self.include(glob_patterns)
+
+    def exclude_patterns(self, glob_patterns):
+        warnings.warn("TSCollection.exclude_patterns is deprecated in favor of TSCollection.exclude")
+        return self.exclude(glob_patterns)
+
+    def include(self, glob_patterns):
         """
         Filters out history files in the collection with paths that do not match the glob patterns.
 
@@ -526,7 +534,7 @@ class HFCollection:
         logger.debug(f"Inclusive filter(s) applied: '{glob_patterns}'")
         return self.copy(meta_map=filtered_path_map)
 
-    def exclude_patterns(self, glob_patterns):
+    def exclude(self, glob_patterns):
         """
         Filters out history files in the collection with paths that do match the glob patterns.
 
