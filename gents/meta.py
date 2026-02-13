@@ -180,7 +180,6 @@ class netCDFMeta:
         :return: Get array of CFTime objects from time dimension.
         """
         return self.__cftime_vals
-                self.__cftime_bounds_vals = num2date(self.__time_bounds_vals, units=ds[time_eqv].units, calendar=ds[time_eqv].calendar)
 
     def get_variables(self):
         """
