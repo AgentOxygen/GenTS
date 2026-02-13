@@ -95,11 +95,7 @@ class netCDFMeta:
 
         time_eqv, time_bnds_eqv = get_time_variables_names(ds)
         
-        if time_bnds_eqv is None:
-            logger.warning(f"Unable to find equivalent 'time_bounds' variable.")
-
         if time_eqv is None:
-            logger.log(LOG_LEVEL_IO_WARNING, f"Unable to find 'time' variable.")
             raise ValueError(f"No equivalent time variable found to concatenate over.")
 
         try:
@@ -130,7 +126,6 @@ class netCDFMeta:
             try:
                 self.__cftime_bounds_vals = num2date(self.__time_bounds_vals, units=ds[time_bnds_eqv].units, calendar=ds[time_bnds_eqv].calendar)
             except AttributeError:
-                logger.log(LOG_LEVEL_IO_WARNING, f"Unable to pull 'calendar' and/or 'units' attributes from 'time_bounds' equivalent variable. Using 'time' attributes instead.")
                 self.__cftime_bounds_vals = num2date(self.__time_bounds_vals, units=ds[time_eqv].units, calendar=ds[time_eqv].calendar)
 
         self.__var_names = list(ds.variables)

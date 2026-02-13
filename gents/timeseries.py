@@ -16,6 +16,7 @@ from gents.meta import get_attributes
 from gents.mhfdataset import MHFDataset
 from gents.utils import get_version, LOG_LEVEL_IO_WARNING, ProgressBar
 import logging
+import copy
 
 logger = logging.getLogger(__name__)
 
@@ -68,10 +69,7 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
         
         ts_string = agg_hf_ds.get_timestamp_string()
 
-        if primary_var is not None:
-            ts_out_path = f"{ts_path_template}.{primary_var}.{ts_string}.nc"
-        else:
-            ts_out_path = f"{ts_path_template}.auxiliary.{ts_string}.nc"
+        ts_out_path = f"{ts_path_template}.{primary_var}.{ts_string}.nc"
 
         if overwrite and isfile(ts_out_path):
             remove(ts_out_path)
@@ -82,7 +80,7 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
                 remove(ts_out_path)
 
         with netCDF4.Dataset(ts_out_path, mode="w") as ts_ds:
-            if primary_var is not None:
+            if primary_var is not "auxiliary":
                 var_shape = agg_hf_ds.get_var_data_shape(primary_var)
                 var_dims = agg_hf_ds.get_var_dimensions(primary_var)
                 for index, dim in enumerate(var_dims):
@@ -184,7 +182,7 @@ class TSCollection:
                     self.__orders.append({
                         "hf_paths": hf_paths,
                         "ts_path_template": ts_path_template[:-1],
-                        "primary_var": None,
+                        "primary_var": "auxiliary",
                         "secondary_vars": secondary_vars
                     })
 
@@ -244,7 +242,7 @@ class TSCollection:
         :return: A new TSCollection that only includes time series orders that match the filter.
         """
         filtered_orders = []
-        for order_dict in self.__orders:
+        for order_dict in copy.deepcopy(self.__orders):
             path_matched = False
             for path in order_dict["hf_paths"]:
                 if fnmatch.fnmatch(path, path_glob):
@@ -265,7 +263,7 @@ class TSCollection:
         :return: A new TSCollection that excludes time series orders that match the filter.
         """
         filtered_orders = []
-        for order_dict in self.__orders:
+        for order_dict in copy.deepcopy(self.__orders):
             path_unmatched = True
             for path in order_dict["hf_paths"]:
                 if fnmatch.fnmatch(path, path_glob):
@@ -291,7 +289,7 @@ class TSCollection:
         :return: A new TSCollection that includes time series orders with arguments applied.
         """
         new_orders = []
-        for order_dict in self.__orders:
+        for order_dict in copy.deepcopy(self.__orders):
             path_matched = False
             for path in order_dict["hf_paths"]:
                 if fnmatch.fnmatch(path, path_glob):
@@ -321,17 +319,15 @@ class TSCollection:
         :param string_swap: String to replace match with, if found.
         :return: A new TSCollection with updated output path templates
         """
-        filtered_orders = []
-        for order_dict in self.__orders:
-            path_matched = False
+        new_orders = []
+        for order_dict in copy.deepcopy(self.__orders):
             for path in order_dict["hf_paths"]:
                 if fnmatch.fnmatch(path, path_glob):
-                    path_matched = True
-                    order_dict["ts_path_template"].replace(string_match, string_swap)
-            filtered_orders.append(order_dict)
+                    order_dict["ts_path_template"] = order_dict["ts_path_template"].replace(string_match, string_swap)
+            new_orders.append(order_dict)
     
         logger.debug(f"Path swap '{string_match}' -> '{string_swap}' to history files matching '{path_glob}' and variables matching '{var_glob}'.")
-        return self.copy(ts_orders=filtered_orders)
+        return self.copy(ts_orders=new_orders)
         
     def apply_compression(self, level, alg, path_glob, var_glob="*"):
         """
@@ -354,6 +350,45 @@ class TSCollection:
         :return: A new TSCollection that includes time series orders with arguments applied.
         """
         return self.add_args(path_glob=path_glob, var_glob=var_glob, overwrite=True)
+
+    def append_timestep_dirs(self, var_glob="*"):
+        """
+        Appends directories named according to time-step to the end of the timeseries output path templates.
+        This sorts the output into bins by the time-step frequency (i.e. hour_1, day_1, month_1, year_1)
+
+        :param var_glob: Glob pattern to match to primary variable names. Defaults to "*".
+        :return: A new TSCollection with time-step directories added.
+        """
+        new_orders = []
+        for order_dict in copy.deepcopy(self.__orders):
+            if fnmatch.fnmatch(order_dict["primary_var"], var_glob):
+                paths = order_dict["hf_paths"]
+                paths.sort()
+                dt = None
+                times = self.__hf_collection[paths[0]].get_cftimes()
+                if len(times) > 1:
+                    dt = (times[1] - time[1])
+                elif len(paths) > 1:
+                    time_0 = self.__hf_collection[paths[0]].get_cftimes()[0]
+                    time_1 = self.__hf_collection[paths[1]].get_cftimes()[0]
+                    dt = time_1 - time_0
+
+                if dt is None:
+                    timestep_label = "unsorted"
+                elif dt.days == 0:
+                    timestep_label = "hour_1"
+                elif dt.days < 28:
+                    timestep_label = "day_1"
+                elif dt.days < 365:
+                    timestep_label = "month_1"
+                else:
+                    timestep_label = "year_1"
+
+                template = Path(order_dict["ts_path_template"])
+                order_dict["ts_path_template"] = str(template.parent) + f"/{timestep_label}/" + template.name
+
+                new_orders.append(order_dict)
+        return self.copy(ts_orders=new_orders)
 
     def remove_overwrite(self, path_glob, var_glob="*"):
         """

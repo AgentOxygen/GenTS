@@ -1,7 +1,7 @@
 from gents.tests.test_cases import *
 from gents.hfcollection import HFCollection, find_files
 from gents.timeseries import *
-from os.path import isfile, getsize
+from os.path import isfile, getsize, isdir
 from os import listdir, remove, makedirs
 from netCDF4 import Dataset
 from shutil import rmtree
@@ -179,3 +179,40 @@ def test_tscollection_filters(structured_case):
     assert exclude_num_files > include_num_files
     assert include_num_files > 0
 
+
+def test_ts_collection_path_swapping(structured_case):
+    input_head_dir, output_head_dir = structured_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+
+    ts_collection.apply_path_swap("/0_subdir/", "/proc/tseries/").execute()
+    assert isdir(f"{output_head_dir}/0_dir/proc/tseries/")
+    assert len(listdir(f"{output_head_dir}/0_dir/proc/tseries/")) == STRUCTURED_NUM_TEST_HIST_FILES
+
+    clear_output_dir(output_head_dir)
+
+    ts_collection.apply_path_swap("dir", "folder").execute()
+    assert isdir(f"{output_head_dir}/0_folder/0_subfolder/")
+    assert len(listdir(output_head_dir)) == STRUCTURED_NUM_DIRS
+    for top_dir in listdir(output_head_dir):
+        assert len(listdir(f"{output_head_dir}/{top_dir}")) == STRUCTURED_NUM_SUBDIRS
+        for sub_dir in listdir(f"{output_head_dir}/{top_dir}/"):
+            assert len(listdir(f"{output_head_dir}/{top_dir}/{sub_dir}")) == STRUCTURED_NUM_VARS
+
+
+def test_ts_collection_append_timestep_dirs(mixed_timestep_case):
+    input_head_dir, output_head_dir = mixed_timestep_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+
+    ts_collection.append_timestep_dirs().execute()
+
+    assert isdir(f"{output_head_dir}/hour_1")
+    assert isdir(f"{output_head_dir}/day_1")
+    assert isdir(f"{output_head_dir}/month_1")
+    assert isdir(f"{output_head_dir}/year_1")
+
+    assert len(listdir(f"{output_head_dir}/hour_1")) == SIMPLE_NUM_VARS
+    assert len(listdir(f"{output_head_dir}/day_1")) == SIMPLE_NUM_VARS
+    assert len(listdir(f"{output_head_dir}/month_1")) == SIMPLE_NUM_VARS
+    assert len(listdir(f"{output_head_dir}/year_1")) == SIMPLE_NUM_VARS

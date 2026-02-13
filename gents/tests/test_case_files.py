@@ -95,3 +95,33 @@ def test_fragmented_case(spatial_fragment_case):
                 dim_hashes.append(dim_hash)
     
     assert len(dim_hashes) == FRAGMENTED_NUM_LAT_FILES*FRAGMENTED_NUM_LON_FILES
+
+
+def test_mixed_timestep_case(mixed_timestep_case):
+    input_head_dir, output_head_dir = mixed_timestep_case
+    assert len(listdir(input_head_dir)) == MIXED_TS_NUM_TEST_HIST_FILES*4
+
+    for index in range(MIXED_TS_NUM_TEST_HIST_FILES):
+        with Dataset(f"{input_head_dir}/testing.hf0.{str(index).zfill(5)}.nc", 'r') as hf_ds:
+            bounds = hf_ds["time_bounds"][:][0]
+            assert 0 < bounds[1] - bounds[0] < 1
+        with Dataset(f"{input_head_dir}/testing.hf1.{str(index).zfill(5)}.nc", 'r') as hf_ds:
+            bounds = hf_ds["time_bounds"][:][0]
+            assert 1 <= bounds[1] - bounds[0] < 28
+        with Dataset(f"{input_head_dir}/testing.hf2.{str(index).zfill(5)}.nc", 'r') as hf_ds:
+            bounds = hf_ds["time_bounds"][:][0]
+            assert 28 <=bounds[1] - bounds[0] < 365
+        with Dataset(f"{input_head_dir}/testing.hf3.{str(index).zfill(5)}.nc", 'r') as hf_ds:
+            bounds = hf_ds["time_bounds"][:][0]
+            assert 365 <= bounds[1] - bounds[0]
+
+
+def test_auxiliary_only_case(auxiliary_only_case):
+    input_head_dir, output_head_dir = auxiliary_only_case
+
+    for file_name in listdir(input_head_dir):
+        with Dataset(f"{input_head_dir}/{file_name}", 'r') as hf_ds:
+            for var_index in range(SIMPLE_NUM_VARS):
+                assert "time" == hf_ds[f"VAR_AUX_{var_index}"].dimensions[0]
+                assert len(hf_ds[f"VAR_AUX_{var_index}"].dimensions) == 1
+                assert f"VAR_{var_index}" not in hf_ds.variables

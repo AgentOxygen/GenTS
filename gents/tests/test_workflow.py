@@ -189,3 +189,13 @@ def test_spatially_fragmented_workflow(spatial_fragment_case):
             assert ds["lat"].size == FRAGMENTED_NUM_LAT_FILES*FRAGMENTED_NUM_LAT_PTS_PER_HF
             assert ds["lon"].size == FRAGMENTED_NUM_LON_FILES*FRAGMENTED_NUM_LON_PTS_PER_HF
             assert ds["time"].size == FRAGMENTED_NUM_TIMESTEPS
+
+
+def test_auxiliary_only_workflow(auxiliary_only_case):
+    input_head_dir, output_head_dir = auxiliary_only_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+    ts_collection.include("*").exclude("").apply_overwrite("*").execute()
+
+    assert len(listdir(output_head_dir)) == 1
+    assert "auxiliary" in listdir(output_head_dir)[0]
