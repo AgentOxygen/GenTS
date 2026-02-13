@@ -69,10 +69,7 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
         
         ts_string = agg_hf_ds.get_timestamp_string()
 
-        if primary_var is not None:
-            ts_out_path = f"{ts_path_template}.{primary_var}.{ts_string}.nc"
-        else:
-            ts_out_path = f"{ts_path_template}.auxiliary.{ts_string}.nc"
+        ts_out_path = f"{ts_path_template}.{primary_var}.{ts_string}.nc"
 
         if overwrite and isfile(ts_out_path):
             remove(ts_out_path)
@@ -83,7 +80,7 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
                 remove(ts_out_path)
 
         with netCDF4.Dataset(ts_out_path, mode="w") as ts_ds:
-            if primary_var is not None:
+            if primary_var is not "auxiliary":
                 var_shape = agg_hf_ds.get_var_data_shape(primary_var)
                 var_dims = agg_hf_ds.get_var_dimensions(primary_var)
                 for index, dim in enumerate(var_dims):
@@ -185,7 +182,7 @@ class TSCollection:
                     self.__orders.append({
                         "hf_paths": hf_paths,
                         "ts_path_template": ts_path_template[:-1],
-                        "primary_var": None,
+                        "primary_var": "auxiliary",
                         "secondary_vars": secondary_vars
                     })
 

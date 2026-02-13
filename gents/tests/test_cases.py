@@ -38,7 +38,8 @@ def generate_history_file(
         dim_shapes=None,
         dim_vals={},
         var_dims=None,
-        var_shape=None
+        var_shape=None,
+        disable_primary_var=False
     ):
     if dim_shapes is None: 
         dim_shapes = {
@@ -56,10 +57,10 @@ def generate_history_file(
                 dim_data = ds.createVariable(dim, float, (dim))
                 dim_data[:] = dim_vals[dim]
 
-        if var_shape is None:
+        if var_shape is None and time_val is not None:
             var_shape = (len(time_val), dim_shapes["lat"], dim_shapes["lon"])
 
-        if var_dims is None:
+        if var_dims is None and time_name is not None:
             var_dims = (time_name, "lat", "lon")
 
         for index in range(num_vars):
@@ -74,23 +75,24 @@ def generate_history_file(
                     "standard_name": f"VAR{index}",
                     "long_name": f"variable_{index}"
                 })
-            var_data = ds.createVariable(f"VAR{index}", float, var_dims)
+            if not disable_primary_var:
+                var_data = ds.createVariable(f"VAR{index}", float, var_dims)
+                var_data[:] = index*np.ones(var_shape).astype(float)
+                var_data.setncatts({
+                    "units": "kg/g/m^2/K",
+                    "standard_name": f"VAR{index}",
+                    "long_name": f"variable_{index}"
+                })
 
-            var_data[:] = index*np.ones(var_shape).astype(float)
-            var_data.setncatts({
-                "units": "kg/g/m^2/K",
-                "standard_name": f"VAR{index}",
-                "long_name": f"variable_{index}"
+        if time_val is not None:
+            time_data = ds.createVariable(time_name, np.double, time_name)
+            time_data[:] = time_val
+            time_data.setncatts({
+                "calendar": "360_day",
+                "units": f"days since {CASE_START_YEAR}-01-01",
+                "standard_name": time_name,
+                "long_name": time_name
             })
-
-        time_data = ds.createVariable(time_name, np.double, time_name)
-        time_data[:] = time_val
-        time_data.setncatts({
-            "calendar": "360_day",
-            "units": f"days since {CASE_START_YEAR}-01-01",
-            "standard_name": time_name,
-            "long_name": time_name
-        })
 
         if time_bounds_val is not None:
             time_bnds_data = ds.createVariable(time_bounds_name, np.double, (time_name, "bnds"))
@@ -105,8 +107,7 @@ def generate_history_file(
             
         ds.setncatts({
             "source": "GenTS testing suite",
-            "description": "Synthetic data used for testing with the GenTS package.",
-            "frequency": "month",
+            "description": "Synthetic data used for testing with the GenTS package."
         })
 
 
@@ -292,5 +293,16 @@ def mixed_timestep_case(tmp_path_factory):
     hf_paths = [f"{head_hf_dir}/testing.hf3.{str(index).zfill(5)}.nc" for index in range(MIXED_TS_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):
         generate_history_file(path, [(file_index+1)*365], [[file_index*365, (file_index+1)*365]])
+
+    return head_hf_dir, head_ts_dir
+
+@pytest.fixture(scope="function")
+def auxiliary_only_case(tmp_path_factory):
+    head_hf_dir = tmp_path_factory.mktemp("with_auxiliary_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("with_auxiliary_timeseries_files")
+    
+    hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
+    for file_index, path in enumerate(hf_paths):
+        generate_history_file(path, [(file_index+1)*1], None, auxiliary=True, aux_dim="time", disable_primary_var=True)
 
     return head_hf_dir, head_ts_dir

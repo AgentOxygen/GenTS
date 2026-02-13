@@ -60,8 +60,7 @@ def test_no_time_case(no_time_case):
 
 def test_multistep_case(multistep_case):
     input_head_dir, output_head_dir = multistep_case
-    assert len(listdir(input_head_dir)assert len(listdir(f"{output_head_dir}/hour_1"))
-assert len(listdir(f"{output_head_dir}/hour_1"))) == SIMPLE_NUM_TEST_HIST_FILES
+    assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
     for file_name in listdir(input_head_dir):
         with Dataset(f"{input_head_dir}/{file_name}", 'r') as hf_ds:
             assert len(hf_ds['time'].dimensions) == 1
@@ -115,3 +114,14 @@ def test_mixed_timestep_case(mixed_timestep_case):
         with Dataset(f"{input_head_dir}/testing.hf3.{str(index).zfill(5)}.nc", 'r') as hf_ds:
             bounds = hf_ds["time_bounds"][:][0]
             assert 365 <= bounds[1] - bounds[0]
+
+
+def test_auxiliary_only_case(auxiliary_only_case):
+    input_head_dir, output_head_dir = auxiliary_only_case
+
+    for file_name in listdir(input_head_dir):
+        with Dataset(f"{input_head_dir}/{file_name}", 'r') as hf_ds:
+            for var_index in range(SIMPLE_NUM_VARS):
+                assert "time" == hf_ds[f"VAR_AUX_{var_index}"].dimensions[0]
+                assert len(hf_ds[f"VAR_AUX_{var_index}"].dimensions) == 1
+                assert f"VAR_{var_index}" not in hf_ds.variables
