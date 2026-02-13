@@ -165,7 +165,17 @@ def test_tscollection_filters(structured_case):
     ts_collection = TSCollection(hf_collection, output_head_dir)
 
     ts_collection.execute()
-
     unfiltered_num_files = len(find_files(output_head_dir, "*"))
+    clear_output_dir(output_head_dir)
 
-    ts_collection.include("*/2/*").execute()
+    ts_collection.exclude("*/1_dir/*").execute()
+    exclude_num_files = len(find_files(output_head_dir, "*"))
+    clear_output_dir(output_head_dir)
+
+    ts_collection.include("*/1_dir/*").execute()
+    include_num_files = len(find_files(output_head_dir, "*"))
+
+    assert unfiltered_num_files > exclude_num_files
+    assert exclude_num_files > include_num_files
+    assert include_num_files > 0
+

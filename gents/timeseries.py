@@ -256,12 +256,12 @@ class TSCollection:
         logger.debug(f"Inclusive filter(s) applied: '{var_glob}' to history files matching '{path_glob}'")
         return self.copy(ts_orders=filtered_orders)
 
-    def exclude(self, path_glob, var_glob="*"):
+    def exclude(self, path_glob, var_glob=""):
         """
         Applies exclusive filter to time series orders.
 
         :param path_glob: Glob pattern to apply to source history files.
-        :param var_glob: Glob pattern to apply to primary variable names. Defaults to "*"
+        :param var_glob: Glob pattern to apply to primary variable names. Defaults to ""
         :return: A new TSCollection that excludes time series orders that match the filter.
         """
         filtered_orders = []

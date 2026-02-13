@@ -5,7 +5,7 @@ RUN apt-get update \
     && apt-get purge -y --auto-remove \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /project
+WORKDIR /usr/local/gents
 
 RUN pip install --upgrade pip
 RUN pip install pytest asv sphinx sphinx-autobuild
