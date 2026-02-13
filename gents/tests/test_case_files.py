@@ -60,7 +60,8 @@ def test_no_time_case(no_time_case):
 
 def test_multistep_case(multistep_case):
     input_head_dir, output_head_dir = multistep_case
-    assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
+    assert len(listdir(input_head_dir)assert len(listdir(f"{output_head_dir}/hour_1"))
+assert len(listdir(f"{output_head_dir}/hour_1"))) == SIMPLE_NUM_TEST_HIST_FILES
     for file_name in listdir(input_head_dir):
         with Dataset(f"{input_head_dir}/{file_name}", 'r') as hf_ds:
             assert len(hf_ds['time'].dimensions) == 1
@@ -95,3 +96,22 @@ def test_fragmented_case(spatial_fragment_case):
                 dim_hashes.append(dim_hash)
     
     assert len(dim_hashes) == FRAGMENTED_NUM_LAT_FILES*FRAGMENTED_NUM_LON_FILES
+
+
+def test_mixed_timestep_case(mixed_timestep_case):
+    input_head_dir, output_head_dir = mixed_timestep_case
+    assert len(listdir(input_head_dir)) == MIXED_TS_NUM_TEST_HIST_FILES*4
+
+    for index in range(MIXED_TS_NUM_TEST_HIST_FILES):
+        with Dataset(f"{input_head_dir}/testing.hf0.{str(index).zfill(5)}.nc", 'r') as hf_ds:
+            bounds = hf_ds["time_bounds"][:][0]
+            assert 0 < bounds[1] - bounds[0] < 1
+        with Dataset(f"{input_head_dir}/testing.hf1.{str(index).zfill(5)}.nc", 'r') as hf_ds:
+            bounds = hf_ds["time_bounds"][:][0]
+            assert 1 <= bounds[1] - bounds[0] < 28
+        with Dataset(f"{input_head_dir}/testing.hf2.{str(index).zfill(5)}.nc", 'r') as hf_ds:
+            bounds = hf_ds["time_bounds"][:][0]
+            assert 28 <=bounds[1] - bounds[0] < 365
+        with Dataset(f"{input_head_dir}/testing.hf3.{str(index).zfill(5)}.nc", 'r') as hf_ds:
+            bounds = hf_ds["time_bounds"][:][0]
+            assert 365 <= bounds[1] - bounds[0]

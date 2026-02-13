@@ -21,6 +21,7 @@ FRAGMENTED_NUM_LAT_PTS_PER_HF = 2
 FRAGMENTED_NUM_LON_PTS_PER_HF = 1
 FRAGMENTED_NUM_TIMESTEPS = 20
 UNSTRUCT_GRID_NUM_NCOLS = 8
+MIXED_TS_NUM_TEST_HIST_FILES = 10
 
 
 def generate_history_file(
@@ -267,5 +268,29 @@ def spatial_fragment_case(tmp_path_factory):
                 }
                 generate_history_file(f"{path}.{tile_index}", [(file_index+1)*180], [[file_index*180, (file_index+1)*180]], dim_shapes=dim_shapes, dim_vals=dim_vals)
                 tile_index += 1
+
+    return head_hf_dir, head_ts_dir
+
+
+@pytest.fixture(scope="function")
+def mixed_timestep_case(tmp_path_factory):
+    head_hf_dir = tmp_path_factory.mktemp("mixed_timestep_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("mixed_timestep_timeseries_files")
+    
+    hf_paths = [f"{head_hf_dir}/testing.hf0.{str(index).zfill(5)}.nc" for index in range(MIXED_TS_NUM_TEST_HIST_FILES)]
+    for file_index, path in enumerate(hf_paths):
+        generate_history_file(path, [(file_index+1)*0.1], [[file_index*0.1, (file_index+1)*0.1]])
+
+    hf_paths = [f"{head_hf_dir}/testing.hf1.{str(index).zfill(5)}.nc" for index in range(MIXED_TS_NUM_TEST_HIST_FILES)]
+    for file_index, path in enumerate(hf_paths):
+        generate_history_file(path, [(file_index+1)*1], [[file_index*1, (file_index+1)*1]])
+
+    hf_paths = [f"{head_hf_dir}/testing.hf2.{str(index).zfill(5)}.nc" for index in range(MIXED_TS_NUM_TEST_HIST_FILES)]
+    for file_index, path in enumerate(hf_paths):
+        generate_history_file(path, [(file_index+1)*30], [[file_index*30, (file_index+1)*30]])
+
+    hf_paths = [f"{head_hf_dir}/testing.hf3.{str(index).zfill(5)}.nc" for index in range(MIXED_TS_NUM_TEST_HIST_FILES)]
+    for file_index, path in enumerate(hf_paths):
+        generate_history_file(path, [(file_index+1)*365], [[file_index*365, (file_index+1)*365]])
 
     return head_hf_dir, head_ts_dir
