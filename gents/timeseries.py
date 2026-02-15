@@ -49,7 +49,16 @@ def generate_time_series_error_wrapper(**args):
     try:
         return generate_time_series(**args)
     except Exception as e:
-        raise type(e)(f"{e} Args: {args}") from e
+        print("=====================================================\n")
+        print(f"START of GenTS Argument Dump for {type(e)}\n")
+        print("=====================================================")
+        for entry in args:
+            print(f"\nArgument: '{entry}' \n")
+            print(args[entry])
+        print("=====================================================\n")
+        print(f"END of GenTS Argument Dump for {type(e)}\n")
+        print("=====================================================")
+        raise type(e)(f"{e}") from e
 
 
 def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars, complevel=0, compression=None, overwrite=False, reference_structure=None):
