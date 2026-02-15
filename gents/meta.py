@@ -9,10 +9,7 @@ Last Header Update: 07/03/25
 import netCDF4
 import numpy as np
 from cftime import num2date
-from gents.utils import LOG_LEVEL_IO_WARNING
-import logging
 
-logger = logging.getLogger(__name__)
 
 def is_var_secondary(variable: netCDF4._netCDF4._Variable,
                      secondary_vars: list = ["time_bnds", "time_bnd", "time_bounds", "time_bound"],
@@ -93,22 +90,25 @@ class netCDFMeta:
         self.__time_vals = None
         self.__cftime_vals = None
 
+        self.__attrs = get_attributes(ds)
+        self.__path = ds.filepath()
+
         time_eqv, time_bnds_eqv = get_time_variables_names(ds)
         
         if time_eqv is None:
-            raise ValueError(f"No equivalent time variable found to concatenate over.")
+            raise ValueError(f"No equivalent time variable found to concatenate over. Path: {self.__path}")
 
-        try:
-            self.__time_vals = ds[time_eqv][:]
+        self.__time_vals = ds[time_eqv][:]
 
-            if len(self.__time_vals.shape) > 1:
-                self.__time_vals = np.squeeze(self.__time_vals)
-            elif len(self.__time_vals.shape) == 0:
-                self.__time_vals = np.array([self.__time_vals])
+        if len(self.__time_vals.shape) > 1:
+            self.__time_vals = np.squeeze(self.__time_vals)
+        elif len(self.__time_vals.shape) == 0:
+            self.__time_vals = np.array([self.__time_vals])
 
-            self.__cftime_vals = num2date(self.__time_vals, units=ds[time_eqv].units, calendar=ds[time_eqv].calendar)
-        except AttributeError:
-            logger.log(LOG_LEVEL_IO_WARNING, f"Unable to pull 'calendar' and/or 'units' attributes from 'time' variable.")
+        if 'calendar' not in ds[time_eqv].ncattrs() or 'units' not in ds[time_eqv].ncattrs():
+            raise AttributeError(f"Unable to pull 'calendar' and/or 'units' attributes from '{time_eqv}' time-equivalent variable. Path: {self.__path}")
+
+        self.__cftime_vals = num2date(self.__time_vals, units=ds[time_eqv].units, calendar=ds[time_eqv].calendar)
 
         self.__time_bounds_vals = None
         self.__cftime_bounds_vals = None
@@ -121,13 +121,12 @@ class netCDFMeta:
             elif len(self.__time_bounds_vals.shape) == 1:
                 self.__time_bounds_vals = np.array([self.__time_bounds_vals])
             elif len(self.__time_bounds_vals.shape) == 0:
-                raise ValueError(f"Found a 'time_bounds' equivalent variable, but it was a single value. It must have two values (one for each boundary).")
+                raise ValueError(f"Found a 'time_bounds' equivalent variable, but it was a single value. It must have two values (one for each boundary). Path: {self.__path}")
 
             try:
                 self.__cftime_bounds_vals = num2date(self.__time_bounds_vals, units=ds[time_bnds_eqv].units, calendar=ds[time_bnds_eqv].calendar)
             except AttributeError:
                 self.__cftime_bounds_vals = num2date(self.__time_bounds_vals, units=ds[time_eqv].units, calendar=ds[time_eqv].calendar)
-
         self.__var_names = list(ds.variables)
         self.__primary_var_names = []
         self.__secondary_var_names = []
@@ -137,9 +136,6 @@ class netCDFMeta:
                 self.__secondary_var_names.append(variable)
             else:
                 self.__primary_var_names.append(variable)
-                
-        self.__attrs = get_attributes(ds)
-        self.__path = ds.filepath()
 
         self.__dim_bounds = {}
 
@@ -232,7 +228,10 @@ def get_meta_from_path(path: str):
     :return: netCDF4 Dataset read of the history file.
     """
     ds_meta = None
-    with netCDF4.Dataset(path, 'r') as ds:
-        ds_meta = netCDFMeta(ds)
+    try:
+        with netCDF4.Dataset(path, 'r') as ds:
+            ds_meta = netCDFMeta(ds)
+    except Exception as e:
+        raise type(e)(f"{e} Path: {path}") from e
 
     return ds_meta
