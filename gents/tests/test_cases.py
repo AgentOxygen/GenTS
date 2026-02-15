@@ -57,10 +57,10 @@ def generate_history_file(
                 dim_data = ds.createVariable(dim, float, (dim))
                 dim_data[:] = dim_vals[dim]
 
-        if var_shape is None and time_val is not None:
+        if var_shape is None:
             var_shape = (len(time_val), dim_shapes["lat"], dim_shapes["lon"])
 
-        if var_dims is None and time_name is not None:
+        if var_dims is None:
             var_dims = (time_name, "lat", "lon")
 
         for index in range(num_vars):
@@ -303,6 +303,6 @@ def auxiliary_only_case(tmp_path_factory):
     
     hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):
-        generate_history_file(path, [(file_index+1)*1], None, auxiliary=True, aux_dim="time", disable_primary_var=True)
+        generate_history_file(path, [(file_index+1)*1], None, var_dims=("time"), var_shape=1, auxiliary=True, aux_dim="time", disable_primary_var=True, dim_shapes={"time": None})
 
     return head_hf_dir, head_ts_dir
