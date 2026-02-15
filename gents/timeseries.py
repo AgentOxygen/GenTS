@@ -100,7 +100,7 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
                 remove(ts_out_path)
 
         with netCDF4.Dataset(ts_out_path, mode="w") as ts_ds:
-            if primary_var is not "auxiliary":
+            if primary_var != "auxiliary":
                 var_shape = agg_hf_ds.get_var_data_shape(primary_var)
                 var_dims = agg_hf_ds.get_var_dimensions(primary_var)
                 for index, dim in enumerate(var_dims):
