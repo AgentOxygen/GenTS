@@ -127,7 +127,7 @@ def test_time_bounds_case(time_bounds_case):
 def test_no_times_case(no_time_case):
     input_head_dir, output_head_dir = no_time_case
     hf_collection = HFCollection(input_head_dir)
-    with pytest.raises(Exception) as ValueError:
+    with pytest.raises(ValueError, match=".nc"):
         hf_collection.pull_metadata()
 
 
