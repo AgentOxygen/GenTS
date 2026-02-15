@@ -55,6 +55,8 @@ def generate_time_series_error_wrapper(**args):
         for entry in args:
             print(f"\nArgument: '{entry}' \n")
             print(args[entry])
+        print(f"\nError: '{type(e)}' \n")
+        print(e)
         print("=====================================================\n")
         print(f"END of GenTS Argument Dump for {type(e)}\n")
         print("=====================================================")
