@@ -45,6 +45,13 @@ def check_timeseries_integrity(ts_path: str):
     return False
 
 
+def generate_time_series_error_wrapper(**args):
+    try:
+        return generate_time_series(**args)
+    except Exception as e:
+        raise type(e)(f"{e} Args: {args}") from e
+
+
 def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars, complevel=0, compression=None, overwrite=False, reference_structure=None):
     """
     Creates timeseries dataset from specified history file paths.
@@ -405,7 +412,7 @@ class TSCollection:
         if DASK_INSTALLED:
             delayed_orders = []
             for args in self.__orders:
-                delayed_orders.append(dask.delayed(generate_time_series)(**args))
+                delayed_orders.append(dask.delayed(generate_time_series_error_wrapper)(**args))
             return delayed_orders
         else:
             raise ImportError("Dask not installed!")
@@ -424,7 +431,7 @@ class TSCollection:
             logger.info("No Dask client detected... proceeding in serial.")
             prog_bar = ProgressBar(total=len(self.__orders))
             for args in self.__orders:
-                results.append(generate_time_series(**args))
+                results.append(generate_time_series_error_wrapper(**args))
                 prog_bar.step()
         else:
             logger.info("Dask client detected! Generating time series files in parallel.")
