@@ -134,7 +134,7 @@ class MHFDataset:
     def get_var_data_shape(self, var_name):
         self.__check_coord_map()
         if var_name in self.__data_coords:
-            return len(self.__data_coords[var_name])
+            return [len(self.__data_coords[var_name])]
         else:
             init_ds = self.__hf_datasets[0][var_name]
             dim_shape = []
