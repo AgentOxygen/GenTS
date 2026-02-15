@@ -15,6 +15,7 @@ from pathlib import Path
 from gents.meta import get_attributes
 from gents.mhfdataset import MHFDataset
 from gents.utils import get_version, LOG_LEVEL_IO_WARNING, ProgressBar
+import traceback
 import logging
 import copy
 
@@ -57,6 +58,7 @@ def generate_time_series_error_wrapper(**args):
             print(args[entry])
         print(f"\nError: '{type(e)}' \n")
         print(e)
+        traceback.print_exc()
         print("=====================================================\n")
         print(f"END of GenTS Argument Dump for {type(e)}\n")
         print("=====================================================")
