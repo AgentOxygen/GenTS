@@ -387,7 +387,7 @@ class TSCollection:
                 dt = None
                 times = self.__hf_collection[paths[0]].get_cftimes()
                 if len(times) > 1:
-                    dt = (times[1] - time[1])
+                    dt = (times[1] - times[1])
                 elif len(paths) > 1:
                     time_0 = self.__hf_collection[paths[0]].get_cftimes()[0]
                     time_1 = self.__hf_collection[paths[1]].get_cftimes()[0]
