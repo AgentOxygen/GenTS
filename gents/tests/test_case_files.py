@@ -7,6 +7,11 @@ from gents.tests.test_cases import *
 def test_simple_case(simple_case):
     input_head_dir, output_head_dir = simple_case
     assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
+    for file_name in listdir(input_head_dir):
+        with Dataset(f"{input_head_dir}/{file_name}", 'r') as hf_ds:
+            assert "time" in hf_ds.variables
+            assert "units" in hf_ds["time"].ncattrs()
+            assert "calendar" in hf_ds["time"].ncattrs()
 
 
 def test_unstructured_grid_case(unstructured_grid_case):

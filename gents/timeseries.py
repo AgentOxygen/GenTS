@@ -15,6 +15,7 @@ from pathlib import Path
 from gents.meta import get_attributes
 from gents.mhfdataset import MHFDataset
 from gents.utils import get_version, LOG_LEVEL_IO_WARNING, ProgressBar
+import traceback
 import logging
 import copy
 
@@ -43,6 +44,25 @@ def check_timeseries_integrity(ts_path: str):
     except OSError:
         logger.log(LOG_LEVEL_IO_WARNING, f"Corrupt timeseries output: '{ts_path}'")
     return False
+
+
+def generate_time_series_error_wrapper(**args):
+    try:
+        return generate_time_series(**args)
+    except Exception as e:
+        print("=====================================================\n")
+        print(f"START of GenTS Argument Dump for {type(e)}\n")
+        print("=====================================================")
+        for entry in args:
+            print(f"\nArgument: '{entry}' \n")
+            print(args[entry])
+        print(f"\nError: '{type(e)}' \n")
+        print(e)
+        traceback.print_exc()
+        print("=====================================================\n")
+        print(f"END of GenTS Argument Dump for {type(e)}\n")
+        print("=====================================================")
+        raise type(e)(f"{e}") from e
 
 
 def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars, complevel=0, compression=None, overwrite=False, reference_structure=None):
@@ -80,7 +100,7 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
                 remove(ts_out_path)
 
         with netCDF4.Dataset(ts_out_path, mode="w") as ts_ds:
-            if primary_var is not "auxiliary":
+            if primary_var != "auxiliary":
                 var_shape = agg_hf_ds.get_var_data_shape(primary_var)
                 var_dims = agg_hf_ds.get_var_dimensions(primary_var)
                 for index, dim in enumerate(var_dims):
@@ -367,7 +387,7 @@ class TSCollection:
                 dt = None
                 times = self.__hf_collection[paths[0]].get_cftimes()
                 if len(times) > 1:
-                    dt = (times[1] - time[1])
+                    dt = (times[1] - times[1])
                 elif len(paths) > 1:
                     time_0 = self.__hf_collection[paths[0]].get_cftimes()[0]
                     time_1 = self.__hf_collection[paths[1]].get_cftimes()[0]
@@ -405,7 +425,7 @@ class TSCollection:
         if DASK_INSTALLED:
             delayed_orders = []
             for args in self.__orders:
-                delayed_orders.append(dask.delayed(generate_time_series)(**args))
+                delayed_orders.append(dask.delayed(generate_time_series_error_wrapper)(**args))
             return delayed_orders
         else:
             raise ImportError("Dask not installed!")
@@ -424,7 +444,7 @@ class TSCollection:
             logger.info("No Dask client detected... proceeding in serial.")
             prog_bar = ProgressBar(total=len(self.__orders))
             for args in self.__orders:
-                results.append(generate_time_series(**args))
+                results.append(generate_time_series_error_wrapper(**args))
                 prog_bar.step()
         else:
             logger.info("Dask client detected! Generating time series files in parallel.")
