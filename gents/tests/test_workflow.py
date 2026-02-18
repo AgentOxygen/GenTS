@@ -34,6 +34,7 @@ def test_simple_workflow(simple_case):
     assert len(ts_paths) == SIMPLE_NUM_VARS
     
     for path in ts_paths:
+        assert "*" not in path
         with Dataset(path, 'r') as ts_ds:
             assert ts_ds["time"].size == SIMPLE_NUM_TEST_HIST_FILES
             assert ts_ds.getncattr("gents_version") == get_version()
@@ -57,6 +58,9 @@ def test_simple_workflow_slicing(simple_case):
     ts_paths = ts_collection.execute()
 
     assert len(ts_paths) == SIMPLE_NUM_VARS*int(np.ceil(SIMPLE_NUM_TEST_HIST_FILES / 12))
+    for path in ts_paths:
+        assert "[sorting_pivot]" not in path
+        assert "*" not in path
 
 
 def test_unstructured_grid_workflow(unstructured_grid_case):
