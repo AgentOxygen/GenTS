@@ -1,5 +1,6 @@
 from os import listdir
 from netCDF4 import Dataset
+from cftime import num2date
 import numpy as np
 from gents.tests.test_cases import *
 
@@ -7,11 +8,34 @@ from gents.tests.test_cases import *
 def test_simple_case(simple_case):
     input_head_dir, output_head_dir = simple_case
     assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
+    times = []
+    time_bounds = []
+    calendar = None
+    units = None
     for file_name in listdir(input_head_dir):
         with Dataset(f"{input_head_dir}/{file_name}", 'r') as hf_ds:
             assert "time" in hf_ds.variables
             assert "units" in hf_ds["time"].ncattrs()
+            units = hf_ds["time"].units
+
             assert "calendar" in hf_ds["time"].ncattrs()
+            calendar = hf_ds["time"].calendar
+
+            time = hf_ds["time"][:][0]
+            bounds = hf_ds["time_bounds"][:][0]
+
+            assert time >= 0
+            assert time >= bounds[0]
+            assert time <= bounds[1]
+            assert bounds[0] != bounds[1]
+
+            times.append(time)
+            time_bounds.append(bounds)
+    
+    start_date = num2date(np.min(times), units=units, calendar=calendar)
+    end_date = num2date(np.max(times), units=units, calendar=calendar)
+    assert (end_date - start_date).days == (SIMPLE_NUM_TEST_HIST_FILES-1)*30
+    assert start_date == num2date(0.5*30, units=units, calendar=calendar)
 
 
 def test_unstructured_grid_case(unstructured_grid_case):

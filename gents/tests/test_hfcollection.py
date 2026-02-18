@@ -19,9 +19,9 @@ def test_find_files(structured_case):
 
 
 def test_calculate_year_slices():
-    assert calculate_year_slices(10, 0, 30) == [(0, 9), (10, 19), (20, 29)]
-    assert calculate_year_slices(1, 0, 3) == [(0, 0), (1, 1), (2, 2)]
-    assert calculate_year_slices(5, 3, 12) == [(0, 4), (5, 9), (10, 14)]
+    assert calculate_year_slices(10, 0, 30) == [(0, 9), (10, 19), (20, 29), (30, 39)]
+    assert calculate_year_slices(1, 0, 3) == [(0, 0), (1, 1), (2, 2), (3, 3)]
+    assert calculate_year_slices(5, 3, 12) == [(3, 7), (8, 12)]
 
 
 def test_hf_sorting(structured_case):
@@ -109,9 +109,30 @@ def test_simple_hfcollection(simple_case, caplog):
     assert type(groups) == dict
     assert len(groups) == 1
     assert len(groups[list(groups)[0]]) == len(hf_collection)
+
+    group_meta_map = {path: hf_collection[path] for path in hf_collection}
     
+    min_year, max_year = get_year_bounds(group_meta_map)
+    assert (min_year, max_year) == (CASE_START_YEAR, CASE_START_YEAR + int(np.floor(SIMPLE_NUM_TEST_HIST_FILES / 12)))
+    
+    for slice_size in range(1, 10):
+        repeat_years = []
+        year_slices = calculate_year_slices(slice_size, min_year, max_year)
+        for lower, upper in year_slices:
+            assert upper - lower <= slice_size
+            assert lower <= upper
+            assert lower not in repeat_years
+            assert upper not in repeat_years
+            repeat_years.append(lower)
+            repeat_years.append(upper)
+        assert year_slices[0][0] <= min_year
+        assert year_slices[-1][1] >= max_year
+
     sliced_groups = hf_collection.slice_groups(slice_size_years=1).get_groups()
     assert len(sliced_groups) == int(np.ceil(SIMPLE_NUM_TEST_HIST_FILES / 12))
+    
+    for group in list(sliced_groups)[:-1]:
+        assert len(sliced_groups[group]) == 12
 
     assert len(caplog.text) == 0
 

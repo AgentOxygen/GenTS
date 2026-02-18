@@ -50,6 +50,15 @@ def test_simple_workflow(simple_case):
                         assert ts_ds[var_name].getncattr(key) == hf_ds[var_name].getncattr(key)
 
 
+def test_simple_workflow_slicing(simple_case):
+    input_head_dir, output_head_dir = simple_case
+    hf_collection = HFCollection(input_head_dir).slice_groups(slice_size_years=1)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+    ts_paths = ts_collection.execute()
+
+    assert len(ts_paths) == SIMPLE_NUM_VARS*int(np.ceil(SIMPLE_NUM_TEST_HIST_FILES / 12))
+
+
 def test_unstructured_grid_workflow(unstructured_grid_case):
     input_head_dir, output_head_dir = unstructured_grid_case
 
