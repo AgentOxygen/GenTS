@@ -653,6 +653,6 @@ class HFCollection:
                             break
 
                 for time_slice in hf_slices:
-                    sliced_groups[f"{group}.{time_slice[0]}-{time_slice[1]}"] = hf_slices[time_slice]
+                    sliced_groups[f"{group}[sorting_pivot]{time_slice[0]}-{time_slice[1]}"] = hf_slices[time_slice]
         logger.debug(f"Slicing groups into {slice_size_years} year long slices for '{pattern}'.")
         return self.copy(hf_groups=sliced_groups)
