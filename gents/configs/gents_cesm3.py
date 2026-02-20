@@ -8,7 +8,7 @@ def run_config(args):
 
     if not args.serial:
         from dask.distributed import LocalCluster, Client
-        cluster = LocalCluster(n_workers=args.numcores, threads_per_worker=1, memory_limit=args.memorylimit, processes=True)
+        cluster = LocalCluster(n_workers=args.numcores, threads_per_worker=1, memory_limit=f"{args.memorylimit}GB", processes=True)
         client = cluster.get_client()
     
     hf_collection = HFCollection(args.hf_head_dir)
