@@ -184,6 +184,8 @@ class TSCollection:
             self.__orders = []
             for glob_template in self.__groups:
                 output_template = glob_template.split(str(self.__hf_collection.get_input_dir()))[1]
+                if "[sorting_pivot]" in output_template:
+                    output_template = output_template.split("[sorting_pivot]")[0]
                 ts_path_template = f"{self.__output_dir}{output_template}"
                 hf_paths = self.__groups[glob_template]
 

@@ -34,12 +34,18 @@ def test_simple_workflow(simple_case):
     assert len(ts_paths) == SIMPLE_NUM_VARS
     
     for path in ts_paths:
+        assert "*" not in path
         with Dataset(path, 'r') as ts_ds:
             assert ts_ds["time"].size == SIMPLE_NUM_TEST_HIST_FILES
+            assert ts_ds["time_bounds"].shape[0] == SIMPLE_NUM_TEST_HIST_FILES
             assert ts_ds.getncattr("gents_version") == get_version()
             var_name = path.split(".")[-3]
             
             for index in range(ts_ds["time"].size):
+                time_bounds = ts_ds["time_bounds"][index]
+                assert time_bounds.count() == 2
+                assert time_bounds[0] <= ts_ds["time"][index] <= time_bounds[1]
+                
                 with Dataset(list(hf_collection)[index], 'r') as hf_ds:
                     assert (ts_ds[var_name][index] == hf_ds[var_name]).all()
 
@@ -48,6 +54,25 @@ def test_simple_workflow(simple_case):
                     
                     for key in hf_ds[var_name].ncattrs():
                         assert ts_ds[var_name].getncattr(key) == hf_ds[var_name].getncattr(key)
+
+
+def test_simple_workflow_slicing(simple_case):
+    input_head_dir, output_head_dir = simple_case
+    hf_collection = HFCollection(input_head_dir).slice_groups(slice_size_years=1)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+    ts_paths = ts_collection.execute()
+
+    assert len(ts_paths) == SIMPLE_NUM_VARS*int(np.ceil(SIMPLE_NUM_TEST_HIST_FILES / 12))
+    for path in ts_paths:
+        assert "[sorting_pivot]" not in path
+        assert "*" not in path
+        with Dataset(path, 'r') as ts_ds:
+            assert ts_ds["time"].size == ts_ds["time_bounds"].shape[0]
+
+            for index in range(ts_ds["time"].size):
+                time_bounds = ts_ds["time_bounds"][index]
+                assert time_bounds.count() == 2
+                assert time_bounds[0] <= ts_ds["time"][index] <= time_bounds[1]
 
 
 def test_unstructured_grid_workflow(unstructured_grid_case):

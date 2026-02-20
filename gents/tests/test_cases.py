@@ -5,7 +5,7 @@ import pytest
 import random
 
 CASE_START_YEAR = 1850
-SIMPLE_NUM_TEST_HIST_FILES = 40
+SIMPLE_NUM_TEST_HIST_FILES = 49
 SIMPLE_NUM_VARS = 6
 TIME_NUM_TEST_HIST_FILES = 2
 TIME_NUM_VARS = 1
@@ -118,7 +118,7 @@ def time_bounds_case(tmp_path_factory):
     
     hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(TIME_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):
-        generate_history_file(path, [(file_index+1)*30], [[file_index*30, (file_index+1)*30]], num_vars=TIME_NUM_VARS, time_bounds_name="Time_Bounds", time_name="Time")
+        generate_history_file(path, [(file_index+0.5)*30], [[file_index*30, (file_index+1)*30]], num_vars=TIME_NUM_VARS, time_bounds_name="Time_Bounds", time_name="Time")
 
     return head_hf_dir, head_ts_dir
 
@@ -130,7 +130,7 @@ def simple_case(tmp_path_factory):
     
     hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):
-        generate_history_file(path, [(file_index+1)*30], [[file_index*30, (file_index+1)*30]])
+        generate_history_file(path, [(file_index+0.5)*30], [[file_index*30, (file_index+1)*30]])
 
     return head_hf_dir, head_ts_dir
 
@@ -142,7 +142,7 @@ def unstructured_grid_case(tmp_path_factory):
     
     hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):
-        time_vals, time_bnds = [(file_index+1)*30], [[file_index*30, (file_index+1)*30]]
+        time_vals, time_bnds = [(file_index+0.5)*30], [[file_index*30, (file_index+1)*30]]
         generate_history_file(path, time_vals, time_bnds, auxiliary=True, aux_dim="ncol", dim_shapes={"time": None, "ncol": UNSTRUCT_GRID_NUM_NCOLS, "bnds": 2}, var_dims=("time", "ncol"), var_shape=(len(time_vals), UNSTRUCT_GRID_NUM_NCOLS))
 
     return head_hf_dir, head_ts_dir
@@ -159,7 +159,7 @@ def scrambled_case(tmp_path_factory):
     random.shuffle(hf_paths)
     
     for file_index, path in enumerate(hf_paths):
-        generate_history_file(path, [(file_index+1)*30], [[file_index*30, (file_index+1)*30]], num_vars=SCRAMBLED_NUM_VARS)
+        generate_history_file(path, [(file_index+0.5)*30], [[file_index*30, (file_index+1)*30]], num_vars=SCRAMBLED_NUM_VARS)
     return head_hf_dir, head_ts_dir
     
 
@@ -175,7 +175,7 @@ def structured_case(tmp_path_factory):
             
             for file_index in range(STRUCTURED_NUM_TEST_HIST_FILES):
                 path = f"{dir_path}/testing.hf.{str(file_index).zfill(5)}.nc" 
-                generate_history_file(path, [(file_index+1)*30], [[file_index*30, (file_index+1)*30]], num_vars=SCRAMBLED_NUM_VARS)
+                generate_history_file(path, [(file_index+0.5)*30], [[file_index*30, (file_index+1)*30]], num_vars=SCRAMBLED_NUM_VARS)
     return head_hf_dir, head_ts_dir
 
 
@@ -186,7 +186,7 @@ def no_time_bounds_case(tmp_path_factory):
     
     hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):
-        generate_history_file(path, [(file_index+1)*30], None)
+        generate_history_file(path, [(file_index+0.5)*30], None)
 
     return head_hf_dir, head_ts_dir
 
@@ -198,7 +198,7 @@ def no_time_case(tmp_path_factory):
     
     hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):
-        generate_history_file(path, [(file_index+1)*30], None, time_name="nottime")
+        generate_history_file(path, [(file_index+0.5)*30], None, time_name="nottime")
 
     return head_hf_dir, head_ts_dir
 
@@ -210,7 +210,7 @@ def simple_case_missing_attrs(tmp_path_factory):
     
     hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):
-        generate_history_file(path, [(file_index+1)*30], [[file_index*30, (file_index+1)*30]], time_bounds_attrs=False)
+        generate_history_file(path, [(file_index+0.5)*30], [[file_index*30, (file_index+1)*30]], time_bounds_attrs=False)
 
     return head_hf_dir, head_ts_dir
 
@@ -236,7 +236,7 @@ def with_auxiliary_case(tmp_path_factory):
     
     hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):
-        time_vals, time_bnds = [(file_index+1)*30], [[file_index*30, (file_index+1)*30]]
+        time_vals, time_bnds = [(file_index+0.5)*30], [[file_index*30, (file_index+1)*30]]
         generate_history_file(path, time_vals, None, auxiliary=True, time_name="time", dim_shapes={"time": None}, var_dims=("time"), var_shape=(len(time_vals)))
 
     return head_hf_dir, head_ts_dir
@@ -288,7 +288,7 @@ def mixed_timestep_case(tmp_path_factory):
 
     hf_paths = [f"{head_hf_dir}/testing.hf2.{str(index).zfill(5)}.nc" for index in range(MIXED_TS_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):
-        generate_history_file(path, [(file_index+1)*30], [[file_index*30, (file_index+1)*30]])
+        generate_history_file(path, [(file_index+0.5)*30], [[file_index*30, (file_index+1)*30]])
 
     hf_paths = [f"{head_hf_dir}/testing.hf3.{str(index).zfill(5)}.nc" for index in range(MIXED_TS_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):

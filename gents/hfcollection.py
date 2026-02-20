@@ -84,12 +84,19 @@ def calculate_year_slices(slice_size_years, min_year, max_year):
     :param max_year: Maximum or ending year for the full range.
     :return: List of tuples where each tuple defines the year range for each slice
     """
-    start_year = int(np.floor(min_year / slice_size_years)*slice_size_years)
+    if max_year < min_year:
+        raise ValueError("Maximum year cannot exceed minimum year.")
+    if slice_size_years >= max_year - min_year:
+        return [(min_year, max_year)]
+
+    start_year = min_year
     end_year = int(np.ceil(max_year / slice_size_years)*slice_size_years)
 
     ranges = []
-    for year in np.arange(start_year, end_year, slice_size_years, dtype=int):
+    for year in np.arange(start_year, end_year+slice_size_years, slice_size_years, dtype=int):
         ranges.append((int(year), int(year+slice_size_years-1)))
+        if year >= max_year or year+slice_size_years-1 >= max_year:
+            break
     
     return ranges
 
@@ -167,9 +174,8 @@ def get_year_bounds(hf_to_meta_map):
         for index in range(len(time_bounds)):
             lower_bound, upper_bound = time_bounds[index]
             
-            mid_ordinal = np.median([lower_bound.toordinal(), upper_bound.toordinal()])
-            mid_time = cftime.datetime.fromordinal(mid_ordinal, calendar=lower_bound.calendar)
-                    
+            mid_time = lower_bound + ((upper_bound - lower_bound) / 2)
+
             if mid_time.year > max_year:
                 max_year = mid_time.year
             if mid_time.year < min_year:
@@ -596,15 +602,17 @@ class HFCollection:
 
         return self.__hf_groups
 
-    def slice_groups(self, slice_size_years=10, pattern=None):
+    def slice_groups(self, slice_size_years=10, start_year=0, pattern=None):
         """
         Slices history file groupings that match the glob pattern (if specified) into subsets by time.
 
         :param slice_size_years: Size of slices to make, in years.
+        :param start_year: Year to start slicing pattern from. Default is 0.
         :param pattern: Glob pattern to match history file grouping IDs to.
         :return: New groupings that are subset into time periods specified by 'slice_size_years'
         """
         sliced_groups = {}
+        self.check_pulled()
 
         for group in self.get_groups():
             hf_paths = self.get_groups()[group]
@@ -613,16 +621,18 @@ class HFCollection:
                 continue
             
             if len(hf_paths) == 1:
+                sliced_groups[group] = hf_paths
                 warnings.warn("Cannot slice history file group of size 1.", RuntimeWarning)
                 continue
             else:
                 group_meta_map = {path: self.__hf_to_meta_map[path] for path in hf_paths}
                 
                 min_year, max_year = get_year_bounds(group_meta_map)
-                time_slices = calculate_year_slices(slice_size_years, min_year, max_year+1)
-                time_slices[0] = (min_year, time_slices[0][1])
-                time_slices[-1] = (time_slices[-1][0], max_year)
+                if start_year is not None:
+                    min_year = start_year
                 
+                time_slices = calculate_year_slices(slice_size_years, min_year, max_year)
+
                 hf_slices = {}
                 variable_set = None
                 for hf_path in hf_paths:
@@ -630,19 +640,19 @@ class HFCollection:
         
                     if meta_ds.get_cftime_bounds() is not None:
                         time_bnds = meta_ds.get_cftime_bounds()[0]
-                        time = time_bnds[0] + (time_bnds[1] - time_bnds[0]) / 2
+                        time = time_bnds[0] + ((time_bnds[1] - time_bnds[0]) / 2)
                     else:
                         time = meta_ds.get_cftimes()[0]
                     
                     for time_slice in time_slices:
                         if time_slice[0] <= time.year <= time_slice[1]:
                             if time_slice in hf_slices:
-                                hf_slices[time_slice].append(meta_ds.get_path())
+                                hf_slices[time_slice].append(hf_path)
                             else:
-                                hf_slices[time_slice] = [meta_ds.get_path()]
+                                hf_slices[time_slice] = [hf_path]
                             break
-        
+
                 for time_slice in hf_slices:
-                    sliced_groups[f"{group}{time_slice[0]}-{time_slice[1]}"] = hf_slices[time_slice]
+                    sliced_groups[f"{group}[sorting_pivot]{time_slice[0]}-{time_slice[1]}"] = hf_slices[time_slice]
         logger.debug(f"Slicing groups into {slice_size_years} year long slices for '{pattern}'.")
         return self.copy(hf_groups=sliced_groups)

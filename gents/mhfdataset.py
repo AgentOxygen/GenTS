@@ -143,7 +143,7 @@ class MHFDataset:
             dim_shape += [len(self.__data_coords[dim]) for dim in init_ds.dimensions if dim != self.__time_name]
             return dim_shape
 
-    def get_var_vals(self, var_name, time_index_start=0, time_index_end=-1):
+    def get_var_vals(self, var_name, time_index_start=0, time_index_end=None):
         self.__check_coord_map()
         if var_name in self.__data_coords:
             return self.__data_coords[var_name]
