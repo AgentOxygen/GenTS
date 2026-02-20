@@ -21,3 +21,8 @@ def run_config(args):
 
     if not args.dryrun:
         ts_collection.execute()
+
+    if not args.serial:
+        client.shutdown()
+    
+    print("GenTS done!")
