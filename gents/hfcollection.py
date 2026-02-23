@@ -484,7 +484,7 @@ class HFCollection:
                 ds_metas.append(get_meta_from_path(path))
                 prog_bar.step()
         else:
-            prog_bar = ProgressBar(total=np.min(1, len(paths) // 10000))
+            prog_bar = ProgressBar(total=np.min([1, len(paths) // 10000]))
             for index in range(0, len(paths), 10000):
                 ds_metas_subset = self.__client.map(get_meta_from_path, paths[index:index + 10000])
                 ds_metas_futures += ds_metas_subset
