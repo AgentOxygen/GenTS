@@ -31,3 +31,6 @@ packages = ["gents"]
 
 [project.optional-dependencies]
 parallel = ["dask[distributed]"]
+
+[project.scripts]
+run_gents = "gents.cli:main"
