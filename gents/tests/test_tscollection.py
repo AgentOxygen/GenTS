@@ -207,7 +207,7 @@ def test_ts_collection_append_timestep_dirs(mixed_timestep_case):
     ts_collection = TSCollection(hf_collection, output_head_dir)
 
     ts_collection.append_timestep_dirs().execute()
-
+    
     assert isdir(f"{output_head_dir}/hour_1")
     assert isdir(f"{output_head_dir}/day_1")
     assert isdir(f"{output_head_dir}/month_1")
@@ -273,3 +273,19 @@ def test_simple_monthly_case_timestr(simple_yearly_case):
     ts_collection = TSCollection(hf_collection, output_head_dir)
     ts_paths = ts_collection.execute()
     compare_timestr(hf_collection, ts_paths, 365, "%Y")
+
+
+def test_simple_6hourly_case_timestr_dir(simple_6hourly_case):
+    input_head_dir, output_head_dir = simple_6hourly_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir).append_timestep_dirs()
+    ts_paths = ts_collection.execute()
+    assert "hour_6" in listdir(output_head_dir)
+
+
+def test_simple_3hourly_case_timestr_dir(simple_3hourly_case):
+    input_head_dir, output_head_dir = simple_3hourly_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir).append_timestep_dirs()
+    ts_paths = ts_collection.execute()
+    assert "hour_3" in listdir(output_head_dir)
