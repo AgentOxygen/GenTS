@@ -306,3 +306,63 @@ def auxiliary_only_case(tmp_path_factory):
         generate_history_file(path, [(file_index+1)*1], None, var_dims=("time"), var_shape=1, auxiliary=True, aux_dim="time", disable_primary_var=True, dim_shapes={"time": None})
 
     return head_hf_dir, head_ts_dir
+
+
+@pytest.fixture(scope="function")
+def simple_6hourly_case(tmp_path_factory):
+    head_hf_dir = tmp_path_factory.mktemp("simple_6hour_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("simple_6hour_timeseries_files")
+    
+    hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
+    for file_index, path in enumerate(hf_paths):
+        generate_history_file(path, [(file_index+0.5)*0.25], [[file_index*0.25, (file_index+1)*0.25]])
+
+    return head_hf_dir, head_ts_dir
+
+
+@pytest.fixture(scope="function")
+def simple_3hourly_case(tmp_path_factory):
+    head_hf_dir = tmp_path_factory.mktemp("simple_3hour_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("simple_3hour_timeseries_files")
+    
+    hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
+    for file_index, path in enumerate(hf_paths):
+        generate_history_file(path, [(file_index+0.5)*0.125], [[file_index*0.125, (file_index+1)*0.125]])
+
+    return head_hf_dir, head_ts_dir
+
+
+@pytest.fixture(scope="function")
+def simple_daily_case(tmp_path_factory):
+    head_hf_dir = tmp_path_factory.mktemp("simple_day_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("simple_day_timeseries_files")
+    
+    hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
+    for file_index, path in enumerate(hf_paths):
+        generate_history_file(path, [(file_index+0.5)*1], [[file_index*1, (file_index+1)*1]])
+
+    return head_hf_dir, head_ts_dir
+
+
+@pytest.fixture(scope="function")
+def simple_monthly_case(tmp_path_factory):
+    head_hf_dir = tmp_path_factory.mktemp("simple_month_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("simple_month_timeseries_files")
+    
+    hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
+    for file_index, path in enumerate(hf_paths):
+        generate_history_file(path, [(file_index+0.5)*30], [[file_index*30, (file_index+1)*30]])
+
+    return head_hf_dir, head_ts_dir
+
+
+@pytest.fixture(scope="function")
+def simple_yearly_case(tmp_path_factory):
+    head_hf_dir = tmp_path_factory.mktemp("simple_year_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("simple_year_timeseries_files")
+    
+    hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
+    for file_index, path in enumerate(hf_paths):
+        generate_history_file(path, [(file_index+0.5)*365], [[file_index*365, (file_index+1)*365]])
+
+    return head_hf_dir, head_ts_dir
