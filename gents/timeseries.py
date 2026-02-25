@@ -157,6 +157,32 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
     return ts_out_path
 
 
+def get_timestamp_format(dt):
+    """
+    Creates timestamp string to describe time range for netCDF dataset
+
+    :param times: Time values for netCDF dataset in integer form with units and calendar attributes.
+    :return: String containing appropriate timestamp.
+    """
+    minutes = dt.total_seconds() / 60
+    hours = minutes / 60
+    days = hours / 24
+    months = days / 30
+
+    if minutes < 1:
+        time_format = "%Y%m%d%H%M%S"
+    elif 0 < hours < 24:
+        time_format = "%Y%m%d%H"
+    elif 0 < days < 28:
+        time_format = "%Y%m%d"
+    elif 0 < months < 12:
+        time_format = "%Y%m"
+    else:
+        time_format = "%Y"
+    
+    return time_format
+
+
 class TSCollection:
     """Time Series Collection that faciliates the creation of time series from a HFCollection."""
     def __init__(self, hf_collection, output_dir, ts_orders=None, dask_client=None):
@@ -189,6 +215,15 @@ class TSCollection:
 
                 primary_vars = self.__hf_collection[hf_paths[0]].get_primary_variables()
                 secondary_vars = self.__hf_collection[hf_paths[0]].get_secondary_variables()
+                time_format = get_timestamp_format(self.__hf_collection.get_timestep_delta(hf_paths[0]))
+                
+                times = []
+                for path in hf_paths:
+                    times.append(self.__hf_collection[path].get_cftimes())
+                start_time = np.min(times)
+                end_time = np.max(times)
+
+                timestamp_str = f"{start_time.strftime(time_format)}-{end_time.strftime(time_format)}"
 
                 if len(primary_vars) > 0:
                     for var in primary_vars:
@@ -197,7 +232,7 @@ class TSCollection:
                             "ts_path_template": ts_path_template[:-1],
                             "primary_var": var,
                             "secondary_vars": secondary_vars,
-                            "ts_string": self.__hf_collection.get_timestep_str(hf_paths[0])
+                            "ts_string": timestamp_str
                         })
                 else:
                     self.__orders.append({
@@ -205,7 +240,7 @@ class TSCollection:
                         "ts_path_template": ts_path_template[:-1],
                         "primary_var": "auxiliary",
                         "secondary_vars": secondary_vars,
-                        "ts_string": self.__hf_collection.get_timestep_str(hf_paths[0])
+                        "ts_string": timestamp_str
                     })
 
             logger.debug(f"TSCollection initialized at '{output_dir}'.")
@@ -384,27 +419,22 @@ class TSCollection:
         new_orders = []
         for order_dict in copy.deepcopy(self.__orders):
             if fnmatch.fnmatch(order_dict["primary_var"], var_glob):
-                paths = order_dict["hf_paths"]
-                paths.sort()
-                dt = None
-                times = self.__hf_collection[paths[0]].get_cftimes()
-                if len(times) > 1:
-                    dt = (times[1] - times[1])
-                elif len(paths) > 1:
-                    time_0 = self.__hf_collection[paths[0]].get_cftimes()[0]
-                    time_1 = self.__hf_collection[paths[1]].get_cftimes()[0]
-                    dt = time_1 - time_0
+                dt = self.__hf_collection.get_timestep_delta(order_dict["hf_paths"][0])
+                hours = np.rint(dt.total_seconds() / 60.0 / 60.0)
+                days = np.rint(hours / 24.0)
+                months = np.rint(days / 30)
+                years = np.rint(months / 12)
 
                 if dt is None:
                     timestep_label = "unsorted"
-                elif dt.days == 0:
-                    timestep_label = "hour_1"
-                elif dt.days < 28:
-                    timestep_label = "day_1"
-                elif dt.days < 365:
-                    timestep_label = "month_1"
+                elif hours < 24:
+                    timestep_label = f"hour_{int(hours)}"
+                elif days < 28:
+                    timestep_label = f"day_{int(days)}"
+                elif months < 12:
+                    timestep_label = f"month_{int(months)}"
                 else:
-                    timestep_label = "year_1"
+                    timestep_label = f"year_{int(years)}"
 
                 template = Path(order_dict["ts_path_template"])
                 order_dict["ts_path_template"] = str(template.parent) + f"/{timestep_label}/" + template.name
