@@ -280,7 +280,7 @@ def mixed_timestep_case(tmp_path_factory):
     
     hf_paths = [f"{head_hf_dir}/testing.hf0.{str(index).zfill(5)}.nc" for index in range(MIXED_TS_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):
-        generate_history_file(path, [(file_index+1)*0.1], [[file_index*0.1, (file_index+1)*0.1]])
+        generate_history_file(path, [(file_index+1)*(1/24)], [[file_index*(1/24), (file_index+1)*(1/24)]])
 
     hf_paths = [f"{head_hf_dir}/testing.hf1.{str(index).zfill(5)}.nc" for index in range(MIXED_TS_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):
