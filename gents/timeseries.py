@@ -65,7 +65,7 @@ def generate_time_series_error_wrapper(**args):
         raise type(e)(f"{e}") from e
 
 
-def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars, complevel=0, compression=None, overwrite=False, reference_structure=None):
+def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars, ts_string, complevel=0, compression=None, overwrite=False, reference_structure=None):
     """
     Creates timeseries dataset from specified history file paths.
 
@@ -87,8 +87,6 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
         for variable in secondary_vars:
             secondary_vars_data[variable] = agg_hf_ds.get_var_vals(variable)
         
-        ts_string = agg_hf_ds.get_timestamp_string()
-
         ts_out_path = f"{ts_path_template}.{primary_var}.{ts_string}.nc"
 
         if overwrite and isfile(ts_out_path):
@@ -173,7 +171,7 @@ class TSCollection:
         else:
             self.__dask_client = dask_client
         
-        hf_collection.sort_along_time()
+        hf_collection = hf_collection.sort_along_time()
 
         self.__hf_collection = hf_collection
         self.__groups = self.__hf_collection.get_groups()
@@ -198,14 +196,16 @@ class TSCollection:
                             "hf_paths": hf_paths,
                             "ts_path_template": ts_path_template[:-1],
                             "primary_var": var,
-                            "secondary_vars": secondary_vars
+                            "secondary_vars": secondary_vars,
+                            "ts_string": self.__hf_collection.get_timestep_str(hf_paths[0])
                         })
                 else:
                     self.__orders.append({
                         "hf_paths": hf_paths,
                         "ts_path_template": ts_path_template[:-1],
                         "primary_var": "auxiliary",
-                        "secondary_vars": secondary_vars
+                        "secondary_vars": secondary_vars,
+                        "ts_string": self.__hf_collection.get_timestep_str(hf_paths[0])
                     })
 
             logger.debug(f"TSCollection initialized at '{output_dir}'.")
