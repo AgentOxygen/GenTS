@@ -3,6 +3,7 @@ from netCDF4 import Dataset
 from cftime import num2date
 import numpy as np
 from gents.tests.test_cases import *
+from pytest import approx
 
 
 def test_simple_case(simple_case):
@@ -154,3 +155,94 @@ def test_auxiliary_only_case(auxiliary_only_case):
                 assert "time" == hf_ds[f"VAR_AUX_{var_index}"].dimensions[0]
                 assert len(hf_ds[f"VAR_AUX_{var_index}"].dimensions) == 1
                 assert f"VAR_{var_index}" not in hf_ds.variables
+
+
+def test_simple_3hourly_case(simple_3hourly_case):
+    input_head_dir, output_head_dir = simple_3hourly_case
+    assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
+    paths = listdir(input_head_dir)
+    paths.sort()
+
+    time0 = None
+    time_bnds0 = None
+    with Dataset(f"{input_head_dir}/{paths[0]}", 'r') as hf_ds:
+        time0 = hf_ds["time"][:][0]
+        time_bnds0 = hf_ds["time_bounds"][:][0][0]
+    with Dataset(f"{input_head_dir}/{paths[1]}", 'r') as hf_ds:
+        assert hf_ds["time"][:][0] - time0 == approx(3/24, 0.001)
+        assert hf_ds["time_bounds"][:][0][0] - time_bnds0 == approx(3/24, 0.001)
+
+
+def test_simple_6hourly_case(simple_6hourly_case):
+    input_head_dir, output_head_dir = simple_6hourly_case
+    assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
+    paths = listdir(input_head_dir)
+    paths.sort()
+
+    time0 = None
+    time_bnds0 = None
+    with Dataset(f"{input_head_dir}/{paths[0]}", 'r') as hf_ds:
+        time0 = hf_ds["time"][:][0]
+        time_bnds0 = hf_ds["time_bounds"][:][0][0]
+    with Dataset(f"{input_head_dir}/{paths[1]}", 'r') as hf_ds:
+        assert hf_ds["time"][:][0] - time0 == approx(6/24, 0.001)
+        assert hf_ds["time_bounds"][:][0][0] - time_bnds0 == approx(6/24, 0.001)
+
+
+def test_simple_daily_case(simple_daily_case):
+    input_head_dir, output_head_dir = simple_daily_case
+    assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
+    paths = listdir(input_head_dir)
+    paths.sort()
+
+    time0 = None
+    time_bnds0 = None
+    with Dataset(f"{input_head_dir}/{paths[0]}", 'r') as hf_ds:
+        time0 = hf_ds["time"][:][0]
+        time_bnds0 = hf_ds["time_bounds"][:][0][0]
+    with Dataset(f"{input_head_dir}/{paths[1]}", 'r') as hf_ds:
+        assert hf_ds["time"][:][0] - time0 == approx(1, 0.001)
+        assert hf_ds["time_bounds"][:][0][0] - time_bnds0 == approx(1, 0.001)
+
+
+def test_simple_monthly_case(simple_monthly_case):
+    input_head_dir, output_head_dir = simple_monthly_case
+    assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
+    paths = listdir(input_head_dir)
+    paths.sort()
+
+    time0 = None
+    time_bnds0 = None
+    with Dataset(f"{input_head_dir}/{paths[0]}", 'r') as hf_ds:
+        time0 = hf_ds["time"][:][0]
+        time_bnds0 = hf_ds["time_bounds"][:][0][0]
+    with Dataset(f"{input_head_dir}/{paths[1]}", 'r') as hf_ds:
+        assert hf_ds["time"][:][0] - time0 == approx(30, 0.001)
+        assert hf_ds["time_bounds"][:][0][0] - time_bnds0 == approx(30, 0.001)
+
+
+def test_simple_yearly_case(simple_yearly_case):
+    input_head_dir, output_head_dir = simple_yearly_case
+    assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
+    paths = listdir(input_head_dir)
+    paths.sort()
+
+    time0 = None
+    time_bnds0 = None
+    with Dataset(f"{input_head_dir}/{paths[0]}", 'r') as hf_ds:
+        time0 = hf_ds["time"][:][0]
+        time_bnds0 = hf_ds["time_bounds"][:][0][0]
+    with Dataset(f"{input_head_dir}/{paths[1]}", 'r') as hf_ds:
+        assert hf_ds["time"][:][0] - time0 == approx(365, 0.001)
+        assert hf_ds["time_bounds"][:][0][0] - time_bnds0 == approx(365, 0.001)
+
+
+def test_long_case(long_case):
+    input_head_dir, output_head_dir = long_case
+    paths = listdir(input_head_dir)
+    assert len(paths) == LONG_TEST_NUM_HIST_FILES
+
+    with Dataset(f"{input_head_dir}/{paths[1]}", 'r') as hf_ds:
+        assert "VAR0" in hf_ds.variables
+        assert "VAR1" not in hf_ds.variables
+        assert hf_ds["VAR0"].shape == (1, 1, 1)

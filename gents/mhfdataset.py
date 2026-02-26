@@ -20,42 +20,6 @@ def get_concat_coords(hf_datasets):
     return dim_coords
 
 
-def get_timestamp_str(times):
-    """
-    Creates timestamp string to describe time range for netCDF dataset
-
-    :param times: Time values for netCDF dataset in integer form with units and calendar attributes.
-    :return: String containing appropriate timestamp.
-    """
-    calendar = times.calendar
-    units = times.units
-    data = np.sort(times[:])
-    
-    start_t = num2date(data[0], units=units, calendar=calendar)
-    if times.shape[0] == 1:
-        return start_t.strftime("%Y%m%d%H")
-    else:
-        dt = num2date(data[1], units=units, calendar=calendar) - start_t
-        minutes = dt.total_seconds() / 60
-        hours = minutes / 60
-        days = hours / 24
-        months = days / 30
-    
-        if minutes < 1:
-            time_format = "%Y%m%d%H%M%S"
-        elif hours < 1:
-            time_format = "%Y%m%d%H"
-        elif days < 1:
-            time_format = "%Y%m%d"
-        elif months < 1:
-            time_format = "%Y%m"
-        else:
-            time_format = "%Y"
-        
-        end_t = num2date(data[-1], units=units, calendar=calendar)
-        return f"{start_t.strftime(time_format)}-{end_t.strftime(time_format)}"
-
-
 class MHFDataset:
     def __init__(self, hf_paths):
         self.__hf_files = [Path(path) for path in hf_paths]
@@ -89,10 +53,8 @@ class MHFDataset:
             ds.close()
 
     def get_time_vals(self):
-        return list(self.__time_mapping.keys())
-
-    def get_timestamp_string(self):
-        return get_timestamp_str(self.__hf_datasets[0][self.__time_name])
+        vals = list(self.__time_mapping.keys())
+        return np.sort(np.array(vals))
 
     def is_time_consistent(self):
         n_time_files = len(self.__time_mapping[self.get_time_vals()[0]])

@@ -376,7 +376,7 @@ def merge_fragmented_groups(hf_groups, hf_meta_map):
 
 class HFCollection:
     """History File Collection, holds paths to all history files and serves as an interface for interpreting the metadata."""
-    def __init__(self, hf_dir, dask_client=None, meta_map=None, hf_groups=None, hf_glob_pattern="*.nc*"):
+    def __init__(self, hf_dir, dask_client=None, meta_map=None, hf_groups=None, step_map=None, hf_glob_pattern="*.nc*"):
         """
         :param hf_dir: Head directory to history files
         :param dask_client: Dask client object. If not given, the global client is used instead.
@@ -407,6 +407,8 @@ class HFCollection:
             logger.info(f"Initialized HFCollection at '{hf_dir}'")
             logger.info(f"{len(self.__raw_paths)} netCDF files found.")
 
+        self.__hf_to_timestep_delta_map = step_map
+
     def __getitem__(self, key):
         return self.__hf_to_meta_map[key]
 
@@ -435,6 +437,10 @@ class HFCollection:
                 return False
         return True
 
+    def get_timestep_delta(self, hf_path):
+        self.check_pulled()
+        return self.__hf_to_timestep_delta_map[hf_path]
+
     def get_input_dir(self):
         """Return the input directory"""
         return self.__hf_dir
@@ -444,7 +450,7 @@ class HFCollection:
         if not self.__meta_pulled:
             self.pull_metadata()
 
-    def copy(self, dask_client=None, meta_map=None, hf_groups=None):
+    def copy(self, dask_client=None, meta_map=None, hf_groups=None, step_map=None):
         """
         Copies data of this HFCollection into a new one.
     
@@ -458,7 +464,9 @@ class HFCollection:
             meta_map = self.__hf_to_meta_map
         if hf_groups is None and self.__meta_pulled:
             hf_groups = self.get_groups()
-        return HFCollection(self.__hf_dir, dask_client=dask_client, meta_map=meta_map, hf_groups=hf_groups)
+        if step_map is None:
+            step_map = self.__hf_to_timestep_delta_map
+        return HFCollection(self.__hf_dir, dask_client=dask_client, meta_map=meta_map, hf_groups=hf_groups, step_map=step_map)
 
     def sort_along_time(self):
         """
@@ -502,6 +510,17 @@ class HFCollection:
         else:
             logger.warning(f"Skipping metadata validation may result in errors due to missing attributes or coordinate data.")
         logger.info(f"Metadata pulled.")
+
+        if self.__hf_to_timestep_delta_map is None:
+            self.__hf_to_timestep_delta_map = {}
+            for group in self.get_groups():
+                times = []
+                for path in self.get_groups()[group]:
+                    cftime = self.__hf_to_meta_map[path].get_cftimes()[0]
+                    times.append(cftime)
+                times = np.sort(times)
+                for path in self.get_groups()[group]:
+                    self.__hf_to_timestep_delta_map[path] = times[-1] - times[-2]
 
     def check_validity(self):
         """Checks validity of metadata for each history file. Removes missing or incomplete metadata."""

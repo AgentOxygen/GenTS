@@ -5,6 +5,7 @@ from os.path import isfile, getsize, isdir
 from os import listdir, remove, makedirs
 from netCDF4 import Dataset
 from shutil import rmtree
+from cftime import num2date
 
 
 def clear_output_dir(output_dir):
@@ -35,7 +36,7 @@ def test_generate_time_series(simple_case):
     hf_paths = [f"{input_head_dir}/{name}" for name in listdir(input_head_dir)]
 
     var_name = "VAR1"
-    ts_path = generate_time_series(hf_paths, f"{output_head_dir}/test_ts.", var_name, ["time", "time_bounds"], complevel=0, compression=None, overwrite=False)
+    ts_path = generate_time_series(hf_paths, f"{output_head_dir}/test_ts.", var_name, ["time", "time_bounds"], "%Y%m%d", complevel=0, compression=None, overwrite=False)
     
     assert isfile(ts_path)
     assert check_timeseries_integrity(ts_path)
@@ -50,7 +51,7 @@ def test_generate_time_series(simple_case):
         assert "time_bounds" in ts_ds.variables
 
     original_size = getsize(ts_path)
-    ts_path = generate_time_series(hf_paths, f"{output_head_dir}/test_ts.", var_name, ["time", "time_bounds"], complevel=9, compression="zlib", overwrite=True)
+    ts_path = generate_time_series(hf_paths, f"{output_head_dir}/test_ts.", var_name, ["time", "time_bounds"], "%Y%m%d", complevel=9, compression="zlib", overwrite=True)
 
     assert getsize(ts_path) < original_size
     assert len(listdir(output_head_dir)) == 1
@@ -61,10 +62,18 @@ def test_integrity_check(simple_case):
     input_head_dir, output_head_dir = simple_case
     hf_paths = [f"{input_head_dir}/{name}" for name in listdir(input_head_dir)]
 
-    ts_path = generate_time_series(hf_paths, f"{output_head_dir}/test_ts.", "VAR1", ["time", "time_bounds"])
+    ts_path = generate_time_series(hf_paths, f"{output_head_dir}/test_ts.", "VAR1", ["time", "time_bounds"], "%Y%m%d")
     assert check_timeseries_integrity(ts_path)
     for path in hf_paths:
         assert not check_timeseries_integrity(path)
+
+
+def test_conform_check(simple_case):
+    input_head_dir, output_head_dir = simple_case
+    hf_paths = [f"{input_head_dir}/{name}" for name in listdir(input_head_dir)]
+
+    ts_path = generate_time_series(hf_paths, f"{output_head_dir}/test_ts.", "VAR1", ["time", "time_bounds"], "%Y%m%d")
+    assert check_timeseries_conform(ts_path)
 
 
 def test_tscollection_copy(simple_case):
@@ -206,7 +215,7 @@ def test_ts_collection_append_timestep_dirs(mixed_timestep_case):
     ts_collection = TSCollection(hf_collection, output_head_dir)
 
     ts_collection.append_timestep_dirs().execute()
-
+    
     assert isdir(f"{output_head_dir}/hour_1")
     assert isdir(f"{output_head_dir}/day_1")
     assert isdir(f"{output_head_dir}/month_1")
@@ -216,3 +225,75 @@ def test_ts_collection_append_timestep_dirs(mixed_timestep_case):
     assert len(listdir(f"{output_head_dir}/day_1")) == SIMPLE_NUM_VARS
     assert len(listdir(f"{output_head_dir}/month_1")) == SIMPLE_NUM_VARS
     assert len(listdir(f"{output_head_dir}/year_1")) == SIMPLE_NUM_VARS
+
+
+def compare_timestr(hf_collection, ts_paths, timestep, time_format):
+    with Dataset(list(hf_collection)[0], 'r') as hf_ds:
+        units = hf_ds["time"].units
+        calendar = hf_ds["time"].calendar
+        start_time = hf_ds["time"][:][0]
+
+    start_date = num2date(start_time, units=units, calendar=calendar)
+    end_date = num2date(start_time+timestep*(len(hf_collection)-1), units=units, calendar=calendar)
+
+    for path in ts_paths:
+        time_str = path.split(".")[-2]
+        assert "-" in time_str
+        assert len(time_str.split("-")) == 2
+        assert time_str == f"{start_date.strftime(time_format)}-{end_date.strftime(time_format)}"
+
+
+def test_simple_3hourly_case_timestr(simple_3hourly_case):
+    input_head_dir, output_head_dir = simple_3hourly_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+    ts_paths = ts_collection.execute()
+    compare_timestr(hf_collection, ts_paths, 3/24, "%Y%m%d%H")
+
+
+def test_simple_6hourly_case_timestr(simple_6hourly_case):
+    input_head_dir, output_head_dir = simple_6hourly_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+    ts_paths = ts_collection.execute()
+    compare_timestr(hf_collection, ts_paths, 6/24, "%Y%m%d%H")
+
+
+def test_simple_daily_case_timestr(simple_daily_case):
+    input_head_dir, output_head_dir = simple_daily_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+    ts_paths = ts_collection.execute()
+    compare_timestr(hf_collection, ts_paths, 1, "%Y%m%d")
+
+
+def test_simple_monthly_case_timestr(simple_monthly_case):
+    input_head_dir, output_head_dir = simple_monthly_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+    ts_paths = ts_collection.execute()
+    compare_timestr(hf_collection, ts_paths, 30, "%Y%m")
+
+
+def test_simple_monthly_case_timestr(simple_yearly_case):
+    input_head_dir, output_head_dir = simple_yearly_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+    ts_paths = ts_collection.execute()
+    compare_timestr(hf_collection, ts_paths, 365, "%Y")
+
+
+def test_simple_6hourly_case_timestr_dir(simple_6hourly_case):
+    input_head_dir, output_head_dir = simple_6hourly_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir).append_timestep_dirs()
+    ts_paths = ts_collection.execute()
+    assert "hour_6" in listdir(output_head_dir)
+
+
+def test_simple_3hourly_case_timestr_dir(simple_3hourly_case):
+    input_head_dir, output_head_dir = simple_3hourly_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir).append_timestep_dirs()
+    ts_paths = ts_collection.execute()
+    assert "hour_3" in listdir(output_head_dir)

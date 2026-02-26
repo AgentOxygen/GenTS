@@ -39,6 +39,7 @@ def test_simple_workflow(simple_case):
             assert ts_ds["time"].size == SIMPLE_NUM_TEST_HIST_FILES
             assert ts_ds["time_bounds"].shape[0] == SIMPLE_NUM_TEST_HIST_FILES
             assert ts_ds.getncattr("gents_version") == get_version()
+            assert is_monotonic(ts_ds["time"][:])
             var_name = path.split(".")[-3]
             
             for index in range(ts_ds["time"].size):
@@ -132,8 +133,6 @@ def test_scrambled_workflow(scrambled_case):
     hf_collection = HFCollection(input_head_dir)
     ts_collection = TSCollection(hf_collection, output_head_dir)
     ts_paths = ts_collection.execute()
-
-    hf_collection.sort_along_time()
 
     assert len(ts_paths) == SCRAMBLED_NUM_VARS
 
