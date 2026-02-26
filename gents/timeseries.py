@@ -46,6 +46,15 @@ def check_timeseries_integrity(ts_path: str):
     return False
 
 
+def check_timeseries_conform(ts_path: str):
+    with netCDF4.Dataset(ts_path, mode="r") as ts_ds:
+        chunking = ts_ds["time"].chunking()
+        print(f"Chunking: {list(chunking)} {list(ts_ds['time'].shape)}")
+        if list(chunking) != list(ts_ds["time"].shape):
+            return False
+    return True
+
+
 def generate_time_series_error_wrapper(**args):
     try:
         return generate_time_series(**args)
@@ -144,7 +153,8 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
                                                 agg_hf_ds.get_var_dtype(secondary_var),
                                                 var_dims,
                                                 complevel=complevel,
-                                                compression=compression)
+                                                compression=compression,
+                                                chunksizes=var_shape)
                 
                 svar_data.set_auto_mask(False)
                 svar_data.set_auto_scale(False)

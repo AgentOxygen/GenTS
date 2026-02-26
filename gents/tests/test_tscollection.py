@@ -68,6 +68,14 @@ def test_integrity_check(simple_case):
         assert not check_timeseries_integrity(path)
 
 
+def test_conform_check(simple_case):
+    input_head_dir, output_head_dir = simple_case
+    hf_paths = [f"{input_head_dir}/{name}" for name in listdir(input_head_dir)]
+
+    ts_path = generate_time_series(hf_paths, f"{output_head_dir}/test_ts.", "VAR1", ["time", "time_bounds"], "%Y%m%d")
+    assert check_timeseries_conform(ts_path)
+
+
 def test_tscollection_copy(simple_case):
     input_head_dir, output_head_dir = simple_case
     hf_collection = HFCollection(input_head_dir)
