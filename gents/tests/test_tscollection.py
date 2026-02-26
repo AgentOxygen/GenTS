@@ -297,3 +297,15 @@ def test_simple_3hourly_case_timestr_dir(simple_3hourly_case):
     ts_collection = TSCollection(hf_collection, output_head_dir).append_timestep_dirs()
     ts_paths = ts_collection.execute()
     assert "hour_3" in listdir(output_head_dir)
+
+
+def test_chunking(large_file_for_chunking_case):
+    input_head_dir, output_head_dir = large_file_for_chunking_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+    ts_paths = ts_collection.execute()
+
+    for path in ts_paths:
+        assert check_timeseries_conform(path)
+        with Dataset(path, 'r') as ts_ds:
+            assert list(ts_ds["VAR0"].chunking()) != list(ts_ds["VAR0"].shape)
