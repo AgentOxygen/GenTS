@@ -22,6 +22,7 @@ FRAGMENTED_NUM_LON_PTS_PER_HF = 1
 FRAGMENTED_NUM_TIMESTEPS = 20
 UNSTRUCT_GRID_NUM_NCOLS = 8
 MIXED_TS_NUM_TEST_HIST_FILES = 10
+LONG_TEST_NUM_HIST_FILES = 240
 
 
 def generate_history_file(
@@ -364,5 +365,25 @@ def simple_yearly_case(tmp_path_factory):
     hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):
         generate_history_file(path, [(file_index+0.5)*365], [[file_index*365, (file_index+1)*365]])
+
+    return head_hf_dir, head_ts_dir
+
+
+@pytest.fixture(scope="function")
+def long_case(tmp_path_factory):
+    head_hf_dir = tmp_path_factory.mktemp("long_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("long_timeseries_files")
+    
+    dim_shapes = {
+        "time": None,
+        "bnds": 2,
+        "lat": 1,
+        "lon": 1,
+        "lev": 1
+    }
+
+    hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(LONG_TEST_NUM_HIST_FILES)]
+    for file_index, path in enumerate(hf_paths):
+        generate_history_file(path, [(file_index+0.5)*30], [[file_index*30, (file_index+1)*30]], dim_shapes=dim_shapes, num_vars=1)
 
     return head_hf_dir, head_ts_dir

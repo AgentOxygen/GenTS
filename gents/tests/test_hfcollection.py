@@ -20,6 +20,7 @@ def test_find_files(structured_case):
 
 def test_calculate_year_slices():
     assert calculate_year_slices(10, 0, 30) == [(0, 9), (10, 19), (20, 29), (30, 39)]
+    assert calculate_year_slices(10, 1, 30) == [(1, 10), (11, 20), (21, 30)]
     assert calculate_year_slices(1, 0, 3) == [(0, 0), (1, 1), (2, 2), (3, 3)]
     assert calculate_year_slices(5, 3, 12) == [(3, 7), (8, 12)]
 
@@ -217,7 +218,29 @@ def test_spatially_fragmented_hf(spatial_fragment_case):
     hf_collection.pull_metadata()
 
     assert len(hf_collection) == FRAGMENTED_NUM_TIMESTEPS*FRAGMENTED_NUM_LAT_FILES*FRAGMENTED_NUM_LON_FILES
-
     groups = hf_collection.get_groups(check_fragmented=True)
-
     assert len(groups) == 1
+
+
+def test_long_hf_slicing(long_case):
+    input_head_dir, output_head_dir = long_case
+    hf_collection = HFCollection(input_head_dir)
+    assert len(hf_collection) == LONG_TEST_NUM_HIST_FILES
+
+    hf_coll1 = hf_collection.slice_groups(slice_size_years=10, start_year=0)
+    groups = hf_coll1.get_groups()
+    for group in groups:
+        assert len(groups[group]) == 120
+
+    hf_coll1 = hf_collection.slice_groups(slice_size_years=5, start_year=0)
+    groups = hf_coll1.get_groups()
+    for group in groups:
+        assert len(groups[group]) == 60
+
+    hf_coll1 = hf_collection.slice_groups(slice_size_years=5, start_year=1)
+    groups = hf_coll1.get_groups()
+    assert len(groups[list(groups)[0]]) == 12
+    for index in range(1, len(groups)-1):
+        assert len(groups[list(groups)[index]]) == 60
+    assert len(groups[list(groups)[-1]]) == 48
+    

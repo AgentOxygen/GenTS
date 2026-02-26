@@ -235,3 +235,14 @@ def test_simple_yearly_case(simple_yearly_case):
     with Dataset(f"{input_head_dir}/{paths[1]}", 'r') as hf_ds:
         assert hf_ds["time"][:][0] - time0 == approx(365, 0.001)
         assert hf_ds["time_bounds"][:][0][0] - time_bnds0 == approx(365, 0.001)
+
+
+def test_long_case(long_case):
+    input_head_dir, output_head_dir = long_case
+    paths = listdir(input_head_dir)
+    assert len(paths) == LONG_TEST_NUM_HIST_FILES
+
+    with Dataset(f"{input_head_dir}/{paths[1]}", 'r') as hf_ds:
+        assert "VAR0" in hf_ds.variables
+        assert "VAR1" not in hf_ds.variables
+        assert hf_ds["VAR0"].shape == (1, 1, 1)
