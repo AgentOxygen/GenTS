@@ -246,3 +246,16 @@ def test_long_case(long_case):
         assert "VAR0" in hf_ds.variables
         assert "VAR1" not in hf_ds.variables
         assert hf_ds["VAR0"].shape == (1, 1, 1)
+
+
+def test_large_case(large_file_for_chunking_case):
+    input_head_dir, output_head_dir = large_file_for_chunking_case
+    paths = listdir(input_head_dir)
+    assert len(paths) == 2
+
+    for path in listdir(input_head_dir):
+        with Dataset(f"{input_head_dir}/{path}", 'r') as hf_ds:
+            assert "VAR0" in hf_ds.variables
+            assert "VAR1" not in hf_ds.variables
+            variable_size = np.prod(hf_ds["VAR0"].shape) * hf_ds["VAR0"].dtype.itemsize
+            assert variable_size > 4*(1024**2)

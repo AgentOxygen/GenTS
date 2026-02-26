@@ -48,10 +48,21 @@ def check_timeseries_integrity(ts_path: str):
 
 def check_timeseries_conform(ts_path: str):
     with netCDF4.Dataset(ts_path, mode="r") as ts_ds:
-        chunking = ts_ds["time"].chunking()
-        print(f"Chunking: {list(chunking)} {list(ts_ds['time'].shape)}")
-        if list(chunking) != list(ts_ds["time"].shape):
+        if list(ts_ds["time"].chunking()) != list(ts_ds["time"].shape):
             return False
+        for variable in ts_ds.variables:
+            if list(ts_ds[variable].chunking()) == list(ts_ds[variable].shape):
+                continue
+                
+            if "time" not in ts_ds[variable].dimensions or len(ts_ds[variable].shape) == 1:
+                return False
+            else:
+                chunking = list(ts_ds[variable].chunking())
+                chunking[0] += 1
+                bumped_size = np.prod(chunking)*ts_ds[variable].dtype.itemsize
+                if bumped_size < 4*(1024**2):
+                    return False
+        
     return True
 
 
@@ -116,11 +127,17 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
                     else:
                         ts_ds.createDimension(dim, var_shape[index])
 
+                var_dtype = agg_hf_ds.get_var_dtype(primary_var)
+                chunksizes = None
+                if np.prod(var_shape)*var_dtype.itemsize < 4*(1024**2):
+                    chunksizes = var_shape
+
                 var_data = ts_ds.createVariable(primary_var,
                                                 agg_hf_ds.get_var_dtype(primary_var),
                                                 var_dims,
                                                 complevel=complevel,
-                                                compression=compression)
+                                                compression=compression,
+                                                chunksizes=chunksizes)
                 var_data.set_auto_mask(False)
                 var_data.set_auto_scale(False)
                 var_data.set_always_mask(False)

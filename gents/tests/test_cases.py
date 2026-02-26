@@ -387,3 +387,32 @@ def long_case(tmp_path_factory):
         generate_history_file(path, [(file_index+0.5)*30], [[file_index*30, (file_index+1)*30]], dim_shapes=dim_shapes, num_vars=1)
 
     return head_hf_dir, head_ts_dir
+
+@pytest.fixture(scope="function")
+def large_file_for_chunking_case(tmp_path_factory):
+    head_hf_dir = tmp_path_factory.mktemp("large_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("large_timeseries_files")
+
+    dim_shapes = {
+        "time": None,
+        "bnds": 2,
+        "lat": 100,
+        "lon": 100,
+        "lev": 100
+    }
+    var_shape = (1, 100, 100, 100)
+    var_dims = ("time", "lat", "lon", "lev")
+
+    hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(2)]
+    for file_index, path in enumerate(hf_paths):
+        generate_history_file(
+            path,
+            [(file_index+0.5)*30],
+            [[file_index*30, (file_index+1)*30]],
+            dim_shapes=dim_shapes,
+            var_shape=var_shape,
+            var_dims=var_dims,
+            num_vars=1,
+        )
+
+    return head_hf_dir, head_ts_dir
