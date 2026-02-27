@@ -585,26 +585,27 @@ class HFCollection:
         :param glob_patterns: Glob patterns to match history files that recieve this filter.
         """
         self.check_pulled()
-        filtered_path_map = copy.deepcopy(self.__hf_to_meta_map)
+        filtered_path_map = {}
         remove_paths = []
         for pattern in glob_patterns:
-            for path in filtered_path_map:
+            for path in self.__hf_to_meta_map:
                 if fnmatch.fnmatch(path, pattern):
-                    meta_ds = filtered_path_map[path]
+                    meta_ds = self.__hf_to_meta_map[path]
                     if meta_ds.get_cftime_bounds() is not None:
                         time_bnds = meta_ds.get_cftime_bounds()[0]
                         time = time_bnds[0] + ((time_bnds[1] - time_bnds[0]) / 2)
                     else:
                         time = meta_ds.get_cftimes()[0]
                     
-                    if not start_year <= time.year <= end_year:
-                        remove_paths.append(path)
-
-        for path in remove_paths:
-            del filtered_path_map[path]
+                    if start_year <= time.year <= end_year:
+                        filtered_path_map[path] = self.__hf_to_meta_map[path]
 
         logger.debug(f"Filtered from {start_year} to {end_year} applied to following glob patterns: '{glob_patterns}'")
-        return self.copy(meta_map=filtered_path_map)
+        hf_groups = None
+        if self.__hf_groups is not None:
+            hf_groups = sort_hf_groups(list(filtered_path_map.keys()))
+
+        return self.copy(meta_map=filtered_path_map, hf_groups=hf_groups)
 
     def get_groups(self, check_fragmented=True):
         """

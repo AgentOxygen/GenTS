@@ -223,3 +223,12 @@ def test_auxiliary_only_workflow(auxiliary_only_case):
 
     assert len(listdir(output_head_dir)) == 1
     assert "auxiliary" in listdir(output_head_dir)[0]
+
+def test_include_years_workflow(long_case):
+    input_head_dir, output_head_dir = long_case
+    hf_collection = HFCollection(input_head_dir).include_years(1850, 1852)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+    ts_paths = ts_collection.execute()
+
+    for path in ts_paths:
+        assert path.split(".")[-2] == "185001-185212"
