@@ -243,4 +243,10 @@ def test_long_hf_slicing(long_case):
     for index in range(1, len(groups)-1):
         assert len(groups[list(groups)[index]]) == 60
     assert len(groups[list(groups)[-1]]) == 48
-    
+
+
+def test_include_years(long_case):
+    input_head_dir, output_head_dir = long_case
+    hf_collection = HFCollection(input_head_dir)
+    assert len(hf_collection.include_years(CASE_START_YEAR, CASE_START_YEAR)) == 12
+    assert len(hf_collection.include_years(CASE_START_YEAR, CASE_START_YEAR+1)) == 24
