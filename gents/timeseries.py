@@ -247,8 +247,9 @@ class TSCollection:
                 times = []
                 for path in hf_paths:
                     times.append(self.__hf_collection[path].get_cftimes())
-                start_time = np.min(times)
-                end_time = np.max(times)
+                times = np.concatenate(times)
+                start_time = min(times)
+                end_time = max(times)
 
                 timestamp_str = f"{start_time.strftime(time_format)}-{end_time.strftime(time_format)}"
 
