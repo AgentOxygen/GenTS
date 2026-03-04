@@ -615,7 +615,6 @@ class HFCollection:
         :return: Dictionary containing group ID (key) and history file metadatas (value).
         """
         if self.__hf_groups is None:
-            self.check_pulled()
             self.__hf_groups = sort_hf_groups(list(self.__hf_to_meta_map.keys()))
         
         if check_fragmented:
