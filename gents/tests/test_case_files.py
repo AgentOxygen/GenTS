@@ -4,6 +4,7 @@ from cftime import num2date
 import numpy as np
 from gents.tests.test_cases import *
 from pytest import approx
+from unittest.mock import patch, wraps
 
 
 def test_simple_case(simple_case):
@@ -37,6 +38,23 @@ def test_simple_case(simple_case):
     end_date = num2date(np.max(times), units=units, calendar=calendar)
     assert (end_date - start_date).days == (SIMPLE_NUM_TEST_HIST_FILES-1)*30
     assert start_date == num2date(0.5*30, units=units, calendar=calendar)
+
+
+def test_baseline_dataset_opens(simple_case):
+    input_head_dir, output_head_dir = simple_case
+
+    hf_paths = [f"{input_head_dir}/{filename}" for filename in listdir(input_head_dir) if ".nc" in filename]
+    with patch("gents.tests.test_case_files.Dataset", wraps=Dataset) as mock_ds:
+        assert mock_ds.call_count == 0
+        with Dataset(hf_paths[0], "r") as ds:
+            assert mock_ds.call_count == 1
+        assert mock_ds.call_count == 1
+
+        with Dataset(hf_paths[0], "r") as ds:
+            pass
+        with Dataset(hf_paths[0], "r") as ds:
+            pass
+        assert mock_ds.call_count == 3
 
 
 def test_unstructured_grid_case(unstructured_grid_case):
