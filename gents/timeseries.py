@@ -15,19 +15,12 @@ from pathlib import Path
 from gents.meta import get_attributes
 from gents.mhfdataset import MHFDataset
 from gents.utils import get_version, LOG_LEVEL_IO_WARNING, ProgressBar
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import traceback
 import logging
 import copy
 
 logger = logging.getLogger(__name__)
-
-try:
-    import dask
-    DASK_INSTALLED = True
-except ImportError:
-    DASK_INSTALLED = False
-    logger.debug("Dask not installed. Proceeding in serial.")
-
 
 def check_timeseries_integrity(ts_path: str):
     """
@@ -212,17 +205,16 @@ def get_timestamp_format(dt):
 
 class TSCollection:
     """Time Series Collection that faciliates the creation of time series from a HFCollection."""
-    def __init__(self, hf_collection, output_dir, ts_orders=None, dask_client=None):
+    def __init__(self, hf_collection, output_dir, ts_orders=None, num_processes=None):
         """
         :param hf_collection: History file collection to derive time series from
         :param output_dir: Directory to output time series files to
         :param ts_orders: List of Dask delayed functions of generate_time_series
-        :param dask_client: Dask client to use when executing time series batches (Default: global client).
+        :param num_processes: Dask client to use when executing time series batches (Default: global client).
         """
-        if dask_client is None and DASK_INSTALLED:
-            self.__dask_client = dask.distributed.client._get_global_client()
-        else:
-            self.__dask_client = dask_client
+        self.__num_processes = 1
+        if num_processes is not None:
+            self.__num_processes = num_processes
         
         hf_collection = hf_collection.sort_along_time()
 
@@ -297,14 +289,14 @@ class TSCollection:
     def get_hf_collection(self):
         return self.__hf_collection
     
-    def copy(self, hf_collection=None, output_dir=None, ts_orders=None, dask_client=None):
+    def copy(self, hf_collection=None, output_dir=None, ts_orders=None, num_processes=None):
         """
         Copies data of this TSCollection into a new one.
     
         :param hf_collection: HFCollection to assign to copy (defaults to existing).
         :param output_dir: Head output directory to assign to copy (defaults to existing).
         :param ts_orders: Time series orders to assign to copy (defaults to existing).
-        :param dask_client: Dask client to assign to copy (defaults to existing).
+        :param num_processes: Dask client to assign to copy (defaults to existing).
         :return: TSCollection that is a copy.
         """
         if hf_collection is None:
@@ -313,10 +305,10 @@ class TSCollection:
             output_dir = self.__output_dir
         if ts_orders is None:
             ts_orders = self.__orders
-        if dask_client is None:
-            dask_client = self.__dask_client
+        if num_processes is None:
+            num_processes = self.__num_processes
 
-        return TSCollection(hf_collection=hf_collection, output_dir=output_dir, ts_orders=ts_orders, dask_client=dask_client)
+        return TSCollection(hf_collection=hf_collection, output_dir=output_dir, ts_orders=ts_orders, num_processes=num_processes)
 
     def include(self, path_glob, var_glob="*"):
         """
@@ -500,13 +492,9 @@ class TSCollection:
         """Execute delayed time series generation functions across the Dask cluster."""
         self.create_directories()
         results = []
-        if self.__dask_client is None:
-            logger.info("No Dask client detected... proceeding in serial.")
-            prog_bar = ProgressBar(total=len(self.__orders))
-            for args in self.__orders:
-                results.append(generate_time_series_error_wrapper(**args))
-                prog_bar.step()
-        else:
-            logger.info("Dask client detected! Generating time series files in parallel.")
-            results = self.__dask_client.compute(self.get_dask_delayed(), sync=True)
+        with ProcessPoolExecutor(max_workers=self.__num_processes) as executor:
+            futures = {executor.submit(generate_time_series_error_wrapper, **args): args for args in self.__orders}
+            for future in as_completed(futures):
+                results.append(future.result())
+        
         return results

@@ -103,7 +103,7 @@ def test_simple_hfcollection(simple_case, caplog):
     
     path_sample = list(hf_collection)[0]
     meta_sample = hf_collection[path_sample]
-    assert meta_sample.get_path() == str(path_sample)
+    assert meta_sample.get_path() == path_sample
     assert type(meta_sample) == netCDFMeta
     
     groups = hf_collection.get_groups()

@@ -83,7 +83,7 @@ def get_time_variables_names(ds):
 
 class netCDFMeta:
     """Stores and provides interface for accessing necessary metadata for individual history files."""
-    def __init__(self, ds: netCDF4.Dataset):
+    def __init__(self, ds: netCDF4.Dataset, path: str):
         """
         :param ds: netCDF dataset read of history file (not this is not the path).
         """
@@ -91,7 +91,7 @@ class netCDFMeta:
         self.__cftime_vals = None
 
         self.__attrs = get_attributes(ds)
-        self.__path = ds.filepath()
+        self.__path = path
 
         time_eqv, time_bnds_eqv = get_time_variables_names(ds)
         
@@ -230,7 +230,7 @@ def get_meta_from_path(path: str):
     ds_meta = None
     try:
         with netCDF4.Dataset(path, 'r') as ds:
-            ds_meta = netCDFMeta(ds)
+            ds_meta = netCDFMeta(ds, path)
     except Exception as e:
         raise type(e)(f"{e} Path: {path}") from e
 
