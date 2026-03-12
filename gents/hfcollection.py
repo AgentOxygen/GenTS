@@ -10,6 +10,7 @@ from gents.meta import get_meta_from_path
 from gents.utils import ProgressBar, LOG_LEVEL_IO_WARNING
 from cftime import num2date
 from pathlib import Path
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
 import os
 import fnmatch
@@ -21,14 +22,6 @@ import copy
 
 logging.captureWarnings(True)
 logger = logging.getLogger(__name__)
-
-try:
-    from dask.distributed import client
-    import dask
-    DASK_INSTALLED = True
-except ImportError:
-    DASK_INSTALLED = False
-    logger.debug("Dask not installed. Proceeding in serial.")
 
 
 def check_config(config):
@@ -377,20 +370,19 @@ def merge_fragmented_groups(hf_groups, hf_meta_map):
 
 class HFCollection:
     """History File Collection, holds paths to all history files and serves as an interface for interpreting the metadata."""
-    def __init__(self, hf_dir, dask_client=None, meta_map=None, hf_groups=None, step_map=None, hf_glob_pattern="*.nc*"):
+    def __init__(self, hf_dir, num_processes=None, meta_map=None, hf_groups=None, step_map=None, hf_glob_pattern="*.nc*"):
         """
         :param hf_dir: Head directory to history files
-        :param dask_client: Dask client object. If not given, the global client is used instead.
+        :param num_processes: Dask client object. If not given, the global client is used instead.
         :param meta_map: History file to metadata map to use if deriving from existing HFCollection (overrides recursive search with hf_dir).
         :param hf_groups: History file groups if deriving from existing HFCollection (overrides recursive search with hf_dir).
         :param hf_glob_pattern: Glob pattern to match files against when searching recursively through the head directory.
         """
         self.__raw_paths = find_files(hf_dir, hf_glob_pattern)
 
-        if dask_client is None and DASK_INSTALLED:
-            self.__client = dask.distributed.client._get_global_client()
-        else:
-            self.__client = dask_client
+        self.__num_processes = 1
+        if self.__num_processes is not None:
+            self.__num_processes = num_processes
 
         self.__hf_to_meta_map = {}
         if meta_map is None:
@@ -451,23 +443,23 @@ class HFCollection:
         if not self.__meta_pulled:
             self.pull_metadata()
 
-    def copy(self, dask_client=None, meta_map=None, hf_groups=None, step_map=None):
+    def copy(self, num_processes=None, meta_map=None, hf_groups=None, step_map=None):
         """
         Copies data of this HFCollection into a new one.
     
-        :param dask_client: Dask client to assign to copy.
+        :param num_processes: Dask client to assign to copy.
         :param meta_map: history file to metadata map to use when copying (defaults to existing).
         :return: HFCollection that is a copy.
         """
-        if dask_client is None:
-            dask_client = self.__client
+        if num_processes is None:
+            num_processes = self.__num_processes
         if meta_map is None:
             meta_map = self.__hf_to_meta_map
         if hf_groups is None and self.__meta_pulled:
             hf_groups = self.get_groups()
         if step_map is None:
             step_map = self.__hf_to_timestep_delta_map
-        return HFCollection(self.__hf_dir, dask_client=dask_client, meta_map=meta_map, hf_groups=hf_groups, step_map=step_map)
+        return HFCollection(self.__hf_dir, num_processes=num_processes, meta_map=meta_map, hf_groups=hf_groups, step_map=step_map)
 
     def sort_along_time(self):
         """
@@ -483,28 +475,17 @@ class HFCollection:
     def pull_metadata(self, check_valid=True):
         """Pulls metadata associated with each history file in the collection."""
         logger.info(f"Pulling metadata...")
-        ds_metas_futures = []
-        ds_metas = []
         paths = list(self.__hf_to_meta_map.keys())
 
-        if self.__client is None:
-            prog_bar = ProgressBar(total=len(paths))
-            for path in paths:
-                ds_metas.append(get_meta_from_path(path))
-                prog_bar.step()
-        else:
-            prog_bar = ProgressBar(total=np.max([1, len(paths) // 10000]))
-            for index in range(0, len(paths), 10000):
-                ds_metas_subset = self.__client.map(get_meta_from_path, paths[index:index + 10000])
-                ds_metas_futures += ds_metas_subset
-                prog_bar.step()
-            
-            ds_metas = self.__client.gather(ds_metas_futures, direct=True)
-            del ds_metas_futures
-        
-        for index, path in enumerate(paths):
-            if ds_metas[index] is not None:
-                self.__hf_to_meta_map[path] = ds_metas[index]
+        with ProcessPoolExecutor(max_workers=self.__num_processes) as executor:
+            futures = {executor.submit(get_meta_from_path, path): path for path in paths}
+            results = []
+            for future in as_completed(futures):
+                results.append(future.result())
+
+            for meta_ds in results:
+                self.__hf_to_meta_map[meta_ds.get_path()] = meta_ds
+
         self.__meta_pulled = True
         if check_valid:
             self.check_validity()

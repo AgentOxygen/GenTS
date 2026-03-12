@@ -5,7 +5,6 @@ dependencies:
   - cftime
   - netcdf4
   - numpy
-  - dask
   - pip
   - python
   - sphinx

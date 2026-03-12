@@ -4,18 +4,17 @@ from gents.utils import get_version
 from gents.tests.test_cases import *
 from gents.tests.test_workflow import is_monotonic
 from netCDF4 import Dataset
-from pytest import importorskip
+from unittest.mock import patch, wraps
+from os import listdir
+import pytest
 
+NUM_PARALLEL_TASKS=2
 
-def test_dask_simple_workflow(simple_case):
-    daskd = importorskip("dask.distributed", reason="Dask distributed not installed.")
+def test_parallel_simple_workflow(simple_case):
     input_head_dir, output_head_dir = simple_case
 
-    cluster = daskd.LocalCluster(n_workers=2, threads_per_worker=1, memory_limit="2GB")
-    client = cluster.get_client()
-
-    hf_collection = HFCollection(input_head_dir, dask_client=client)
-    ts_collection = TSCollection(hf_collection, output_head_dir, dask_client=client)
+    hf_collection = HFCollection(input_head_dir, num_processes=NUM_PARALLEL_TASKS)
+    ts_collection = TSCollection(hf_collection, output_head_dir, num_processes=NUM_PARALLEL_TASKS)
     ts_paths = ts_collection.execute()
 
     hf_collection.sort_along_time()
@@ -37,18 +36,13 @@ def test_dask_simple_workflow(simple_case):
                     
                     for key in hf_ds[var_name].ncattrs():
                         assert ts_ds[var_name].getncattr(key) == hf_ds[var_name].getncattr(key)
-    client.shutdown()
 
 
-def test_dask_scrambled_workflow(scrambled_case):
-    daskd = importorskip("dask.distributed", reason="Dask distributed not installed.")
+def test_parallel_scrambled_workflow(scrambled_case):
     input_head_dir, output_head_dir = scrambled_case
 
-    cluster = daskd.LocalCluster(n_workers=2, threads_per_worker=1, memory_limit="2GB")
-    client = cluster.get_client()
-
-    hf_collection = HFCollection(input_head_dir, dask_client=client)
-    ts_collection = TSCollection(hf_collection, output_head_dir, dask_client=client)
+    hf_collection = HFCollection(input_head_dir, num_processes=NUM_PARALLEL_TASKS)
+    ts_collection = TSCollection(hf_collection, output_head_dir, num_processes=NUM_PARALLEL_TASKS)
     ts_paths = ts_collection.execute()
 
     hf_collection.sort_along_time()
@@ -60,20 +54,12 @@ def test_dask_scrambled_workflow(scrambled_case):
             assert ts_ds["time"].size == SCRAMBLED_NUM_TEST_HIST_FILES
             assert is_monotonic(ts_ds["time"][:])
 
-    client.shutdown()
 
-
-def test_dask_structured_workflow(structured_case):
-    daskd = importorskip("dask.distributed", reason="Dask distributed not installed.")
+def test_parallel_structured_workflow(structured_case):
     input_head_dir, output_head_dir = structured_case
 
-    cluster = daskd.LocalCluster(n_workers=2, threads_per_worker=1, memory_limit="2GB")
-    client = cluster.get_client()
-
-    hf_collection = HFCollection(input_head_dir, dask_client=client)
-    ts_collection = TSCollection(hf_collection, output_head_dir, dask_client=client)
+    hf_collection = HFCollection(input_head_dir, num_processes=NUM_PARALLEL_TASKS)
+    ts_collection = TSCollection(hf_collection, output_head_dir, num_processes=NUM_PARALLEL_TASKS)
     ts_paths = ts_collection.execute()
     
     assert len(ts_paths) == SCRAMBLED_NUM_VARS*STRUCTURED_NUM_DIRS*STRUCTURED_NUM_SUBDIRS
-
-    client.shutdown()
