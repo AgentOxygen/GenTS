@@ -227,7 +227,7 @@ class TSCollection:
         self.__output_dir = output_dir
         
         if ts_orders is None:
-            self.__hf_collection.pull_metadata()
+            self.__hf_collection.check_pulled()
             self.__orders = []
             for glob_template in self.__groups:
                 output_template = glob_template.split(str(self.__hf_collection.get_input_dir()))[1]
@@ -498,7 +498,9 @@ class TSCollection:
         results = []
         with ProcessPoolExecutor(max_workers=self.__num_processes) as executor:
             futures = {executor.submit(generate_time_series_error_wrapper, **args): args for args in self.__orders}
+            prog_bar = ProgressBar(total=len(futures))
             for future in as_completed(futures):
                 results.append(future.result())
+                prog_bar.step()
         
         return results
