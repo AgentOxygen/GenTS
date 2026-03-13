@@ -535,11 +535,16 @@ class HFCollection:
 
         :param glob_patterns: List of patterns to compare paths against.
         """
+        if type(glob_patterns) is str:
+            glob_patterns = [glob_patterns]
+
         filtered_path_map = {}
         for path in self.__hf_to_meta_map:
+            matches = False
             for pattern in glob_patterns:
                 if fnmatch.fnmatch(str(path), pattern):
                     filtered_path_map[path] = self.__hf_to_meta_map[path]
+                    break
         logger.debug(f"Inclusive filter(s) applied: '{glob_patterns}'")
         return self.copy(meta_map=filtered_path_map)
 
@@ -549,11 +554,18 @@ class HFCollection:
 
         :param glob_patterns: List of patterns to compare paths against.
         """
+        if type(glob_patterns) is str:
+            glob_patterns = [glob_patterns]
+
         filtered_path_map = {}
         for path in self.__hf_to_meta_map:
+            matches = False
             for pattern in glob_patterns:
-                if not fnmatch.fnmatch(str(path), pattern):
-                    filtered_path_map[path] = self.__hf_to_meta_map[path]
+                if fnmatch.fnmatch(str(path), pattern):
+                    matches = True
+                
+            if not matches:
+                filtered_path_map[path] = self.__hf_to_meta_map[path]
         logger.debug(f"Exclusive filter(s) applied: '{glob_patterns}'")
         return self.copy(meta_map=filtered_path_map)
 
