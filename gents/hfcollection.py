@@ -481,7 +481,7 @@ class HFCollection:
         with ProcessPoolExecutor(max_workers=self.__num_processes) as executor:
             futures = {executor.submit(get_meta_from_path, path): path for path in paths}
             results = []
-            prog_bar = ProgressBar(total=len(futures))
+            prog_bar = ProgressBar(total=len(futures), label="Pulling Metadata")
             for future in as_completed(futures):
                 results.append(future.result())
                 prog_bar.step()

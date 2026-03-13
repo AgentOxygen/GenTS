@@ -498,7 +498,7 @@ class TSCollection:
         results = []
         with ProcessPoolExecutor(max_workers=self.__num_processes) as executor:
             futures = {executor.submit(generate_time_series_error_wrapper, **args): args for args in self.__orders}
-            prog_bar = ProgressBar(total=len(futures))
+            prog_bar = ProgressBar(total=len(futures), label="Generating Timeseries")
             for future in as_completed(futures):
                 results.append(future.result())
                 prog_bar.step()
