@@ -393,8 +393,6 @@ class HFCollection:
                 self.__hf_to_meta_map[path] = None
         else:
             self.__hf_to_meta_map = meta_map
-
-        self.__meta_pulled = self.is_pulled()
         
         self.__hf_groups = hf_groups
         self.__hf_dir = hf_dir
@@ -443,7 +441,7 @@ class HFCollection:
 
     def check_pulled(self):
         """Checks if metadata has been pulled. If not, then pull."""
-        if not self.__meta_pulled:
+        if not self.is_pulled():
             self.pull_metadata()
 
     def copy(self, num_processes=None, meta_map=None, hf_groups=None, step_map=None):
@@ -458,7 +456,7 @@ class HFCollection:
             num_processes = self.__num_processes
         if meta_map is None:
             meta_map = self.__hf_to_meta_map
-        if hf_groups is None and self.__meta_pulled:
+        if hf_groups is None and self.is_pulled():
             hf_groups = self.get_groups()
         if step_map is None:
             step_map = self.__hf_to_timestep_delta_map
@@ -489,7 +487,6 @@ class HFCollection:
             for meta_ds in results:
                 self.__hf_to_meta_map[meta_ds.get_path()] = meta_ds
 
-        self.__meta_pulled = True
         if check_valid:
             self.check_validity()
         else:
