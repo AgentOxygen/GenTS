@@ -19,6 +19,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import traceback
 import logging
 import copy
+import warnings
 
 logger = logging.getLogger(__name__)
 
@@ -205,13 +206,16 @@ def get_timestamp_format(dt):
 
 class TSCollection:
     """Time Series Collection that faciliates the creation of time series from a HFCollection."""
-    def __init__(self, hf_collection, output_dir, ts_orders=None, num_processes=None):
+    def __init__(self, hf_collection, output_dir, ts_orders=None, num_processes=None, dask_client=None):
         """
         :param hf_collection: History file collection to derive time series from
         :param output_dir: Directory to output time series files to
         :param ts_orders: List of Dask delayed functions of generate_time_series
         :param num_processes: Dask client to use when executing time series batches (Default: global client).
         """
+        if dask_client is not None:
+            warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism.", DeprecationWarning, stacklevel=2)
+
         self.__num_processes = 1
         if num_processes is not None:
             self.__num_processes = num_processes

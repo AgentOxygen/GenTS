@@ -6,6 +6,7 @@ from os import listdir, remove, makedirs
 from netCDF4 import Dataset
 from shutil import rmtree
 from cftime import num2date
+import warnings
 
 
 def clear_output_dir(output_dir):
@@ -309,3 +310,10 @@ def test_chunking(large_file_for_chunking_case):
         assert check_timeseries_conform(path)
         with Dataset(path, 'r') as ts_ds:
             assert list(ts_ds["VAR0"].chunking()) != list(ts_ds["VAR0"].shape)
+
+def test_dask_deprecation_warning(simple_case):
+    input_head_dir, output_head_dir = simple_case
+    hf_collection = HFCollection(input_head_dir)
+
+    with pytest.warns(DeprecationWarning):
+        ts_collection = TSCollection(hf_collection, output_head_dir, dask_client=True)

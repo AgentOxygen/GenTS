@@ -370,7 +370,7 @@ def merge_fragmented_groups(hf_groups, hf_meta_map):
 
 class HFCollection:
     """History File Collection, holds paths to all history files and serves as an interface for interpreting the metadata."""
-    def __init__(self, hf_dir, num_processes=None, meta_map=None, hf_groups=None, step_map=None, hf_glob_pattern="*.nc*"):
+    def __init__(self, hf_dir, num_processes=None, meta_map=None, hf_groups=None, step_map=None, hf_glob_pattern="*.nc*", dask_client=None):
         """
         :param hf_dir: Head directory to history files
         :param num_processes: Dask client object. If not given, the global client is used instead.
@@ -378,6 +378,9 @@ class HFCollection:
         :param hf_groups: History file groups if deriving from existing HFCollection (overrides recursive search with hf_dir).
         :param hf_glob_pattern: Glob pattern to match files against when searching recursively through the head directory.
         """
+        if dask_client is not None:
+            warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism.", DeprecationWarning, stacklevel=2)
+
         self.__raw_paths = find_files(hf_dir, hf_glob_pattern)
 
         self.__num_processes = 1

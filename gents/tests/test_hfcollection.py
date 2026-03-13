@@ -250,3 +250,10 @@ def test_include_years(long_case):
     hf_collection = HFCollection(input_head_dir)
     assert len(hf_collection.include_years(CASE_START_YEAR, CASE_START_YEAR)) == 12
     assert len(hf_collection.include_years(CASE_START_YEAR, CASE_START_YEAR+1)) == 24
+
+
+def test_dask_deprecation_warning(simple_case):
+    input_head_dir, output_head_dir = simple_case
+
+    with pytest.warns(DeprecationWarning):
+        hf_collection = HFCollection(input_head_dir, dask_client=True)
