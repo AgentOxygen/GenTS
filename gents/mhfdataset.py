@@ -27,12 +27,14 @@ class MHFDataset:
         self.__time_mapping = {}
         self.__data_coords = None
 
-        with Dataset(self.__hf_files[0], 'r') as ds:
-            self.__time_name, self.time_bnds_name = get_time_variables_names(ds)
+        # with Dataset(self.__hf_files[0], 'r') as ds:
+        #     self.__time_name, self.time_bnds_name = get_time_variables_names(ds)
 
     def open(self):
         if self.__hf_datasets is None:
             self.__hf_datasets = [Dataset(path, 'r') for path in self.__hf_files]
+            self.__time_name, self.time_bnds_name = get_time_variables_names(self.__hf_datasets[0])
+
             for hf_index in range(len(self.__hf_datasets)):
                 time_vals = np.squeeze(self.__hf_datasets[hf_index][self.__time_name][:])
                 if len(time_vals.shape) == 0:
