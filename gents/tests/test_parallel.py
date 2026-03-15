@@ -6,6 +6,7 @@ from gents.tests.test_workflow import is_monotonic
 from netCDF4 import Dataset
 from unittest.mock import patch, wraps
 from os import listdir
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import pytest
 
 NUM_PARALLEL_TASKS=2
@@ -63,3 +64,30 @@ def test_parallel_structured_workflow(structured_case):
     ts_paths = ts_collection.execute()
     
     assert len(ts_paths) == SCRAMBLED_NUM_VARS*STRUCTURED_NUM_DIRS*STRUCTURED_NUM_SUBDIRS
+
+
+def test_dataset_opens(simple_case):
+    input_head_dir, output_head_dir = simple_case
+
+    hf_paths = [f"{input_head_dir}/{filename}" for filename in listdir(input_head_dir) if ".nc" in filename]
+    with patch("gents.hfcollection.ProcessPoolExecutor", ThreadPoolExecutor):
+        with patch("gents.meta.netCDF4.Dataset", wraps=Dataset) as mock_ds:
+            assert mock_ds.call_count == 0
+            hf_collection = HFCollection(input_head_dir, num_processes=1)
+            hf_collection.pull_metadata()
+            assert mock_ds.call_count == SIMPLE_NUM_TEST_HIST_FILES
+    
+    hf_collection = HFCollection(input_head_dir, num_processes=1)
+    with patch("gents.timeseries.ProcessPoolExecutor", ThreadPoolExecutor):
+        with patch("gents.mhfdataset.Dataset", wraps=Dataset) as mock_ds:
+            assert mock_ds.call_count == 0
+            ts_collection = TSCollection(hf_collection, output_head_dir, num_processes=1)
+            ts_collection.execute(optimize=True) 
+            assert mock_ds.call_count == SIMPLE_NUM_TEST_HIST_FILES
+
+    with patch("gents.timeseries.ProcessPoolExecutor", ThreadPoolExecutor):
+        with patch("gents.mhfdataset.Dataset", wraps=Dataset) as mock_ds:
+            assert mock_ds.call_count == 0
+            ts_collection = TSCollection(hf_collection, output_head_dir, num_processes=1)
+            ts_collection.execute(optimize=False) 
+            assert mock_ds.call_count == SIMPLE_NUM_TEST_HIST_FILES*SIMPLE_NUM_VARS
