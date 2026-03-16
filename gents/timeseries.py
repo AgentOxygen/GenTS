@@ -101,9 +101,11 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
                     ts_ds.createDimension(dim, var_shape[index])
 
             var_dtype = agg_hf_ds.get_var_dtype(primary_var)
-            chunksizes = None
             if np.prod(var_shape)*var_dtype.itemsize < 4*(1024**2):
                 chunksizes = var_shape
+            else:
+                time_chunk_size = max(1, 4*(1024**2) // (np.prod(var_shape[1:]) * var_dtype.itemsize))
+                chunksizes = [time_chunk_size] + var_shape[1:]
 
             var_data = ts_ds.createVariable(primary_var,
                                             agg_hf_ds.get_var_dtype(primary_var),
@@ -117,13 +119,11 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
             
             ts_ds[primary_var].setncatts(agg_hf_ds.get_var_attrs(primary_var))
 
-            time_chunk_size = 1
             if len(var_shape) > 0 and "time" in var_dims:
-                for i in range(0, var_shape[0], time_chunk_size):
-                    if i + time_chunk_size > var_shape[0]:
-                        time_chunk_size = var_shape[0] - i
-                    var_data[i:i + time_chunk_size] = agg_hf_ds.get_var_vals(
-                        primary_var, time_index_start=i, time_index_end=i+time_chunk_size
+                for i in range(0, var_shape[0], chunksizes[0]):
+                    end = min(i + chunksizes[0], var_shape[0])
+                    var_data[i:end] = agg_hf_ds.get_var_vals(
+                        primary_var, time_index_start=i, time_index_end=end
                     )
             else:
                 var_data[:] = agg_hf_ds.get_var_vals(primary_var)
