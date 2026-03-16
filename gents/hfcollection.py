@@ -370,7 +370,7 @@ def merge_fragmented_groups(hf_groups, hf_meta_map):
 
 class HFCollection:
     """History File Collection, holds paths to all history files and serves as an interface for interpreting the metadata."""
-    def __init__(self, hf_dir, num_processes=None, meta_map=None, hf_groups=None, step_map=None, hf_glob_pattern="*.nc*"):
+    def __init__(self, hf_dir, num_processes=None, meta_map=None, hf_groups=None, step_map=None, hf_glob_pattern="*.nc*", dask_client=None):
         """
         :param hf_dir: Head directory to history files
         :param num_processes: Dask client object. If not given, the global client is used instead.
@@ -378,6 +378,9 @@ class HFCollection:
         :param hf_groups: History file groups if deriving from existing HFCollection (overrides recursive search with hf_dir).
         :param hf_glob_pattern: Glob pattern to match files against when searching recursively through the head directory.
         """
+        if dask_client is not None:
+            warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism.", DeprecationWarning, stacklevel=2)
+
         self.__raw_paths = find_files(hf_dir, hf_glob_pattern)
 
         self.__num_processes = 1
@@ -390,8 +393,6 @@ class HFCollection:
                 self.__hf_to_meta_map[path] = None
         else:
             self.__hf_to_meta_map = meta_map
-
-        self.__meta_pulled = self.is_pulled()
         
         self.__hf_groups = hf_groups
         self.__hf_dir = hf_dir
@@ -440,7 +441,7 @@ class HFCollection:
 
     def check_pulled(self):
         """Checks if metadata has been pulled. If not, then pull."""
-        if not self.__meta_pulled:
+        if not self.is_pulled():
             self.pull_metadata()
 
     def copy(self, num_processes=None, meta_map=None, hf_groups=None, step_map=None):
@@ -455,7 +456,7 @@ class HFCollection:
             num_processes = self.__num_processes
         if meta_map is None:
             meta_map = self.__hf_to_meta_map
-        if hf_groups is None and self.__meta_pulled:
+        if hf_groups is None and self.is_pulled():
             hf_groups = self.get_groups()
         if step_map is None:
             step_map = self.__hf_to_timestep_delta_map
@@ -480,13 +481,14 @@ class HFCollection:
         with ProcessPoolExecutor(max_workers=self.__num_processes) as executor:
             futures = {executor.submit(get_meta_from_path, path): path for path in paths}
             results = []
+            prog_bar = ProgressBar(total=len(futures), label="Pulling Metadata")
             for future in as_completed(futures):
                 results.append(future.result())
+                prog_bar.step()
 
             for meta_ds in results:
                 self.__hf_to_meta_map[meta_ds.get_path()] = meta_ds
 
-        self.__meta_pulled = True
         if check_valid:
             self.check_validity()
         else:
@@ -533,11 +535,16 @@ class HFCollection:
 
         :param glob_patterns: List of patterns to compare paths against.
         """
+        if type(glob_patterns) is str:
+            glob_patterns = [glob_patterns]
+
         filtered_path_map = {}
         for path in self.__hf_to_meta_map:
+            matches = False
             for pattern in glob_patterns:
                 if fnmatch.fnmatch(str(path), pattern):
                     filtered_path_map[path] = self.__hf_to_meta_map[path]
+                    break
         logger.debug(f"Inclusive filter(s) applied: '{glob_patterns}'")
         return self.copy(meta_map=filtered_path_map)
 
@@ -547,11 +554,18 @@ class HFCollection:
 
         :param glob_patterns: List of patterns to compare paths against.
         """
+        if type(glob_patterns) is str:
+            glob_patterns = [glob_patterns]
+
         filtered_path_map = {}
         for path in self.__hf_to_meta_map:
+            matches = False
             for pattern in glob_patterns:
-                if not fnmatch.fnmatch(str(path), pattern):
-                    filtered_path_map[path] = self.__hf_to_meta_map[path]
+                if fnmatch.fnmatch(str(path), pattern):
+                    matches = True
+                
+            if not matches:
+                filtered_path_map[path] = self.__hf_to_meta_map[path]
         logger.debug(f"Exclusive filter(s) applied: '{glob_patterns}'")
         return self.copy(meta_map=filtered_path_map)
 

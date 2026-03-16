@@ -19,6 +19,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import traceback
 import logging
 import copy
+import warnings
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,85 @@ def generate_time_series_error_wrapper(**args):
         raise type(e)(f"{e}") from e
 
 
-def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars, ts_string, complevel=0, compression=None, overwrite=False, reference_structure=None):
+def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_data, overwrite=False, complevel=0, compression=None):
+    global_attrs = agg_hf_ds.get_global_attrs()
+
+    if overwrite and isfile(ts_out_path):
+        remove(ts_out_path)
+    elif not overwrite and isfile(ts_out_path):
+        if check_timeseries_integrity(ts_out_path):
+            return ts_out_path
+        else:
+            remove(ts_out_path)
+
+    with netCDF4.Dataset(ts_out_path, mode="w") as ts_ds:
+        if primary_var != "auxiliary":
+            var_shape = agg_hf_ds.get_var_data_shape(primary_var)
+            var_dims = agg_hf_ds.get_var_dimensions(primary_var)
+            for index, dim in enumerate(var_dims):
+                if dim == "time":
+                    ts_ds.createDimension(dim, None)
+                else:
+                    ts_ds.createDimension(dim, var_shape[index])
+
+            var_dtype = agg_hf_ds.get_var_dtype(primary_var)
+            if np.prod(var_shape)*var_dtype.itemsize < 4*(1024**2):
+                chunksizes = var_shape
+            else:
+                time_chunk_size = max(1, 4*(1024**2) // (np.prod(var_shape[1:]) * var_dtype.itemsize))
+                chunksizes = [time_chunk_size] + var_shape[1:]
+
+            var_data = ts_ds.createVariable(primary_var,
+                                            agg_hf_ds.get_var_dtype(primary_var),
+                                            var_dims,
+                                            complevel=complevel,
+                                            compression=compression,
+                                            chunksizes=chunksizes)
+            var_data.set_auto_mask(False)
+            var_data.set_auto_scale(False)
+            var_data.set_always_mask(False)
+            
+            ts_ds[primary_var].setncatts(agg_hf_ds.get_var_attrs(primary_var))
+
+            if len(var_shape) > 0 and "time" in var_dims:
+                for i in range(0, var_shape[0], chunksizes[0]):
+                    end = min(i + chunksizes[0], var_shape[0])
+                    var_data[i:end] = agg_hf_ds.get_var_vals(
+                        primary_var, time_index_start=i, time_index_end=end
+                    )
+            else:
+                var_data[:] = agg_hf_ds.get_var_vals(primary_var)
+
+        for secondary_var in secondary_vars_data:
+            var_shape = agg_hf_ds.get_var_data_shape(secondary_var)
+            var_dims = agg_hf_ds.get_var_dimensions(secondary_var)
+
+            for index, dim in enumerate(var_dims):
+                if dim not in ts_ds.dimensions:
+                    if dim == "time":
+                        ts_ds.createDimension(dim, None)
+                    else:
+                        ts_ds.createDimension(dim, var_shape[index])
+            
+            svar_data = ts_ds.createVariable(secondary_var,
+                                            agg_hf_ds.get_var_dtype(secondary_var),
+                                            var_dims,
+                                            complevel=complevel,
+                                            compression=compression,
+                                            chunksizes=var_shape)
+            
+            svar_data.set_auto_mask(False)
+            svar_data.set_auto_scale(False)
+            svar_data.set_always_mask(False)
+
+            ts_ds[secondary_var].setncatts(agg_hf_ds.get_var_attrs(secondary_var))
+            svar_data[:] = secondary_vars_data[secondary_var]
+        
+        ts_ds.setncatts(global_attrs | {"gents_version": str(get_version())})
+    return ts_out_path
+
+
+def generate_time_series(hf_paths, ts_path_template, secondary_vars, ts_args):
     """
     Creates timeseries dataset from specified history file paths.
 
@@ -91,90 +170,28 @@ def generate_time_series(hf_paths, ts_path_template, primary_var, secondary_vars
     :param target_variable: Primary variable to extract from history files.
     :return: List of paths to time series generated.
     """
-
-    ts_out_path = None
+    ts_paths = []
     with MHFDataset(hf_paths) as agg_hf_ds:
-        global_attrs = agg_hf_ds.get_global_attrs()
         secondary_vars_data = {}
         
         for variable in secondary_vars:
             secondary_vars_data[variable] = agg_hf_ds.get_var_vals(variable)
         
-        ts_out_path = f"{ts_path_template}.{primary_var}.{ts_string}.nc"
+        for variable in ts_args:
+            args = copy.deepcopy(ts_args[variable])
+            ts_string = args["ts_string"]
+            ts_out_path = f"{ts_path_template}.{variable}.{ts_string}.nc"
+            del args["ts_string"]
 
-        if overwrite and isfile(ts_out_path):
-            remove(ts_out_path)
-        elif not overwrite and isfile(ts_out_path):
-            if check_timeseries_integrity(ts_out_path):
-                return ts_out_path
-            else:
-                remove(ts_out_path)
-
-        with netCDF4.Dataset(ts_out_path, mode="w") as ts_ds:
-            if primary_var != "auxiliary":
-                var_shape = agg_hf_ds.get_var_data_shape(primary_var)
-                var_dims = agg_hf_ds.get_var_dimensions(primary_var)
-                for index, dim in enumerate(var_dims):
-                    if dim == "time":
-                        ts_ds.createDimension(dim, None)
-                    else:
-                        ts_ds.createDimension(dim, var_shape[index])
-
-                var_dtype = agg_hf_ds.get_var_dtype(primary_var)
-                chunksizes = None
-                if np.prod(var_shape)*var_dtype.itemsize < 4*(1024**2):
-                    chunksizes = var_shape
-
-                var_data = ts_ds.createVariable(primary_var,
-                                                agg_hf_ds.get_var_dtype(primary_var),
-                                                var_dims,
-                                                complevel=complevel,
-                                                compression=compression,
-                                                chunksizes=chunksizes)
-                var_data.set_auto_mask(False)
-                var_data.set_auto_scale(False)
-                var_data.set_always_mask(False)
-                
-                ts_ds[primary_var].setncatts(agg_hf_ds.get_var_attrs(primary_var))
-
-                time_chunk_size = 1
-                if len(var_shape) > 0 and "time" in var_dims:
-                    for i in range(0, var_shape[0], time_chunk_size):
-                        if i + time_chunk_size > var_shape[0]:
-                            time_chunk_size = var_shape[0] - i
-                        var_data[i:i + time_chunk_size] = agg_hf_ds.get_var_vals(
-                            primary_var, time_index_start=i, time_index_end=i+time_chunk_size
-                        )
-                else:
-                    var_data[:] = agg_hf_ds.get_var_vals(primary_var)
-
-            for secondary_var in secondary_vars_data:
-                var_shape = agg_hf_ds.get_var_data_shape(secondary_var)
-                var_dims = agg_hf_ds.get_var_dimensions(secondary_var)
-
-                for index, dim in enumerate(var_dims):
-                    if dim not in ts_ds.dimensions:
-                        if dim == "time":
-                            ts_ds.createDimension(dim, None)
-                        else:
-                            ts_ds.createDimension(dim, var_shape[index])
-                
-                svar_data = ts_ds.createVariable(secondary_var,
-                                                agg_hf_ds.get_var_dtype(secondary_var),
-                                                var_dims,
-                                                complevel=complevel,
-                                                compression=compression,
-                                                chunksizes=var_shape)
-                
-                svar_data.set_auto_mask(False)
-                svar_data.set_auto_scale(False)
-                svar_data.set_always_mask(False)
-
-                ts_ds[secondary_var].setncatts(agg_hf_ds.get_var_attrs(secondary_var))
-                svar_data[:] = secondary_vars_data[secondary_var]
-            
-            ts_ds.setncatts(global_attrs | {"gents_version": str(get_version())})
-    return ts_out_path
+            ts_paths.append(write_timeseries_file(
+                agg_hf_ds=agg_hf_ds,
+                ts_out_path=ts_out_path,
+                primary_var=variable,
+                secondary_vars_data=secondary_vars_data,
+                **args
+            ))
+    
+    return ts_paths
 
 
 def get_timestamp_format(dt):
@@ -205,13 +222,16 @@ def get_timestamp_format(dt):
 
 class TSCollection:
     """Time Series Collection that faciliates the creation of time series from a HFCollection."""
-    def __init__(self, hf_collection, output_dir, ts_orders=None, num_processes=None):
+    def __init__(self, hf_collection, output_dir, ts_orders=None, num_processes=None, dask_client=None):
         """
         :param hf_collection: History file collection to derive time series from
         :param output_dir: Directory to output time series files to
         :param ts_orders: List of Dask delayed functions of generate_time_series
         :param num_processes: Dask client to use when executing time series batches (Default: global client).
         """
+        if dask_client is not None:
+            warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism.", DeprecationWarning, stacklevel=2)
+
         self.__num_processes = 1
         if num_processes is not None:
             self.__num_processes = num_processes
@@ -223,7 +243,7 @@ class TSCollection:
         self.__output_dir = output_dir
         
         if ts_orders is None:
-            self.__hf_collection.pull_metadata()
+            self.__hf_collection.check_pulled()
             self.__orders = []
             for glob_template in self.__groups:
                 output_template = glob_template.split(str(self.__hf_collection.get_input_dir()))[1]
@@ -472,29 +492,80 @@ class TSCollection:
         """
         return self.add_args(path_glob=path_glob, var_glob=var_glob, overwrite=False)
 
-    def get_dask_delayed(self):
-        """Gets list of delayed time series generation functions."""
-        if DASK_INSTALLED:
-            delayed_orders = []
-            for args in self.__orders:
-                delayed_orders.append(dask.delayed(generate_time_series_error_wrapper)(**args))
-            return delayed_orders
-        else:
-            raise ImportError("Dask not installed!")
-
     def create_directories(self, exist_ok=True):
         """Creates directory structure to output time series files to."""
         logger.info("Creating directory structure for time series output.")
         for order_dict in self.__orders:
             makedirs(Path(order_dict['ts_path_template']).parent, exist_ok=exist_ok)
 
-    def execute(self):
+    def execute(self, optimize=True, optimize_batch_n=200):
         """Execute delayed time series generation functions across the Dask cluster."""
         self.create_directories()
         results = []
+
+        optimized_orders = []
+        if optimize:
+            order_index_merge_map = {}
+            for index, order in enumerate(self.__orders):
+                first_hf_path = order["hf_paths"][0]
+                if first_hf_path in order_index_merge_map:
+                    order_index_merge_map[first_hf_path].append(index)
+                else:
+                    order_index_merge_map[first_hf_path] = [index]
+            
+            batched_index_lists = []
+            for first_hf_path in order_index_merge_map:
+                indices = order_index_merge_map[first_hf_path]
+                chunked_indices = [indices[i:i+optimize_batch_n] for i in range(0, len(indices), optimize_batch_n)]
+                for index_list in chunked_indices:
+                    batched_index_lists.append(index_list)
+
+
+            for index_list in batched_index_lists:
+                init_index = index_list[0]
+                init_order = self.__orders[init_index]
+                ts_args = {}
+
+                for index in index_list:
+                    primary_var = self.__orders[index]["primary_var"]
+                    args = copy.deepcopy(self.__orders[index])
+                    del args["hf_paths"]
+                    del args["ts_path_template"]
+                    del args["secondary_vars"]
+                    del args["primary_var"]
+                    ts_args[primary_var] = args
+
+                optimized_orders.append({
+                    "hf_paths": init_order["hf_paths"],
+                    "ts_path_template": init_order["ts_path_template"],
+                    "secondary_vars": init_order["secondary_vars"],
+                    "ts_args": ts_args
+                })
+        else:
+            for index, order in enumerate(self.__orders):
+                args = copy.deepcopy(order)
+                del args["hf_paths"]
+                del args["ts_path_template"]
+                del args["secondary_vars"]
+                del args["primary_var"]
+                ts_args = {order["primary_var"]: args}
+                optimized_orders.append({
+                    "hf_paths": order["hf_paths"],
+                    "ts_path_template": order["ts_path_template"],
+                    "secondary_vars": order["secondary_vars"],
+                    "ts_args": ts_args
+                })
+
         with ProcessPoolExecutor(max_workers=self.__num_processes) as executor:
-            futures = {executor.submit(generate_time_series_error_wrapper, **args): args for args in self.__orders}
+            futures = {executor.submit(generate_time_series, **args): args for args in optimized_orders}
+            prog_bar = ProgressBar(total=len(futures), label="Generating Timeseries")
             for future in as_completed(futures):
                 results.append(future.result())
+                prog_bar.step()
         
-        return results
+        output_paths = []
+        for result in results:
+            for path in result:
+                output_paths.append(path)
+
+        return output_paths

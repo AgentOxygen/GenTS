@@ -57,7 +57,7 @@ def enable_logging(verbose=False, output_path=None):
 
 
 class ProgressBar:
-    def __init__(self, total, length=40):
+    def __init__(self, total, length=40, label=""):
         """
         Progress bar for visualizing various processes throughout the package.
 
@@ -68,6 +68,7 @@ class ProgressBar:
         self.length = length
         self.start_time = time()
         self.count = 0
+        self.label = label
 
     def step(self):
         """Update the progress bar by a given step."""
@@ -77,7 +78,7 @@ class ProgressBar:
         bar = "█" * filled_length + "-" * (self.length - filled_length)
         elapsed = time() - self.start_time
         sys.stdout.write(
-            f"\r|{bar}| {percent:6.2%}  {self.count}/{self.total}  Elapsed: {elapsed:5.1f}s"
+            f"\r |{bar}| {percent:6.2%} [{self.label}]  {self.count}/{self.total}  Elapsed: {elapsed:5.1f}s"
         )
         sys.stdout.flush()
 

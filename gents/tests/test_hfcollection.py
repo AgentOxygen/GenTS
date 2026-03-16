@@ -5,6 +5,7 @@ from gents.utils import enable_logging
 from pathlib import PosixPath
 from os.path import isfile
 import numpy as np
+import fnmatch
 
 
 def test_find_files(structured_case):
@@ -250,3 +251,62 @@ def test_include_years(long_case):
     hf_collection = HFCollection(input_head_dir)
     assert len(hf_collection.include_years(CASE_START_YEAR, CASE_START_YEAR)) == 12
     assert len(hf_collection.include_years(CASE_START_YEAR, CASE_START_YEAR+1)) == 24
+
+
+def test_include_filter(structured_case):
+    input_head_dir, output_head_dir = structured_case
+    hf_collection = HFCollection(input_head_dir)
+
+    glob1 = "*/0_dir/0_subdir/*"
+    glob2 = "*/1_dir/0_subdir/*"
+    glob1_match = False
+    glob2_match = False
+    for path in hf_collection:
+        if fnmatch.fnmatch(str(path), glob1):
+            glob1_match = True
+        if fnmatch.fnmatch(str(path), glob2):
+            glob2_match = True
+    assert glob1_match and glob2_match
+
+    glob1_match = False
+    glob2_match = False
+    for path in hf_collection.include(["*/0_dir/*"]):
+        if fnmatch.fnmatch(str(path), glob1):
+            glob1_match = True
+        if fnmatch.fnmatch(str(path), glob2):
+            glob2_match = True
+    assert glob1_match and not glob2_match
+
+    glob1_match = False
+    glob2_match = False
+    for path in hf_collection.include(["*/0_dir/*", "*/1_dir/*"]):
+        if fnmatch.fnmatch(str(path), glob1):
+            glob1_match = True
+        if fnmatch.fnmatch(str(path), glob2):
+            glob2_match = True
+    assert glob1_match and glob2_match
+
+    glob1_match = False
+    glob2_match = False
+    for path in hf_collection.exclude(["*/0_dir/*"]):
+        if fnmatch.fnmatch(str(path), glob1):
+            glob1_match = True
+        if fnmatch.fnmatch(str(path), glob2):
+            glob2_match = True
+    assert not glob1_match and glob2_match
+
+    glob1_match = False
+    glob2_match = False
+    for path in hf_collection.exclude(["*/0_dir/*", "*/1_dir/*"]):
+        if fnmatch.fnmatch(str(path), glob1):
+            glob1_match = True
+        if fnmatch.fnmatch(str(path), glob1):
+            glob2_match = True
+    assert not glob1_match and not glob2_match
+
+
+def test_dask_deprecation_warning(simple_case):
+    input_head_dir, output_head_dir = simple_case
+
+    with pytest.warns(DeprecationWarning):
+        hf_collection = HFCollection(input_head_dir, dask_client=True)

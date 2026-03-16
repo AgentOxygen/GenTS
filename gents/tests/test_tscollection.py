@@ -6,6 +6,7 @@ from os import listdir, remove, makedirs
 from netCDF4 import Dataset
 from shutil import rmtree
 from cftime import num2date
+import warnings
 
 
 def clear_output_dir(output_dir):
@@ -36,7 +37,8 @@ def test_generate_time_series(simple_case):
     hf_paths = [f"{input_head_dir}/{name}" for name in listdir(input_head_dir)]
 
     var_name = "VAR1"
-    ts_path = generate_time_series(hf_paths, f"{output_head_dir}/test_ts.", var_name, ["time", "time_bounds"], "%Y%m%d", complevel=0, compression=None, overwrite=False)
+    ts_args = {f"{var_name}": {"ts_string": "test", "complevel": 0, "compression": None, "overwrite": False}}
+    ts_path = generate_time_series(hf_paths, f"{output_head_dir}/test_ts.", ["time", "time_bounds"], ts_args)[0]
     
     assert isfile(ts_path)
     assert check_timeseries_integrity(ts_path)
@@ -51,7 +53,11 @@ def test_generate_time_series(simple_case):
         assert "time_bounds" in ts_ds.variables
 
     original_size = getsize(ts_path)
-    ts_path = generate_time_series(hf_paths, f"{output_head_dir}/test_ts.", var_name, ["time", "time_bounds"], "%Y%m%d", complevel=9, compression="zlib", overwrite=True)
+
+    ts_args[var_name]["complevel"] = 9
+    ts_args[var_name]["compression"] = "zlib"
+    ts_args[var_name]["overwrite"] = "True"
+    ts_path = generate_time_series(hf_paths, f"{output_head_dir}/test_ts.", ["time", "time_bounds"], ts_args)[0]
 
     assert getsize(ts_path) < original_size
     assert len(listdir(output_head_dir)) == 1
@@ -62,7 +68,8 @@ def test_integrity_check(simple_case):
     input_head_dir, output_head_dir = simple_case
     hf_paths = [f"{input_head_dir}/{name}" for name in listdir(input_head_dir)]
 
-    ts_path = generate_time_series(hf_paths, f"{output_head_dir}/test_ts.", "VAR1", ["time", "time_bounds"], "%Y%m%d")
+    ts_args = {"VAR1": {"ts_string": "test"}}
+    ts_path = generate_time_series(hf_paths, f"{output_head_dir}/test_ts.", ["time", "time_bounds"], ts_args)[0]
     assert check_timeseries_integrity(ts_path)
     for path in hf_paths:
         assert not check_timeseries_integrity(path)
@@ -72,7 +79,8 @@ def test_conform_check(simple_case):
     input_head_dir, output_head_dir = simple_case
     hf_paths = [f"{input_head_dir}/{name}" for name in listdir(input_head_dir)]
 
-    ts_path = generate_time_series(hf_paths, f"{output_head_dir}/test_ts.", "VAR1", ["time", "time_bounds"], "%Y%m%d")
+    ts_args = {"VAR1": {"ts_string": "test"}}
+    ts_path = generate_time_series(hf_paths, f"{output_head_dir}/test_ts.", ["time", "time_bounds"], ts_args)[0]
     assert check_timeseries_conform(ts_path)
 
 
@@ -309,3 +317,10 @@ def test_chunking(large_file_for_chunking_case):
         assert check_timeseries_conform(path)
         with Dataset(path, 'r') as ts_ds:
             assert list(ts_ds["VAR0"].chunking()) != list(ts_ds["VAR0"].shape)
+
+def test_dask_deprecation_warning(simple_case):
+    input_head_dir, output_head_dir = simple_case
+    hf_collection = HFCollection(input_head_dir)
+
+    with pytest.warns(DeprecationWarning):
+        ts_collection = TSCollection(hf_collection, output_head_dir, dask_client=True)
