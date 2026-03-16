@@ -12,7 +12,7 @@ RUN pip install pytest asv sphinx sphinx-autobuild
 
 COPY . .
 
-RUN pip install -e .[parallel]
+RUN pip install -e .
 
 RUN git config --global --add safe.directory /project/.git
 
