@@ -498,7 +498,7 @@ class TSCollection:
         for order_dict in self.__orders:
             makedirs(Path(order_dict['ts_path_template']).parent, exist_ok=exist_ok)
 
-    def execute(self, optimize=True):
+    def execute(self, optimize=True, optimize_batch_n=200):
         """Execute delayed time series generation functions across the Dask cluster."""
         self.create_directories()
         results = []
@@ -513,12 +513,20 @@ class TSCollection:
                 else:
                     order_index_merge_map[first_hf_path] = [index]
             
+            batched_index_lists = []
             for first_hf_path in order_index_merge_map:
-                init_index = order_index_merge_map[first_hf_path][0]
+                indices = order_index_merge_map[first_hf_path]
+                chunked_indices = [indices[i:i+optimize_batch_n] for i in range(0, len(indices), optimize_batch_n)]
+                for index_list in chunked_indices:
+                    batched_index_lists.append(index_list)
+
+
+            for index_list in batched_index_lists:
+                init_index = index_list[0]
                 init_order = self.__orders[init_index]
                 ts_args = {}
 
-                for index in order_index_merge_map[first_hf_path]:
+                for index in index_list:
                     primary_var = self.__orders[index]["primary_var"]
                     args = copy.deepcopy(self.__orders[index])
                     del args["hf_paths"]
