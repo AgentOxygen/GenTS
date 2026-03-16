@@ -27,19 +27,16 @@ class MHFDataset:
         self.__time_mapping = {}
         self.__data_coords = None
 
-        # with Dataset(self.__hf_files[0], 'r') as ds:
-        #     self.__time_name, self.time_bnds_name = get_time_variables_names(ds)
-
     def open(self):
         if self.__hf_datasets is None:
             self.__hf_datasets = [Dataset(path, 'r') for path in self.__hf_files]
             self.__time_name, self.time_bnds_name = get_time_variables_names(self.__hf_datasets[0])
+            self.__time_vals = [np.squeeze(hf_data[self.__time_name][:]) for hf_data in self.__hf_datasets]
 
             for hf_index in range(len(self.__hf_datasets)):
-                time_vals = np.squeeze(self.__hf_datasets[hf_index][self.__time_name][:])
+                time_vals = self.__time_vals[hf_index]
                 if len(time_vals.shape) == 0:
                     time_vals = [float(time_vals)]
-                
                 
                 for time in time_vals:
                     time = float(time)
@@ -122,10 +119,11 @@ class MHFDataset:
         var_vals = np.empty(data_shape, dtype=self.__hf_datasets[0][var_name].dtype)
         if not self.is_fragmented():
             for index, time_val in enumerate(time_vals):
-                hf_data = self.__hf_datasets[self.__time_mapping[time_val][0]]
+                hf_index = self.__time_mapping[time_val][0]
+                hf_data = self.__hf_datasets[hf_index]
                 if hf_data[self.__time_name].shape[0] > 1:
-                    sub_t_index = np.where(hf_data[self.__time_name][:] == time_val)[0]
-                    var_vals[index] = hf_data[var_name][:][sub_t_index]
+                    sub_t_index = np.where(self.__time_vals[hf_index] == time_val)[0]
+                    var_vals[index] = hf_data[var_name][sub_t_index]
                 else:
                     var_vals[index] = hf_data[var_name][:]
         else:
@@ -133,8 +131,8 @@ class MHFDataset:
                 for hf_index in self.__time_mapping[time_val]:
                     hf_data = self.__hf_datasets[hf_index]
                     if self.__time_name in hf_data[var_name].dimensions and hf_data[self.__time_name].shape[0] > 1:
-                        sub_t_index = np.where(hf_data[self.__time_name][:] == time_val)[0]
-                        hf_data_fragment = hf_data[var_name][:][sub_t_index]
+                        sub_t_index = np.where(self.__time_vals[hf_index] == time_val)[0]
+                        hf_data_fragment = hf_data[var_name][sub_t_index]
                     else:
                         hf_data_fragment = hf_data[var_name][:]
                     
