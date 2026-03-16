@@ -43,21 +43,10 @@ def parse_arguments():
         help="Maximum length of individual time series files in years. (Default 10)"
     )
     parser.add_argument(
-        "-s", "--serial",
-        action="store_true",
-        help="Disables Dask parallelism."
-    )
-    parser.add_argument(
         "-nc", "--numcores",
         type=int,
-        default=8,
-        help="Numer of cores to use if running in parallel. (Default 8)"
-    )
-    parser.add_argument(
-        "-ml", "--memorylimit",
-        type=int,
-        default=2,
-        help="Parallel per-core memory limit in GB. (Default 2)"
+        default=64,
+        help="Maximum number of cores to use if running in parallel. (Default 64)"
     )
     return parser.parse_args()
 
@@ -75,10 +64,7 @@ def main():
         print(f"  Overwrite TS Files           : {args.overwrite}")
         print(f"  Slice size                   : {args.slice}")
         print(f"  Dry run                      : {args.dryrun}")
-        print(f"  Disable Dask                 : {args.serial}")
-        if not args.serial:
-            print(f"  # Cores (Dask workers)       : {args.numcores}")
-            print(f"  Per-core Memory              : {args.memorylimit}")
+        print(f"  Number of processes (cores)  : {args.numcores}")
     
     from gents.configs.gents_cesm3 import run_config
 
