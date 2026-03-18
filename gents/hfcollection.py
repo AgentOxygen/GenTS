@@ -500,8 +500,12 @@ class HFCollection:
             for group in self.get_groups():
                 times = []
                 for path in self.get_groups()[group]:
-                    cftime = self.__hf_to_meta_map[path].get_cftimes()[0]
-                    times.append(cftime)
+                    cftimes = self.__hf_to_meta_map[path].get_cftimes()
+                    if isinstance(cftimes, (list, np.ndarray)):
+                        for ts in cftimes:
+                            times.append(ts)
+                    else:
+                        times.append(cftimes)
                 times = np.sort(times)
                 for path in self.get_groups()[group]:
                     self.__hf_to_timestep_delta_map[path] = times[-1] - times[-2]
