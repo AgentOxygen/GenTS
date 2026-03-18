@@ -25,10 +25,16 @@ logger = logging.getLogger(__name__)
 
 def check_timeseries_integrity(ts_path: str):
     """
-    Checks integrity of time series netCDF file by confirming `gents_version` attribute.
+    Checks whether a time-series file was written completely by GenTS.
 
-    :param ts_path: Path to time series file.
-    :return: True if `gents_version` attribute is found. False if not (suggesting possible corruption).
+    Opens the file and looks for the ``gents_version`` global attribute, which
+    is stamped on every successfully completed output file.
+
+    :param ts_path: Path to the time-series netCDF file to inspect.
+    :type ts_path: str
+    :returns: ``True`` if ``gents_version`` is present (file likely complete),
+        ``False`` if absent or the file cannot be opened (possible corruption).
+    :rtype: bool
     """
     try:
         with netCDF4.Dataset(ts_path, mode="r") as ts_ds:
@@ -41,6 +47,21 @@ def check_timeseries_integrity(ts_path: str):
 
 
 def check_timeseries_conform(ts_path: str):
+    """
+    Checks whether a time-series file meets the GenTS chunking conventions.
+
+    A conforming file satisfies:
+
+    - The ``time`` variable is stored contiguously (chunk sizes equal shape).
+    - Every multi-dimensional variable is either stored contiguously, or its
+      per-time-step chunk occupies at least 4 MiB.
+
+    :param ts_path: Path to the time-series netCDF file to inspect.
+    :type ts_path: str
+    :returns: ``True`` if the file conforms to the chunking conventions,
+        ``False`` otherwise.
+    :rtype: bool
+    """
     with netCDF4.Dataset(ts_path, mode="r") as ts_ds:
         if list(ts_ds["time"].chunking()) != list(ts_ds["time"].shape):
             return False
@@ -61,6 +82,17 @@ def check_timeseries_conform(ts_path: str):
 
 
 def generate_time_series_error_wrapper(**args):
+    """
+    Wraps :func:`generate_time_series` with verbose error reporting.
+
+    Catches any exception raised by :func:`generate_time_series`, dumps all
+    argument values and a full traceback to stdout, then re-raises the exception.
+    Intended as an alternative submission target for ``ProcessPoolExecutor``
+    workers when detailed failure diagnostics are needed.
+
+    :param args: Keyword arguments forwarded verbatim to :func:`generate_time_series`.
+    :raises Exception: Re-raises any exception from :func:`generate_time_series`.
+    """
     try:
         return generate_time_series(**args)
     except Exception as e:
@@ -80,6 +112,45 @@ def generate_time_series_error_wrapper(**args):
 
 
 def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_data, overwrite=False, complevel=0, compression=None):
+    """
+    Writes a single time-series netCDF file for one primary variable.
+
+    Behaviour when the output file already exists:
+
+    - ``overwrite=True``: the existing file is deleted and recreated.
+    - ``overwrite=False``: :func:`check_timeseries_integrity` is called; if the
+      file passes the integrity check it is returned immediately (skipped);
+      otherwise the corrupt file is deleted and recreated.
+
+    The primary variable is written with adaptive chunksizes: files smaller than
+    4 MiB are stored contiguously; larger files are chunked along the time axis
+    to keep each chunk near 4 MiB.  Secondary variables are written with their
+    full shape as chunk sizes.  The global attributes are stamped with a
+    ``gents_version`` entry on completion.
+
+    :param agg_hf_ds: Open :class:`~gents.mhfdataset.MHFDataset` providing
+        aggregated data for the history file group.
+    :type agg_hf_ds: gents.mhfdataset.MHFDataset
+    :param ts_out_path: Full output path for the time-series file.
+    :type ts_out_path: str
+    :param primary_var: Name of the primary variable to extract, or
+        ``'auxiliary'`` to write only secondary variables.
+    :type primary_var: str
+    :param secondary_vars_data: Pre-loaded secondary variable data as a
+        ``{var_name: numpy.ndarray}`` dictionary.
+    :type secondary_vars_data: dict
+    :param overwrite: If ``True``, overwrite any existing file. Defaults to
+        ``False``.
+    :type overwrite: bool
+    :param complevel: netCDF4 compression level (0–9). Defaults to ``0``
+        (no compression).
+    :type complevel: int
+    :param compression: netCDF4 compression algorithm (e.g. ``'zlib'``).
+        Defaults to ``None``.
+    :type compression: str or None
+    :returns: Path to the written (or skipped) output file.
+    :rtype: str
+    """
     global_attrs = agg_hf_ds.get_global_attrs()
 
     if overwrite and isfile(ts_out_path):
@@ -159,16 +230,27 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
 
 def generate_time_series(hf_paths, ts_path_template, secondary_vars, ts_args):
     """
-    Creates timeseries dataset from specified history file paths.
+    Generates time-series files for a group of history files.
 
-    :param hf_paths: List of paths to history files to generate time series from
-    :param ts_out_dir: Directory to output time series files to.
-    :param prefix: Prefix to add to beginning of the names of the generated time series files.
-    :param complevel: Compression level to apply through netCDF4 API.
-    :param compression: Compression algorithm to use through netCDF4 API.
-    :param overwrite: Whether or not to delete existing time series files with the same names as those being generated.
-    :param target_variable: Primary variable to extract from history files.
-    :return: List of paths to time series generated.
+    Opens an :class:`~gents.mhfdataset.MHFDataset` over ``hf_paths``,
+    pre-loads all secondary variable data, then calls
+    :func:`write_timeseries_file` for each primary variable described in
+    ``ts_args``.
+
+    :param hf_paths: Paths to the history files forming the group.
+    :type hf_paths: list[str or pathlib.Path]
+    :param ts_path_template: Output path prefix (without variable name or
+        timestamp suffix).
+    :type ts_path_template: str
+    :param secondary_vars: Names of secondary variables to read and embed in
+        every output file.
+    :type secondary_vars: list[str]
+    :param ts_args: Dictionary mapping each primary variable name to a dict of
+        keyword arguments for :func:`write_timeseries_file` (must include a
+        ``'ts_string'`` key for the timestamp suffix).
+    :type ts_args: dict
+    :returns: List of paths to the generated time-series files.
+    :rtype: list[str]
     """
     ts_paths = []
     with MHFDataset(hf_paths) as agg_hf_ds:
@@ -196,10 +278,20 @@ def generate_time_series(hf_paths, ts_path_template, secondary_vars, ts_args):
 
 def get_timestamp_format(dt):
     """
-    Creates timestamp string to describe time range for netCDF dataset
+    Returns a ``strftime`` format string appropriate for a given time-step duration.
 
-    :param times: Time values for netCDF dataset in integer form with units and calendar attributes.
-    :return: String containing appropriate timestamp.
+    The format is selected by the magnitude of ``dt``:
+
+    - Sub-minute  → ``'%Y%m%d%H%M%S'``
+    - Hour-level (< 24 h)  → ``'%Y%m%d%H'``
+    - Day-level (< 28 days) → ``'%Y%m%d'``
+    - Month-level (< 12 months) → ``'%Y%m'``
+    - Year-level → ``'%Y'``
+
+    :param dt: Duration of a single model time step.
+    :type dt: datetime.timedelta
+    :returns: ``strftime``-compatible format string.
+    :rtype: str
     """
     minutes = dt.total_seconds() / 60
     hours = minutes / 60
@@ -221,13 +313,45 @@ def get_timestamp_format(dt):
 
 
 class TSCollection:
-    """Time Series Collection that faciliates the creation of time series from a HFCollection."""
+    """
+    Manages the set of time-series generation orders derived from an ``HFCollection``.
+
+    Each *order* is a dictionary describing one output file: source history file
+    paths, output path template, primary variable name, secondary variable names,
+    and generation arguments (compression, overwrite flag, etc.).  All modifier
+    methods return new ``TSCollection`` instances, preserving an immutable-style
+    fluent API.
+    """
+
     def __init__(self, hf_collection, output_dir, ts_orders=None, num_processes=None, dask_client=None):
         """
-        :param hf_collection: History file collection to derive time series from
-        :param output_dir: Directory to output time series files to
-        :param ts_orders: List of Dask delayed functions of generate_time_series
-        :param num_processes: Dask client to use when executing time series batches (Default: global client).
+        Builds the time-series order list from a processed ``HFCollection``.
+
+        If ``ts_orders`` is not supplied, constructs one order per primary variable
+        per history file group by:
+
+        1. Sorting the collection along time via
+           :meth:`~gents.hfcollection.HFCollection.sort_along_time`.
+        2. Iterating over groups, reading primary/secondary variable lists from
+           the first file's metadata.
+        3. Selecting a timestamp format via :func:`get_timestamp_format` based on
+           the group's time-step delta.
+        4. Forming a ``start_time-end_time`` string from all CFTime values in the
+           group.
+        5. Appending one order dict per primary variable (or an ``'auxiliary'``
+           order when there are no primary variables).
+
+        :param hf_collection: History file collection to derive time-series from.
+        :type hf_collection: gents.hfcollection.HFCollection
+        :param output_dir: Root directory to write time-series output files to.
+        :type output_dir: str
+        :param ts_orders: Pre-built list of order dictionaries. When supplied,
+            order construction is skipped. Defaults to ``None``.
+        :type ts_orders: list or None
+        :param num_processes: Maximum number of worker processes for parallel
+            execution. Defaults to ``None`` (single process).
+        :type num_processes: int or None
+        :param dask_client: Deprecated. Pass ``num_processes`` instead.
         """
         if dask_client is not None:
             warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism.", DeprecationWarning, stacklevel=2)
@@ -307,17 +431,34 @@ class TSCollection:
         return self.__orders.values()
     
     def get_hf_collection(self):
+        """
+        Returns the underlying ``HFCollection``.
+
+        :returns: The history file collection this ``TSCollection`` was derived from.
+        :rtype: gents.hfcollection.HFCollection
+        """
         return self.__hf_collection
     
     def copy(self, hf_collection=None, output_dir=None, ts_orders=None, num_processes=None):
         """
-        Copies data of this TSCollection into a new one.
-    
-        :param hf_collection: HFCollection to assign to copy (defaults to existing).
-        :param output_dir: Head output directory to assign to copy (defaults to existing).
-        :param ts_orders: Time series orders to assign to copy (defaults to existing).
-        :param num_processes: Dask client to assign to copy (defaults to existing).
-        :return: TSCollection that is a copy.
+        Creates a new ``TSCollection`` derived from this one with optional overrides.
+
+        Used as the return mechanism for all modifier methods to preserve immutability.
+
+        :param hf_collection: ``HFCollection`` to assign to the copy. Defaults to
+            the current collection.
+        :type hf_collection: gents.hfcollection.HFCollection or None
+        :param output_dir: Output directory to assign to the copy. Defaults to the
+            current directory.
+        :type output_dir: str or None
+        :param ts_orders: Order list to assign to the copy. Defaults to the current
+            orders.
+        :type ts_orders: list or None
+        :param num_processes: Worker process count for the copy. Defaults to the
+            current value.
+        :type num_processes: int or None
+        :returns: New ``TSCollection`` instance.
+        :rtype: TSCollection
         """
         if hf_collection is None:
             hf_collection = self.__hf_collection
@@ -332,11 +473,18 @@ class TSCollection:
 
     def include(self, path_glob, var_glob="*"):
         """
-        Applies inclusive filter to time series orders.
+        Returns a new collection containing only orders that match both filters.
 
-        :param path_glob: Glob pattern to apply to source history files.
-        :param var_glob: Glob pattern to apply to primary variable names. Defaults to "*"
-        :return: A new TSCollection that only includes time series orders that match the filter.
+        An order is retained if at least one of its source paths matches
+        ``path_glob`` *and* its primary variable matches ``var_glob``.
+
+        :param path_glob: ``fnmatch`` glob applied to source history file paths.
+        :type path_glob: str
+        :param var_glob: ``fnmatch`` glob applied to primary variable names.
+            Defaults to ``'*'``.
+        :type var_glob: str
+        :returns: New ``TSCollection`` restricted to matching orders.
+        :rtype: TSCollection
         """
         filtered_orders = []
         for order_dict in copy.deepcopy(self.__orders):
@@ -353,11 +501,18 @@ class TSCollection:
 
     def exclude(self, path_glob, var_glob=""):
         """
-        Applies exclusive filter to time series orders.
+        Returns a new collection with orders that match both filters removed.
 
-        :param path_glob: Glob pattern to apply to source history files.
-        :param var_glob: Glob pattern to apply to primary variable names. Defaults to ""
-        :return: A new TSCollection that excludes time series orders that match the filter.
+        An order is excluded if any of its source paths matches ``path_glob`` *and*
+        its primary variable matches ``var_glob``.
+
+        :param path_glob: ``fnmatch`` glob applied to source history file paths.
+        :type path_glob: str
+        :param var_glob: ``fnmatch`` glob applied to primary variable names.
+            Defaults to ``''``.
+        :type var_glob: str
+        :returns: New ``TSCollection`` with matching orders removed.
+        :rtype: TSCollection
         """
         filtered_orders = []
         for order_dict in copy.deepcopy(self.__orders):
@@ -374,16 +529,26 @@ class TSCollection:
 
     def add_args(self, path_glob="*", var_glob="*", level=None, alg=None, overwrite=None):
         """
-        Applies arguments to pass to generate_time_series when processing time series orders.
-        Filters specify which time series orders should be updated. If value is None, then the
-        argument is not changed.
+        Updates generation arguments on orders that match both filters.
 
-        :param path_glob: Glob pattern to match to source history files. Defaults to "*".
-        :param var_glob: Glob pattern to match to primary variable names. Defaults to "*".
-        :param level: Level of compresison to pass to the netCDF4 backend. Defaults to None.
-        :param alg: Compression algorithm to pass to the netCDF4 backend. Defaults to None.
-        :param overwrite: Whether or not to overwrite a time series output file if it already exists. Defaults to None.
-        :return: A new TSCollection that includes time series orders with arguments applied.
+        Only arguments that are not ``None`` are applied; others are left unchanged.
+
+        :param path_glob: ``fnmatch`` glob applied to source history file paths.
+            Defaults to ``'*'``.
+        :type path_glob: str
+        :param var_glob: ``fnmatch`` glob applied to primary variable names.
+            Defaults to ``'*'``.
+        :type var_glob: str
+        :param level: netCDF4 compression level (0–9). Defaults to ``None``
+            (unchanged).
+        :type level: int or None
+        :param alg: netCDF4 compression algorithm (e.g. ``'zlib'``). Defaults to
+            ``None`` (unchanged).
+        :type alg: str or None
+        :param overwrite: Overwrite flag to apply. Defaults to ``None`` (unchanged).
+        :type overwrite: bool or None
+        :returns: New ``TSCollection`` with updated order arguments.
+        :rtype: TSCollection
         """
         new_orders = []
         for order_dict in copy.deepcopy(self.__orders):
@@ -407,14 +572,25 @@ class TSCollection:
 
     def apply_path_swap(self, string_match, string_swap, path_glob="*", var_glob="*"):
         """
-        Iterates over time series output path templates, finds the ones that mach the filter, and
-        replaces the matching string with a swap string if it exists.
-    
-        :param path_glob: Glob pattern to apply to source history files. Defaults to "*"
-        :param var_glob: Glob pattern to apply to primary variable names. Defaults to "*".
-        :param string_match: String to match to in output template path.
-        :param string_swap: String to replace match with, if found.
-        :return: A new TSCollection with updated output path templates
+        Replaces a substring in the output path template of matching orders.
+
+        Iterates over orders whose source paths match ``path_glob`` and replaces
+        ``string_match`` with ``string_swap`` in each order's ``ts_path_template``.
+        Used to redirect outputs to a different directory structure (e.g.
+        ``'/hist/'`` → ``'/proc/tseries/'``).
+
+        :param string_match: Substring to find in the output path template.
+        :type string_match: str
+        :param string_swap: Replacement string.
+        :type string_swap: str
+        :param path_glob: ``fnmatch`` glob applied to source history file paths.
+            Defaults to ``'*'``.
+        :type path_glob: str
+        :param var_glob: ``fnmatch`` glob applied to primary variable names.
+            Defaults to ``'*'``.
+        :type var_glob: str
+        :returns: New ``TSCollection`` with updated path templates.
+        :rtype: TSCollection
         """
         new_orders = []
         for order_dict in copy.deepcopy(self.__orders):
@@ -428,33 +604,54 @@ class TSCollection:
         
     def apply_compression(self, level, alg, path_glob, var_glob="*"):
         """
-        Applies compression arguments to time series orders.
+        Applies compression settings to matching time-series orders.
 
-        :param level: Level of compresison to pass to the netCDF4 backend.
-        :param alg: Compression algorithm to pass to the netCDF4 backend.
-        :param path_glob: Glob pattern to match to source history files.
-        :param var_glob: Glob pattern to match to primary variable names. Defaults to "*".
-        :return: A new TSCollection that includes time series orders with arguments applied.
+        Convenience wrapper around :meth:`add_args`.
+
+        :param level: netCDF4 compression level (0–9).
+        :type level: int
+        :param alg: netCDF4 compression algorithm (e.g. ``'zlib'``).
+        :type alg: str
+        :param path_glob: ``fnmatch`` glob applied to source history file paths.
+        :type path_glob: str
+        :param var_glob: ``fnmatch`` glob applied to primary variable names.
+            Defaults to ``'*'``.
+        :type var_glob: str
+        :returns: New ``TSCollection`` with compression arguments applied.
+        :rtype: TSCollection
         """
         return self.add_args(path_glob=path_glob, var_glob=var_glob, level=level, alg=alg)
 
     def apply_overwrite(self, path_glob, var_glob="*"):
         """
-        Applies overwrite argument to time series orders.
+        Sets the overwrite flag on matching time-series orders.
 
-        :param path_glob: Glob pattern to match to source history files.
-        :param var_glob: Glob pattern to match to primary variable names. Defaults to "*".
-        :return: A new TSCollection that includes time series orders with arguments applied.
+        Convenience wrapper around :meth:`add_args` with ``overwrite=True``.
+
+        :param path_glob: ``fnmatch`` glob applied to source history file paths.
+        :type path_glob: str
+        :param var_glob: ``fnmatch`` glob applied to primary variable names.
+            Defaults to ``'*'``.
+        :type var_glob: str
+        :returns: New ``TSCollection`` with overwrite enabled on matching orders.
+        :rtype: TSCollection
         """
         return self.add_args(path_glob=path_glob, var_glob=var_glob, overwrite=True)
 
     def append_timestep_dirs(self, var_glob="*"):
         """
-        Appends directories named according to time-step to the end of the timeseries output path templates.
-        This sorts the output into bins by the time-step frequency (i.e. hour_1, day_1, month_1, year_1)
+        Inserts a time-step frequency subdirectory into each matching order's output path.
 
-        :param var_glob: Glob pattern to match to primary variable names. Defaults to "*".
-        :return: A new TSCollection with time-step directories added.
+        Determines the frequency label from the group's timestep delta:
+        ``'hour_N'``, ``'day_N'``, ``'month_N'``, or ``'year_N'``.  The label is
+        inserted as a new directory level immediately before the filename in the
+        output path template, organising outputs by observation frequency.
+
+        :param var_glob: ``fnmatch`` glob applied to primary variable names.
+            Defaults to ``'*'``.
+        :type var_glob: str
+        :returns: New ``TSCollection`` with updated output path templates.
+        :rtype: TSCollection
         """
         new_orders = []
         for order_dict in copy.deepcopy(self.__orders):
@@ -484,22 +681,54 @@ class TSCollection:
 
     def remove_overwrite(self, path_glob, var_glob="*"):
         """
-        Removes overwrite argument to time series orders.
+        Clears the overwrite flag on matching time-series orders.
 
-        :param path_glob: Glob pattern to match to source history files.
-        :param var_glob: Glob pattern to match to primary variable names. Defaults to "*".
-        :return: A new TSCollection that includes time series orders with arguments applied.
+        Convenience wrapper around :meth:`add_args` with ``overwrite=False``.
+
+        :param path_glob: ``fnmatch`` glob applied to source history file paths.
+        :type path_glob: str
+        :param var_glob: ``fnmatch`` glob applied to primary variable names.
+            Defaults to ``'*'``.
+        :type var_glob: str
+        :returns: New ``TSCollection`` with overwrite disabled on matching orders.
+        :rtype: TSCollection
         """
         return self.add_args(path_glob=path_glob, var_glob=var_glob, overwrite=False)
 
     def create_directories(self, exist_ok=True):
-        """Creates directory structure to output time series files to."""
+        """
+        Creates the output directory tree for all time-series orders.
+
+        :param exist_ok: If ``True`` (default), no error is raised when a
+            directory already exists.
+        :type exist_ok: bool
+        """
         logger.info("Creating directory structure for time series output.")
         for order_dict in self.__orders:
             makedirs(Path(order_dict['ts_path_template']).parent, exist_ok=exist_ok)
 
     def execute(self, optimize=True, optimize_batch_n=200):
-        """Execute delayed time series generation functions across the Dask cluster."""
+        """
+        Executes all time-series generation orders in parallel.
+
+        When ``optimize=True`` (default), orders that share the same first source
+        file are batched together (up to ``optimize_batch_n`` per batch) so that
+        :func:`generate_time_series` opens each group of history files only once
+        and writes multiple primary-variable output files per worker invocation,
+        significantly reducing file I/O overhead.
+
+        When ``optimize=False``, each order is submitted as a separate worker task
+        (one file open per variable).
+
+        :param optimize: If ``True`` (default), batch orders sharing the same
+            source files into single worker calls.
+        :type optimize: bool
+        :param optimize_batch_n: Maximum number of variables per optimised batch.
+            Defaults to ``200``.
+        :type optimize_batch_n: int
+        :returns: List of paths to all generated time-series output files.
+        :rtype: list[str]
+        """
         self.create_directories()
         results = []
 

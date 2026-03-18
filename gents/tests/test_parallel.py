@@ -12,6 +12,7 @@ import pytest
 NUM_PARALLEL_TASKS=2
 
 def test_parallel_simple_workflow(simple_case):
+    """Parallel execution produces correct TS file count, time size, variable values, and attribute propagation."""
     input_head_dir, output_head_dir = simple_case
 
     hf_collection = HFCollection(input_head_dir, num_processes=NUM_PARALLEL_TASKS)
@@ -40,6 +41,7 @@ def test_parallel_simple_workflow(simple_case):
 
 
 def test_parallel_scrambled_workflow(scrambled_case):
+    """Parallel execution on scrambled input produces TS files with monotonically increasing time."""
     input_head_dir, output_head_dir = scrambled_case
 
     hf_collection = HFCollection(input_head_dir, num_processes=NUM_PARALLEL_TASKS)
@@ -57,6 +59,7 @@ def test_parallel_scrambled_workflow(scrambled_case):
 
 
 def test_parallel_structured_workflow(structured_case):
+    """Parallel execution on a multi-directory structure produces the correct total TS file count."""
     input_head_dir, output_head_dir = structured_case
 
     hf_collection = HFCollection(input_head_dir, num_processes=NUM_PARALLEL_TASKS)
@@ -67,6 +70,7 @@ def test_parallel_structured_workflow(structured_case):
 
 
 def test_dataset_opens(simple_case):
+    """optimize=True opens each source group once per batch; optimize=False opens once per primary variable."""
     input_head_dir, output_head_dir = simple_case
 
     hf_paths = [f"{input_head_dir}/{filename}" for filename in listdir(input_head_dir) if ".nc" in filename]

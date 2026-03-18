@@ -8,6 +8,7 @@ from unittest.mock import patch, wraps
 
 
 def test_simple_case(simple_case):
+    """Validates time values, units, calendar, bounds ordering, and total date span of the simple case fixture."""
     input_head_dir, output_head_dir = simple_case
     assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
     times = []
@@ -41,6 +42,7 @@ def test_simple_case(simple_case):
 
 
 def test_baseline_dataset_opens(simple_case):
+    """Confirms the Dataset mock correctly tracks call counts, verifying the test patching infrastructure."""
     input_head_dir, output_head_dir = simple_case
 
     hf_paths = [f"{input_head_dir}/{filename}" for filename in listdir(input_head_dir) if ".nc" in filename]
@@ -58,6 +60,7 @@ def test_baseline_dataset_opens(simple_case):
 
 
 def test_unstructured_grid_case(unstructured_grid_case):
+    """Confirms auxiliary variable size matches ncol and that primary/auxiliary variable dimensions are correct."""
     input_head_dir, output_head_dir = unstructured_grid_case
     assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
 
@@ -68,6 +71,7 @@ def test_unstructured_grid_case(unstructured_grid_case):
 
 
 def test_time_bounds_case(time_bounds_case):
+    """Confirms both non-default ``Time`` and ``Time_Bounds`` variables are present in each file."""
     input_head_dir, output_head_dir = time_bounds_case
     assert len(listdir(input_head_dir)) == TIME_NUM_TEST_HIST_FILES
     for file_name in listdir(input_head_dir):
@@ -77,11 +81,13 @@ def test_time_bounds_case(time_bounds_case):
 
 
 def test_scrambled_case(scrambled_case):
+    """Confirms the scrambled case produces the expected number of files."""
     input_head_dir, output_head_dir = scrambled_case
     assert len(listdir(input_head_dir)) == SCRAMBLED_NUM_TEST_HIST_FILES
 
 
 def test_structured_case(structured_case):
+    """Confirms the structured case directory tree depth and file counts at each level."""
     input_head_dir, output_head_dir = structured_case
     assert len(listdir(input_head_dir)) == STRUCTURED_NUM_DIRS
     for top_dir in listdir(input_head_dir):
@@ -91,6 +97,7 @@ def test_structured_case(structured_case):
 
 
 def test_time_bounds_missing_attrs_case(simple_case_missing_attrs):
+    """Confirms time_bounds variables have no ``units`` or ``calendar`` attributes."""
     input_head_dir, output_head_dir = simple_case_missing_attrs
     for file_name in listdir(input_head_dir):
         with Dataset(f"{input_head_dir}/{file_name}", 'r') as hf_ds:
@@ -99,6 +106,7 @@ def test_time_bounds_missing_attrs_case(simple_case_missing_attrs):
 
 
 def test_no_time_case(no_time_case):
+    """Confirms neither ``time`` nor ``time_bounds`` variables are present."""
     input_head_dir, output_head_dir = no_time_case
     for file_name in listdir(input_head_dir):
         with Dataset(f"{input_head_dir}/{file_name}", 'r') as hf_ds:
@@ -107,6 +115,7 @@ def test_no_time_case(no_time_case):
 
 
 def test_multistep_case(multistep_case):
+    """Confirms time is a 1-D variable and the expected number of files were created."""
     input_head_dir, output_head_dir = multistep_case
     assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
     for file_name in listdir(input_head_dir):
@@ -115,6 +124,7 @@ def test_multistep_case(multistep_case):
 
 
 def test_with_auxiliary_case(with_auxiliary_case):
+    """Confirms each auxiliary variable has only the ``time`` dimension."""
     input_head_dir, output_head_dir = with_auxiliary_case
     assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
 
@@ -125,6 +135,7 @@ def test_with_auxiliary_case(with_auxiliary_case):
 
 
 def test_fragmented_case(spatial_fragment_case):
+    """Confirms each tile file has the expected lat/lon size, unique coordinate values, and the correct total number of distinct spatial tiles."""
     input_head_dir, output_head_dir = spatial_fragment_case
     assert len(listdir(input_head_dir)) == FRAGMENTED_NUM_TIMESTEPS*FRAGMENTED_NUM_LAT_FILES*FRAGMENTED_NUM_LON_FILES
     
@@ -146,6 +157,7 @@ def test_fragmented_case(spatial_fragment_case):
 
 
 def test_mixed_timestep_case(mixed_timestep_case):
+    """Validates the time-bound width for each of the four timestep frequency groups (sub-hour, day, month, year)."""
     input_head_dir, output_head_dir = mixed_timestep_case
     assert len(listdir(input_head_dir)) == MIXED_TS_NUM_TEST_HIST_FILES*4
 
@@ -165,6 +177,7 @@ def test_mixed_timestep_case(mixed_timestep_case):
 
 
 def test_auxiliary_only_case(auxiliary_only_case):
+    """Confirms auxiliary variables have ``time`` as their only dimension and no primary variables exist."""
     input_head_dir, output_head_dir = auxiliary_only_case
 
     for file_name in listdir(input_head_dir):
@@ -176,6 +189,7 @@ def test_auxiliary_only_case(auxiliary_only_case):
 
 
 def test_simple_3hourly_case(simple_3hourly_case):
+    """Confirms consecutive files are separated by exactly 3 hours in both time and time_bounds."""
     input_head_dir, output_head_dir = simple_3hourly_case
     assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
     paths = listdir(input_head_dir)
@@ -192,6 +206,7 @@ def test_simple_3hourly_case(simple_3hourly_case):
 
 
 def test_simple_6hourly_case(simple_6hourly_case):
+    """Confirms consecutive files are separated by exactly 6 hours in both time and time_bounds."""
     input_head_dir, output_head_dir = simple_6hourly_case
     assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
     paths = listdir(input_head_dir)
@@ -208,6 +223,7 @@ def test_simple_6hourly_case(simple_6hourly_case):
 
 
 def test_simple_daily_case(simple_daily_case):
+    """Confirms consecutive files are separated by exactly 1 day in both time and time_bounds."""
     input_head_dir, output_head_dir = simple_daily_case
     assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
     paths = listdir(input_head_dir)
@@ -224,6 +240,7 @@ def test_simple_daily_case(simple_daily_case):
 
 
 def test_simple_monthly_case(simple_monthly_case):
+    """Confirms consecutive files are separated by exactly 30 days in both time and time_bounds."""
     input_head_dir, output_head_dir = simple_monthly_case
     assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
     paths = listdir(input_head_dir)
@@ -240,6 +257,7 @@ def test_simple_monthly_case(simple_monthly_case):
 
 
 def test_simple_yearly_case(simple_yearly_case):
+    """Confirms consecutive files are separated by exactly 365 days in both time and time_bounds."""
     input_head_dir, output_head_dir = simple_yearly_case
     assert len(listdir(input_head_dir)) == SIMPLE_NUM_TEST_HIST_FILES
     paths = listdir(input_head_dir)
@@ -256,6 +274,7 @@ def test_simple_yearly_case(simple_yearly_case):
 
 
 def test_long_case(long_case):
+    """Confirms 240 files were created, each with only VAR0 and the expected shape."""
     input_head_dir, output_head_dir = long_case
     paths = listdir(input_head_dir)
     assert len(paths) == LONG_TEST_NUM_HIST_FILES
@@ -267,6 +286,7 @@ def test_long_case(long_case):
 
 
 def test_large_case(large_file_for_chunking_case):
+    """Confirms 2 files were created with VAR0 only, and each variable's data size exceeds 4 MiB."""
     input_head_dir, output_head_dir = large_file_for_chunking_case
     paths = listdir(input_head_dir)
     assert len(paths) == 2

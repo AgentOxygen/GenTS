@@ -19,6 +19,7 @@ def clear_output_dir(output_dir):
 
 
 def test_clear_output_dir(tmp_path_factory):
+    """Validates the clear_output_dir() helper deletes all files and subdirectories."""
     output_dir = tmp_path_factory.mktemp("output")
     for i in range(5):
         makedirs(f"{output_dir}/{i}/")
@@ -32,7 +33,7 @@ def test_clear_output_dir(tmp_path_factory):
 
 
 def test_generate_time_series(simple_case):
-    """This does not test TSCollection, but the primary function it relies on."""
+    """generate_time_series() produces a complete TS file with correct time size, variable values, and secondary vars; re-running with compression produces a smaller file."""
     input_head_dir, output_head_dir = simple_case
     hf_paths = [f"{input_head_dir}/{name}" for name in listdir(input_head_dir)]
 
@@ -65,6 +66,7 @@ def test_generate_time_series(simple_case):
 
 
 def test_integrity_check(simple_case):
+    """check_timeseries_integrity() returns True for GenTS-generated TS files and False for raw history files."""
     input_head_dir, output_head_dir = simple_case
     hf_paths = [f"{input_head_dir}/{name}" for name in listdir(input_head_dir)]
 
@@ -76,6 +78,7 @@ def test_integrity_check(simple_case):
 
 
 def test_conform_check(simple_case):
+    """check_timeseries_conform() returns True for a freshly generated TS file."""
     input_head_dir, output_head_dir = simple_case
     hf_paths = [f"{input_head_dir}/{name}" for name in listdir(input_head_dir)]
 
@@ -85,6 +88,7 @@ def test_conform_check(simple_case):
 
 
 def test_tscollection_copy(simple_case):
+    """All TSCollection modifier operations return new instances distinct from the original."""
     input_head_dir, output_head_dir = simple_case
     hf_collection = HFCollection(input_head_dir)
     ts_collection = TSCollection(hf_collection, output_head_dir)
@@ -126,7 +130,7 @@ def test_tscollection_copy(simple_case):
     
 
 def test_tscollection_compression(simple_case):
-    """Assumes default compression is 0."""
+    """Applying zlib compression at level 9 produces smaller output files than the uncompressed default."""
     input_head_dir, output_head_dir = simple_case
     hf_collection = HFCollection(input_head_dir)
     ts_collection = TSCollection(hf_collection, output_head_dir)
@@ -151,12 +155,7 @@ def test_tscollection_compression(simple_case):
 
 
 def test_tscollection_overwrite(simple_case):
-    """
-    To test the overwrite function, we write uncompressed and then overwrite with compressed.
-
-    Since this entangles overwrite with compression, check if `test_tscollection_compression`
-    passes, as it purely tests compression. 
-    """
+    """Overwriting existing files with compressed settings produces smaller files than the originals."""
     input_head_dir, output_head_dir = simple_case
     hf_collection = HFCollection(input_head_dir)
     ts_collection = TSCollection(hf_collection, output_head_dir)
@@ -177,6 +176,7 @@ def test_tscollection_overwrite(simple_case):
 
 
 def test_tscollection_filters(structured_case):
+    """TSCollection exclude() reduces output count; include() reduces it further; both are less than unfiltered."""
     input_head_dir, output_head_dir = structured_case
     hf_collection = HFCollection(input_head_dir)
     ts_collection = TSCollection(hf_collection, output_head_dir)
@@ -198,6 +198,7 @@ def test_tscollection_filters(structured_case):
 
 
 def test_ts_collection_path_swapping(structured_case):
+    """apply_path_swap() redirects output files to the substituted directory path."""
     input_head_dir, output_head_dir = structured_case
     hf_collection = HFCollection(input_head_dir)
     ts_collection = TSCollection(hf_collection, output_head_dir)
@@ -218,6 +219,7 @@ def test_ts_collection_path_swapping(structured_case):
 
 
 def test_ts_collection_append_timestep_dirs(mixed_timestep_case):
+    """append_timestep_dirs() creates hour_1, day_1, month_1, and year_1 subdirectories for mixed-frequency inputs."""
     input_head_dir, output_head_dir = mixed_timestep_case
     hf_collection = HFCollection(input_head_dir)
     ts_collection = TSCollection(hf_collection, output_head_dir)
@@ -252,6 +254,7 @@ def compare_timestr(hf_collection, ts_paths, timestep, time_format):
 
 
 def test_simple_3hourly_case_timestr(simple_3hourly_case):
+    """3-hourly TS filenames use the ``%Y%m%d%H`` timestamp format."""
     input_head_dir, output_head_dir = simple_3hourly_case
     hf_collection = HFCollection(input_head_dir)
     ts_collection = TSCollection(hf_collection, output_head_dir)
@@ -260,6 +263,7 @@ def test_simple_3hourly_case_timestr(simple_3hourly_case):
 
 
 def test_simple_6hourly_case_timestr(simple_6hourly_case):
+    """6-hourly TS filenames use the ``%Y%m%d%H`` timestamp format."""
     input_head_dir, output_head_dir = simple_6hourly_case
     hf_collection = HFCollection(input_head_dir)
     ts_collection = TSCollection(hf_collection, output_head_dir)
@@ -268,6 +272,7 @@ def test_simple_6hourly_case_timestr(simple_6hourly_case):
 
 
 def test_simple_daily_case_timestr(simple_daily_case):
+    """Daily TS filenames use the ``%Y%m%d`` timestamp format."""
     input_head_dir, output_head_dir = simple_daily_case
     hf_collection = HFCollection(input_head_dir)
     ts_collection = TSCollection(hf_collection, output_head_dir)
@@ -276,6 +281,7 @@ def test_simple_daily_case_timestr(simple_daily_case):
 
 
 def test_simple_monthly_case_timestr(simple_monthly_case):
+    """Monthly TS filenames use the ``%Y%m`` timestamp format."""
     input_head_dir, output_head_dir = simple_monthly_case
     hf_collection = HFCollection(input_head_dir)
     ts_collection = TSCollection(hf_collection, output_head_dir)
@@ -284,6 +290,7 @@ def test_simple_monthly_case_timestr(simple_monthly_case):
 
 
 def test_simple_monthly_case_timestr(simple_yearly_case):
+    """Yearly TS filenames use the ``%Y`` timestamp format."""
     input_head_dir, output_head_dir = simple_yearly_case
     hf_collection = HFCollection(input_head_dir)
     ts_collection = TSCollection(hf_collection, output_head_dir)
@@ -292,6 +299,7 @@ def test_simple_monthly_case_timestr(simple_yearly_case):
 
 
 def test_simple_6hourly_case_timestr_dir(simple_6hourly_case):
+    """append_timestep_dirs() creates an ``hour_6`` subdirectory for 6-hourly inputs."""
     input_head_dir, output_head_dir = simple_6hourly_case
     hf_collection = HFCollection(input_head_dir)
     ts_collection = TSCollection(hf_collection, output_head_dir).append_timestep_dirs()
@@ -300,6 +308,7 @@ def test_simple_6hourly_case_timestr_dir(simple_6hourly_case):
 
 
 def test_simple_3hourly_case_timestr_dir(simple_3hourly_case):
+    """append_timestep_dirs() creates an ``hour_3`` subdirectory for 3-hourly inputs."""
     input_head_dir, output_head_dir = simple_3hourly_case
     hf_collection = HFCollection(input_head_dir)
     ts_collection = TSCollection(hf_collection, output_head_dir).append_timestep_dirs()
@@ -308,6 +317,7 @@ def test_simple_3hourly_case_timestr_dir(simple_3hourly_case):
 
 
 def test_chunking(large_file_for_chunking_case):
+    """Large variables are stored with time-axis chunking rather than contiguously."""
     input_head_dir, output_head_dir = large_file_for_chunking_case
     hf_collection = HFCollection(input_head_dir)
     ts_collection = TSCollection(hf_collection, output_head_dir)
@@ -319,6 +329,7 @@ def test_chunking(large_file_for_chunking_case):
             assert list(ts_ds["VAR0"].chunking()) != list(ts_ds["VAR0"].shape)
 
 def test_dask_deprecation_warning(simple_case):
+    """Passing dask_client=True to TSCollection raises a DeprecationWarning."""
     input_head_dir, output_head_dir = simple_case
     hf_collection = HFCollection(input_head_dir)
 

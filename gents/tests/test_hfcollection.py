@@ -9,6 +9,7 @@ import fnmatch
 
 
 def test_find_files(structured_case):
+    """find_files() matches only the specified glob pattern, ignoring non-matching file types."""
     input_head_dir, output_head_dir = structured_case
     num_files = STRUCTURED_NUM_VARS*STRUCTURED_NUM_DIRS*STRUCTURED_NUM_SUBDIRS
     assert len(find_files(input_head_dir, "*.nc")) == num_files
@@ -20,6 +21,7 @@ def test_find_files(structured_case):
 
 
 def test_calculate_year_slices():
+    """Spot-checks that year slices have correct widths, alignment, and non-overlapping bounds."""
     assert calculate_year_slices(10, 0, 30) == [(0, 9), (10, 19), (20, 29), (30, 39)]
     assert calculate_year_slices(10, 1, 30) == [(1, 10), (11, 20), (21, 30)]
     assert calculate_year_slices(1, 0, 3) == [(0, 0), (1, 1), (2, 2), (3, 3)]
@@ -27,6 +29,7 @@ def test_calculate_year_slices():
 
 
 def test_hf_sorting(structured_case):
+    """sort_hf_groups() groups files by parent directory and filename prefix; distinct prefixes produce distinct groups."""
     input_head_dir, output_head_dir = structured_case
     hf_paths = find_files(input_head_dir, "*.nc")
     groups = sort_hf_groups(hf_paths)
@@ -50,6 +53,7 @@ def test_hf_sorting(structured_case):
 
 
 def test_get_year_bounds(simple_case, scrambled_case, structured_case):
+    """get_year_bounds() returns correct min/max years for simple, scrambled, and structured cases."""
     input_head_dir, output_head_dir = simple_case
     hf_collection = HFCollection(input_head_dir)
     hf_collection.pull_metadata()
@@ -68,6 +72,7 @@ def test_get_year_bounds(simple_case, scrambled_case, structured_case):
 
 
 def test_simple_hfcollection(simple_case, caplog):
+    """Comprehensive test of HFCollection: file count, include/exclude, pull_metadata, check_validity, get_groups, and slice_groups."""
     input_head_dir, output_head_dir = simple_case
     hf_collection = HFCollection(input_head_dir)
     
@@ -140,6 +145,7 @@ def test_simple_hfcollection(simple_case, caplog):
 
 
 def test_time_bounds_case(time_bounds_case):
+    """HFCollection loads files with non-default time variable names without error."""
     input_head_dir, output_head_dir = time_bounds_case
     hf_collection = HFCollection(input_head_dir)
     hf_collection.pull_metadata()
@@ -148,6 +154,7 @@ def test_time_bounds_case(time_bounds_case):
 
 
 def test_no_times_case(no_time_case):
+    """pull_metadata() raises ValueError when history files have no recognised time variable."""
     input_head_dir, output_head_dir = no_time_case
     hf_collection = HFCollection(input_head_dir)
     with pytest.raises(ValueError, match=".nc"):
@@ -155,6 +162,7 @@ def test_no_times_case(no_time_case):
 
 
 def test_scrambled_hfcollection(scrambled_case):
+    """HFCollection loads scrambled-order files and all pass validity checks."""
     input_head_dir, output_head_dir = scrambled_case
     hf_collection = HFCollection(input_head_dir)
 
@@ -165,6 +173,7 @@ def test_scrambled_hfcollection(scrambled_case):
 
 
 def test_structured_hfcollection(structured_case):
+    """HFCollection discovers all files across a multi-directory structure and they all pass validity checks."""
     input_head_dir, output_head_dir = structured_case
     hf_collection = HFCollection(input_head_dir)
 
@@ -175,6 +184,7 @@ def test_structured_hfcollection(structured_case):
 
 
 def test_hfcollection_copy(simple_case):
+    """All filter/transform operations return new HFCollection instances distinct from the original."""
     input_head_dir, output_head_dir = simple_case
     hf_collection = HFCollection(input_head_dir)
 
@@ -205,6 +215,7 @@ def test_hfcollection_copy(simple_case):
 
 
 def test_missing_time_bounds_attrs(simple_case_missing_attrs):
+    """Files with time_bounds missing units/calendar attributes are still considered valid."""
     input_head_dir, output_head_dir = simple_case_missing_attrs
     hf_collection = HFCollection(input_head_dir)
     hf_collection.pull_metadata()
@@ -214,6 +225,7 @@ def test_missing_time_bounds_attrs(simple_case_missing_attrs):
 
 
 def test_spatially_fragmented_hf(spatial_fragment_case):
+    """Spatially fragmented tile files are merged into a single group by get_groups()."""
     input_head_dir, output_head_dir = spatial_fragment_case
     hf_collection = HFCollection(input_head_dir)
     hf_collection.pull_metadata()
@@ -224,6 +236,7 @@ def test_spatially_fragmented_hf(spatial_fragment_case):
 
 
 def test_long_hf_slicing(long_case):
+    """slice_groups() produces the expected per-group file counts for 10-year, 5-year, and offset slicing."""
     input_head_dir, output_head_dir = long_case
     hf_collection = HFCollection(input_head_dir)
     assert len(hf_collection) == LONG_TEST_NUM_HIST_FILES
@@ -247,6 +260,7 @@ def test_long_hf_slicing(long_case):
 
 
 def test_include_years(long_case):
+    """include_years() returns the correct number of files for single- and multi-year ranges."""
     input_head_dir, output_head_dir = long_case
     hf_collection = HFCollection(input_head_dir)
     assert len(hf_collection.include_years(CASE_START_YEAR, CASE_START_YEAR)) == 12
@@ -254,6 +268,7 @@ def test_include_years(long_case):
 
 
 def test_include_filter(structured_case):
+    """include() and exclude() with single and multi-pattern globs correctly retain or remove matching paths."""
     input_head_dir, output_head_dir = structured_case
     hf_collection = HFCollection(input_head_dir)
 
@@ -306,6 +321,7 @@ def test_include_filter(structured_case):
 
 
 def test_dask_deprecation_warning(simple_case):
+    """Passing dask_client=True to HFCollection raises a DeprecationWarning."""
     input_head_dir, output_head_dir = simple_case
 
     with pytest.warns(DeprecationWarning):
