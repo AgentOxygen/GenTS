@@ -3,6 +3,28 @@ import sys
 from gents.utils import get_version
 
 def parse_arguments():
+    """
+    Parses command-line arguments for the ``gents`` CLI entry point.
+
+    Constructs an :class:`argparse.ArgumentParser` with all supported flags and
+    positional arguments, then parses ``sys.argv`` and returns the resulting
+    namespace.
+
+    Supported arguments:
+
+    - ``hf_head_dir`` *(positional)*: Path to the head directory containing history files.
+    - ``-o`` / ``--outputdir``: Output directory for time-series files (defaults to ``hf_head_dir`` if omitted).
+    - ``-v`` / ``--verbose``: Enable verbose console output.
+    - ``-V`` / ``--version``: Print the installed ``gents`` version and exit.
+    - ``-d`` / ``--dryrun``: Parse metadata only; do not write time-series files.
+    - ``-w`` / ``--overwrite``: Overwrite existing time-series output files.
+    - ``-sl`` / ``--slice``: Maximum length of individual time-series files in years (default ``10``).
+    - ``-nc`` / ``--numcores``: Maximum worker processes for parallel execution (default ``64``).
+    - ``-e3`` / ``--e3sm``: Use the E3SM model configuration instead of the default CESM3 configuration.
+
+    :returns: Namespace object populated with parsed argument values.
+    :rtype: argparse.Namespace
+    """
     parser = argparse.ArgumentParser(
         description="GenTS "
     )
@@ -57,6 +79,21 @@ def parse_arguments():
 
 
 def main():
+    """
+    Entry point for the ``gents`` command-line interface.
+
+    Performs the following steps:
+
+    1. Calls :func:`parse_arguments` to obtain the parsed CLI namespace.
+    2. Defaults ``outputdir`` to ``hf_head_dir`` when ``-o`` is not supplied.
+    3. Selects the appropriate model configuration:
+
+       - ``--e3sm`` flag → imports :func:`~gents.configs.gents_e3sm.run_config` (E3SM).
+       - Otherwise → imports :func:`~gents.configs.gents_cesm3.run_config` (CESM3).
+
+    4. If ``--verbose`` is set, prints a summary of all active settings to stdout.
+    5. Delegates execution to the selected ``run_config(args)`` function.
+    """
     args = parse_arguments()
 
     if args.outputdir is None:

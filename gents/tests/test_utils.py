@@ -5,19 +5,23 @@ LOGGER_HEADER_NUM_LINES = 2
 
 
 def test_timestamp():
+    """get_time_stamp() returns a string."""
     assert type(get_time_stamp()) == str
 
 
 def test_version():
+    """get_version() returns a string."""
     assert type(get_version()) == str
 
 
 @pytest.fixture(scope="session")
 def log_output_dir(tmp_path_factory):
+    """Session-scoped temp directory for log file output."""
     return tmp_path_factory.mktemp("log_data")
 
 
 def test_logging(log_output_dir):
+    """Non-verbose mode suppresses LOG_LEVEL_IO_WARNING messages; verbose mode includes them; both emit exactly two header lines on init."""
     logger = logging.getLogger("gents")
 
     enable_logging(verbose=False, output_path=f"{log_output_dir}/log_header.txt")

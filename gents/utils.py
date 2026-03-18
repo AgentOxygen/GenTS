@@ -18,21 +18,40 @@ LOG_LEVEL_IO_WARNING = 5
 
 
 def get_time_stamp():
-    """Returns system date-time timestamp."""
+    """
+    Returns the current system date and time as a formatted string.
+
+    :returns: Date-time string formatted as ``'YYYY-MM-DD HH:MM'``.
+    :rtype: str
+    """
     return datetime.datetime.fromtimestamp(time()).strftime('%Y-%m-%d %H:%M')
 
 
 def get_version():
-    """Returns the version of the installed GenTS package."""
+    """
+    Returns the version string of the installed ``gents`` package.
+
+    :returns: Package version string (e.g. ``'1.0.0'``).
+    :rtype: str
+    """
     return version('gents')
 
 
 def enable_logging(verbose=False, output_path=None):
     """
-    Initializes logger to output GenTS logs.
-    
-    :param verbose: If true, all logs will be output including messages for individual file paths. Otherwise, only messages with level DEBUG or higher will be output. (Defaults to False)
-    :param output_path: File path to output logs to. (Defaults to None)
+    Configures the ``gents`` package logger and begins emitting log messages.
+
+    At ``verbose=True``, the log level is set to ``LOG_LEVEL_IO_WARNING`` (5), enabling
+    per-file I/O trace messages. At the default ``verbose=False``, the level is ``DEBUG``
+    (10), suppressing those low-level traces. The installed GenTS version is logged
+    immediately on initialisation.
+
+    :param verbose: If ``True``, enable per-file I/O trace messages at
+        ``LOG_LEVEL_IO_WARNING`` level. Defaults to ``False``.
+    :type verbose: bool
+    :param output_path: Optional file path to additionally write log output to.
+        Defaults to ``None`` (stdout only).
+    :type output_path: str or None
     """
     logger = logging.getLogger("gents")
 
@@ -57,12 +76,24 @@ def enable_logging(verbose=False, output_path=None):
 
 
 class ProgressBar:
+    """
+    Terminal progress bar for visualising long-running loops.
+
+    Displays a continuously-updated bar, percentage, item count, and elapsed
+    time by overwriting a single terminal line in place.
+    """
+
     def __init__(self, total, length=40, label=""):
         """
-        Progress bar for visualizing various processes throughout the package.
+        Initialises the progress bar state.
 
-        :param total: Total number of iterations in the loop.
-        :param length: Length of the progress bar in characters. (Default is 40)
+        :param total: Total number of expected iterations.
+        :type total: int
+        :param length: Width of the rendered bar in characters. Defaults to ``40``.
+        :type length: int
+        :param label: Short text label displayed beside the progress counter.
+            Defaults to an empty string.
+        :type label: str
         """
         self.total = total
         self.length = length
@@ -71,7 +102,11 @@ class ProgressBar:
         self.label = label
 
     def step(self):
-        """Update the progress bar by a given step."""
+        """
+        Advances the progress bar by one iteration and redraws the terminal line.
+
+        Writes a newline once the counter reaches ``total``.
+        """
         self.count += 1
         percent = self.count / self.total
         filled_length = int(self.length * percent)

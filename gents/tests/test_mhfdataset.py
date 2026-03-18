@@ -6,6 +6,7 @@ import numpy as np
 
 
 def test_MHFDataset_simple(simple_case):
+    """MHFDataset opens a non-fragmented group, exposes correct file handles, and returns the expected variable shape and values."""
     input_head_dir, output_head_dir = simple_case
     hf_collection = HFCollection(input_head_dir)
     hf_groups = hf_collection.get_groups()
@@ -24,6 +25,7 @@ def test_MHFDataset_simple(simple_case):
 
 
 def test_MHFDataset_fragmented(spatial_fragment_case):
+    """MHFDataset over a fragmented group reports the full combined spatial shape across all tiles."""
     input_head_dir, output_head_dir = spatial_fragment_case
     hf_collection = HFCollection(input_head_dir)
     hf_groups = hf_collection.get_groups()
@@ -45,6 +47,7 @@ def test_MHFDataset_fragmented(spatial_fragment_case):
 
 
 def test_get_concat_coords_simple(simple_case):
+    """get_concat_coords() on a non-fragmented group returns coordinate values matching the first file and the correct time count."""
     input_head_dir, output_head_dir = simple_case
     hf_collection = HFCollection(input_head_dir)
     hf_groups = hf_collection.get_groups()
@@ -63,6 +66,7 @@ def test_get_concat_coords_simple(simple_case):
 
 
 def test_get_concat_coords_fragmented(spatial_fragment_case):
+    """get_concat_coords() on a fragmented group merges lat/lon coordinates to the full combined extent."""
     input_head_dir, output_head_dir = spatial_fragment_case
     hf_collection = HFCollection(input_head_dir)
     hf_groups = hf_collection.get_groups()
