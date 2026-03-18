@@ -48,6 +48,11 @@ def parse_arguments():
         default=64,
         help="Maximum number of cores to use if running in parallel. (Default 64)"
     )
+    parser.add_argument(
+        "-e3", "--e3sm",
+        action="store_true",
+        help="Enable E3SM configuration."
+    )
     return parser.parse_args()
 
 
@@ -57,15 +62,20 @@ def main():
     if args.outputdir is None:
         args.outputdir = args.hf_head_dir
     
+    if args.e3sm:
+        from gents.configs.gents_e3sm import run_config
+        model = "E3SM"
+    else:
+        from gents.configs.gents_cesm3 import run_config
+        model = "CESM3"
+    
     if args.verbose:
         print(f"  Input (HF) directory path    : {args.hf_head_dir}")
         print(f"  Output (TS) directory path   : {args.outputdir}")
-        print(f"  Model Configuration          : CESM3")
+        print(f"  Model Configuration          : {model}")
         print(f"  Overwrite TS Files           : {args.overwrite}")
         print(f"  Slice size                   : {args.slice}")
         print(f"  Dry run                      : {args.dryrun}")
         print(f"  Number of processes (cores)  : {args.numcores}")
-    
-    from gents.configs.gents_cesm3 import run_config
 
     run_config(args)
