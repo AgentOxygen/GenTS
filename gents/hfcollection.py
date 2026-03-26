@@ -485,7 +485,7 @@ class HFCollection:
     new ``HFCollection`` instances, preserving an immutable-style fluent API.
     """
 
-    def __init__(self, hf_dir, num_processes=None, meta_map=None, hf_groups=None, step_map=None, hf_glob_pattern="*.nc*", dask_client=None):
+    def __init__(self, hf_dir, num_processes=1, meta_map=None, hf_groups=None, step_map=None, hf_glob_pattern="*.nc*", dask_client=None):
         """
         Initialises the collection by discovering history files under ``hf_dir``.
 
@@ -498,7 +498,7 @@ class HFCollection:
         :param hf_dir: Root directory to search for history files.
         :type hf_dir: str
         :param num_processes: Maximum number of worker processes for parallel
-            metadata loading. Defaults to ``None`` (single process).
+            metadata loading. Defaults to ``1`` (single process).
         :type num_processes: int or None
         :param meta_map: Pre-populated ``{path: netCDFMeta}`` mapping. When
             supplied, overrides the recursive file search. Defaults to ``None``.
@@ -517,10 +517,7 @@ class HFCollection:
             warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism.", DeprecationWarning, stacklevel=2)
 
         self.__raw_paths = find_files(hf_dir, hf_glob_pattern)
-
-        self.__num_processes = 1
-        if self.__num_processes is not None:
-            self.__num_processes = num_processes
+        self.__num_processes = num_processes
 
         self.__hf_to_meta_map = {}
         if meta_map is None:
