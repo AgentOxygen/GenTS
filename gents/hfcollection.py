@@ -755,7 +755,6 @@ class HFCollection:
 
         filtered_path_map = {}
         for path in self.__hf_to_meta_map:
-            matches = False
             for pattern in glob_patterns:
                 if fnmatch.fnmatch(str(path), pattern):
                     filtered_path_map[path] = self.__hf_to_meta_map[path]
