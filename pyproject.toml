@@ -10,7 +10,7 @@ authors = [
 ]
 description = "A useful tool for post-processing Earth System Model output 'history files' into the time series format."
 readme = "README.md"
-requires-python = ">=3.10.13"
+requires-python = ">=3.10"
 dependencies = [
   "numpy",
   "netcdf4",
