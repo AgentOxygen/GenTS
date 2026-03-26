@@ -425,10 +425,10 @@ class TSCollection:
         return len(self.__orders)
 
     def items(self):
-        return self.__orders.items()
+        return self.__orders
 
     def values(self):
-        return self.__orders.values()
+        return self.__orders
     
     def get_hf_collection(self):
         """
@@ -657,21 +657,22 @@ class TSCollection:
         for order_dict in copy.deepcopy(self.__orders):
             if fnmatch.fnmatch(order_dict["primary_var"], var_glob):
                 dt = self.__hf_collection.get_timestep_delta(order_dict["hf_paths"][0])
-                hours = np.rint(dt.total_seconds() / 60.0 / 60.0)
-                days = np.rint(hours / 24.0)
-                months = np.rint(days / 30)
-                years = np.rint(months / 12)
 
                 if dt is None:
                     timestep_label = "unsorted"
-                elif hours < 24:
-                    timestep_label = f"hour_{int(hours)}"
-                elif days < 28:
-                    timestep_label = f"day_{int(days)}"
-                elif months < 12:
-                    timestep_label = f"month_{int(months)}"
                 else:
-                    timestep_label = f"year_{int(years)}"
+                    hours = np.rint(dt.total_seconds() / 60.0 / 60.0)
+                    days = np.rint(hours / 24.0)
+                    months = np.rint(days / 30)
+                    years = np.rint(months / 12)
+                    if hours < 24:
+                        timestep_label = f"hour_{int(hours)}"
+                    elif days < 28:
+                        timestep_label = f"day_{int(days)}"
+                    elif months < 12:
+                        timestep_label = f"month_{int(months)}"
+                    else:
+                        timestep_label = f"year_{int(years)}"
 
                 template = Path(order_dict["ts_path_template"])
                 order_dict["ts_path_template"] = str(template.parent) + f"/{timestep_label}/" + template.name
