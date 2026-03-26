@@ -326,3 +326,17 @@ def test_dask_deprecation_warning(simple_case):
 
     with pytest.warns(DeprecationWarning):
         hf_collection = HFCollection(input_head_dir, dask_client=True)
+
+
+def test_slicing_auxiliary(auxiliary_only_case):
+    """Auxiliary history files should not raise an error when slicing."""
+    input_head_dir, output_head_dir = auxiliary_only_case
+    hf_collection = HFCollection(input_head_dir).slice_groups(slice_size_years=1)
+
+
+def test_spatially_fragmented_handling(spatial_fragment_case):
+    """Spatial tile files are properly handled when slicing."""
+    input_head_dir, output_head_dir = spatial_fragment_case
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection = hf_collection.slice_groups()
+    assert len(hf_collection.get_groups(check_fragmented=True)) == 1
