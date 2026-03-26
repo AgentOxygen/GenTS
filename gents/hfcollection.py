@@ -451,7 +451,7 @@ def merge_fragmented_groups(hf_groups, hf_meta_map):
 
     if len(fragmented_groups) > 0:
         num_fragmented_files = sum([len(fragmented_groups[pattern]) for pattern in fragmented_groups])
-        logger.info(f"Found {num_fragmented_files} spatially fragmented files.")
+        logger.info(f"Found {num_fragmented_files} spatially fragmented files in {len(fragmented_groups)} groups.")
 
     dim_hashes = {}
     for pattern in fragmented_groups:
@@ -695,6 +695,8 @@ class HFCollection:
                     else:
                         times.append(cftimes)
                 times = np.sort(times)
+                if len(times) < 2:
+                    raise ValueError(f"Expected time array of size 2 or greater, got {len(times)} for group with paths: {self.get_groups()[group]}")
                 for path in self.get_groups()[group]:
                     self.__hf_to_timestep_delta_map[path] = times[-1] - times[-2]
 
@@ -852,9 +854,9 @@ class HFCollection:
         if self.__hf_groups is None:
             self.__hf_groups = sort_hf_groups(list(self.__hf_to_meta_map.keys()))
         
-        if check_fragmented:
-            self.check_pulled()
-            self.__hf_groups = merge_fragmented_groups(self.__hf_groups, self.__hf_to_meta_map)
+            if check_fragmented:
+                self.check_pulled()
+                self.__hf_groups = merge_fragmented_groups(self.__hf_groups, self.__hf_to_meta_map)
 
         return self.__hf_groups
 
