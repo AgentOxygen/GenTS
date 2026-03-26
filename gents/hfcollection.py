@@ -646,7 +646,7 @@ class HFCollection:
         logger.info(f"Sorted along time.")
         return self.copy(meta_map=sorted_map)
     
-    def pull_metadata(self, check_valid=True):
+    def pull_metadata(self, check_valid=True, raise_errors=False):
         """
         Loads metadata for all history files in the collection in parallel.
 
@@ -658,6 +658,8 @@ class HFCollection:
 
         :param check_valid: If ``True`` (default), calls :meth:`check_validity`
             after loading to remove files with incomplete or invalid metadata.
+        :param raise_errors: If ``True`` (default), calls errors are raised
+            rather than just logged.
         :type check_valid: bool
         """
         logger.info(f"Pulling metadata...")
@@ -668,8 +670,15 @@ class HFCollection:
             results = []
             prog_bar = ProgressBar(total=len(futures), label="Pulling Metadata")
             for future in as_completed(futures):
-                results.append(future.result())
-                prog_bar.step()
+                try:
+                    results.append(future.result())
+                except Exception as exc:
+                    path = futures[future]
+                    logger.warning(f"Failed to load metadata for {path}: {exc}")
+                    if raise_errors:
+                        raise exc
+                finally:
+                    prog_bar.step()
 
             for meta_ds in results:
                 self.__hf_to_meta_map[meta_ds.get_path()] = meta_ds
@@ -716,7 +725,7 @@ class HFCollection:
                 new_map[path] = self.__hf_to_meta_map[path]
             else:
                 removed[path] = self.__hf_to_meta_map[path]
-                logger.log(LOG_LEVEL_IO_WARNING, f"Could not pull valid/complete metadata for '{path}'.")
+                logger.warning(f"Could not pull valid/complete metadata for '{path}'.")
         self.__hf_to_meta_map = new_map
         logger.debug(f"{len(new_map)} files valdiated ({len(removed)} removed).")
         return removed
