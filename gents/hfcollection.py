@@ -671,18 +671,16 @@ class HFCollection:
             results = []
             prog_bar = ProgressBar(total=len(futures), label="Pulling Metadata")
             for future in as_completed(futures):
+                path = futures[future]
                 try:
-                    results.append(future.result())
+                    result = future.result()
+                    self.__hf_to_meta_map[path] = result
                 except Exception as exc:
-                    path = futures[future]
                     logger.warning(f"Failed to load metadata for {path}: {exc}")
                     if raise_errors:
                         raise exc
                 finally:
                     prog_bar.step()
-
-            for meta_ds in results:
-                self.__hf_to_meta_map[meta_ds.get_path()] = meta_ds
 
         if check_valid:
             self.check_validity()
