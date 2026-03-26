@@ -708,7 +708,7 @@ class TSCollection:
         for order_dict in self.__orders:
             makedirs(Path(order_dict['ts_path_template']).parent, exist_ok=exist_ok)
 
-    def execute(self, optimize=True, optimize_batch_n=200):
+    def execute(self, optimize=True, optimize_batch_n=200, raise_errors=False):
         """
         Executes all time-series generation orders in parallel.
 
@@ -727,6 +727,9 @@ class TSCollection:
         :param optimize_batch_n: Maximum number of variables per optimised batch.
             Defaults to ``200``.
         :type optimize_batch_n: int
+        :param raise_errors: If ``True`` (default ``False``), calls errors are raised
+            rather than just logged.
+        :type raise_errors: bool
         :returns: List of paths to all generated time-series output files.
         :rtype: list[str]
         """
@@ -790,8 +793,15 @@ class TSCollection:
             futures = {executor.submit(generate_time_series, **args): args for args in optimized_orders}
             prog_bar = ProgressBar(total=len(futures), label="Generating Timeseries")
             for future in as_completed(futures):
-                results.append(future.result())
-                prog_bar.step()
+                try:
+                    results.append(future.result())
+                except Exception as exc:
+                    path = futures[future]
+                    logger.warning(f"Failed to load metadata for {path}: {exc}")
+                    if raise_errors:
+                        raise exc
+                finally:
+                    prog_bar.step()
         
         output_paths = []
         for result in results:
