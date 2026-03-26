@@ -658,7 +658,7 @@ class HFCollection:
 
         :param check_valid: If ``True`` (default), calls :meth:`check_validity`
             after loading to remove files with incomplete or invalid metadata.
-        :param raise_errors: If ``True`` (default), calls errors are raised
+        :param raise_errors: If ``True`` (default ``False``), calls errors are raised
             rather than just logged.
         :type check_valid: bool
         """
