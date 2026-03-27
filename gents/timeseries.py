@@ -81,36 +81,6 @@ def check_timeseries_conform(ts_path: str):
     return True
 
 
-def generate_time_series_error_wrapper(**args):
-    """
-    Wraps :func:`generate_time_series` with verbose error reporting.
-
-    Catches any exception raised by :func:`generate_time_series`, dumps all
-    argument values and a full traceback to stdout, then re-raises the exception.
-    Intended as an alternative submission target for ``ProcessPoolExecutor``
-    workers when detailed failure diagnostics are needed.
-
-    :param args: Keyword arguments forwarded verbatim to :func:`generate_time_series`.
-    :raises Exception: Re-raises any exception from :func:`generate_time_series`.
-    """
-    try:
-        return generate_time_series(**args)
-    except Exception as e:
-        print("=====================================================\n")
-        print(f"START of GenTS Argument Dump for {type(e)}\n")
-        print("=====================================================")
-        for entry in args:
-            print(f"\nArgument: '{entry}' \n")
-            print(args[entry])
-        print(f"\nError: '{type(e)}' \n")
-        print(e)
-        traceback.print_exc()
-        print("=====================================================\n")
-        print(f"END of GenTS Argument Dump for {type(e)}\n")
-        print("=====================================================")
-        raise type(e)(f"{e}") from e
-
-
 def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_data, overwrite=False, complevel=0, compression=None):
     """
     Writes a single time-series netCDF file for one primary variable.
