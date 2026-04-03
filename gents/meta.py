@@ -71,22 +71,14 @@ def get_attributes(dataset):
     """
     Extracts all attributes from a netCDF4 dataset or variable into a dictionary.
 
-    Handles the slight API difference between ``MFDataset`` objects (which require
-    ``__getattribute__``) and standard ``Dataset`` or ``Variable`` objects (which
-    use ``__getattr__``).
-
     :param dataset: A ``netCDF4.Dataset``, ``netCDF4.MFDataset``, or
         ``netCDF4.Variable`` object from which to read attributes.
     :returns: Dictionary mapping attribute names to their values.
     :rtype: dict
     """
     attrs = {}
-    if type(dataset) is netCDF4._netCDF4.MFDataset:
-        for key in dataset.ncattrs():
-            attrs[key] = dataset.__getattribute__(key)
-    else:
-        for key in dataset.ncattrs():
-            attrs[key] = dataset.__getattr__(key)
+    for key in dataset.ncattrs():
+        attrs[key] = getattr(dataset, key)
     return attrs
 
 

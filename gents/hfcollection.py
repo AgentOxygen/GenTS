@@ -451,12 +451,12 @@ def merge_fragmented_groups(hf_groups, hf_meta_map):
 
     if len(fragmented_groups) > 0:
         num_fragmented_files = sum([len(fragmented_groups[pattern]) for pattern in fragmented_groups])
-        logger.info(f"Found {num_fragmented_files} spatially fragmented files.")
+        logger.info(f"Found {num_fragmented_files} spatially fragmented files in {len(fragmented_groups)} groups.")
 
     dim_hashes = {}
     for pattern in fragmented_groups:
         dims = hf_meta_map[fragmented_groups[pattern][0]].get_dim_bounds()
-        dims = {variable: dims[variable] for variable in dims if "time" not in dims}
+        dims = {variable: dims[variable] for variable in dims if variable != "time"}
         dims_hash = str(dims)
 
         if dims_hash not in dim_hashes:
@@ -485,7 +485,7 @@ class HFCollection:
     new ``HFCollection`` instances, preserving an immutable-style fluent API.
     """
 
-    def __init__(self, hf_dir, num_processes=None, meta_map=None, hf_groups=None, step_map=None, hf_glob_pattern="*.nc*", dask_client=None):
+    def __init__(self, hf_dir, num_processes=1, meta_map=None, hf_groups=None, step_map=None, hf_glob_pattern="*.nc*", dask_client=None):
         """
         Initialises the collection by discovering history files under ``hf_dir``.
 
@@ -498,7 +498,7 @@ class HFCollection:
         :param hf_dir: Root directory to search for history files.
         :type hf_dir: str
         :param num_processes: Maximum number of worker processes for parallel
-            metadata loading. Defaults to ``None`` (single process).
+            metadata loading. Defaults to ``1`` (single process).
         :type num_processes: int or None
         :param meta_map: Pre-populated ``{path: netCDFMeta}`` mapping. When
             supplied, overrides the recursive file search. Defaults to ``None``.
@@ -517,10 +517,7 @@ class HFCollection:
             warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism.", DeprecationWarning, stacklevel=2)
 
         self.__raw_paths = find_files(hf_dir, hf_glob_pattern)
-
-        self.__num_processes = 1
-        if self.__num_processes is not None:
-            self.__num_processes = num_processes
+        self.__num_processes = num_processes
 
         self.__hf_to_meta_map = {}
         if meta_map is None:
@@ -649,7 +646,7 @@ class HFCollection:
         logger.info(f"Sorted along time.")
         return self.copy(meta_map=sorted_map)
     
-    def pull_metadata(self, check_valid=True):
+    def pull_metadata(self, check_valid=True, raise_errors=False):
         """
         Loads metadata for all history files in the collection in parallel.
 
@@ -662,6 +659,9 @@ class HFCollection:
         :param check_valid: If ``True`` (default), calls :meth:`check_validity`
             after loading to remove files with incomplete or invalid metadata.
         :type check_valid: bool
+        :param raise_errors: If ``True`` (default ``False``), calls errors are raised
+            rather than just logged.
+        :type raise_errors: bool
         """
         logger.info(f"Pulling metadata...")
         paths = list(self.__hf_to_meta_map.keys())
@@ -671,11 +671,16 @@ class HFCollection:
             results = []
             prog_bar = ProgressBar(total=len(futures), label="Pulling Metadata")
             for future in as_completed(futures):
-                results.append(future.result())
-                prog_bar.step()
-
-            for meta_ds in results:
-                self.__hf_to_meta_map[meta_ds.get_path()] = meta_ds
+                path = futures[future]
+                try:
+                    result = future.result()
+                    self.__hf_to_meta_map[path] = result
+                except Exception as exc:
+                    logger.warning(f"Failed to load metadata for {path}: {exc}")
+                    if raise_errors:
+                        raise exc
+                finally:
+                    prog_bar.step()
 
         if check_valid:
             self.check_validity()
@@ -695,6 +700,8 @@ class HFCollection:
                     else:
                         times.append(cftimes)
                 times = np.sort(times)
+                if len(times) < 2:
+                    raise ValueError(f"Expected time array of size 2 or greater, got {len(times)} for group with paths: {self.get_groups()[group]}")
                 for path in self.get_groups()[group]:
                     self.__hf_to_timestep_delta_map[path] = times[-1] - times[-2]
 
@@ -717,7 +724,7 @@ class HFCollection:
                 new_map[path] = self.__hf_to_meta_map[path]
             else:
                 removed[path] = self.__hf_to_meta_map[path]
-                logger.log(LOG_LEVEL_IO_WARNING, f"Could not pull valid/complete metadata for '{path}'.")
+                logger.warning(f"Could not pull valid/complete metadata for '{path}'.")
         self.__hf_to_meta_map = new_map
         logger.debug(f"{len(new_map)} files valdiated ({len(removed)} removed).")
         return removed
@@ -756,7 +763,6 @@ class HFCollection:
 
         filtered_path_map = {}
         for path in self.__hf_to_meta_map:
-            matches = False
             for pattern in glob_patterns:
                 if fnmatch.fnmatch(str(path), pattern):
                     filtered_path_map[path] = self.__hf_to_meta_map[path]
@@ -852,9 +858,9 @@ class HFCollection:
         if self.__hf_groups is None:
             self.__hf_groups = sort_hf_groups(list(self.__hf_to_meta_map.keys()))
         
-        if check_fragmented:
-            self.check_pulled()
-            self.__hf_groups = merge_fragmented_groups(self.__hf_groups, self.__hf_to_meta_map)
+            if check_fragmented:
+                self.check_pulled()
+                self.__hf_groups = merge_fragmented_groups(self.__hf_groups, self.__hf_to_meta_map)
 
         return self.__hf_groups
 

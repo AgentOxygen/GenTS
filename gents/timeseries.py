@@ -81,36 +81,6 @@ def check_timeseries_conform(ts_path: str):
     return True
 
 
-def generate_time_series_error_wrapper(**args):
-    """
-    Wraps :func:`generate_time_series` with verbose error reporting.
-
-    Catches any exception raised by :func:`generate_time_series`, dumps all
-    argument values and a full traceback to stdout, then re-raises the exception.
-    Intended as an alternative submission target for ``ProcessPoolExecutor``
-    workers when detailed failure diagnostics are needed.
-
-    :param args: Keyword arguments forwarded verbatim to :func:`generate_time_series`.
-    :raises Exception: Re-raises any exception from :func:`generate_time_series`.
-    """
-    try:
-        return generate_time_series(**args)
-    except Exception as e:
-        print("=====================================================\n")
-        print(f"START of GenTS Argument Dump for {type(e)}\n")
-        print("=====================================================")
-        for entry in args:
-            print(f"\nArgument: '{entry}' \n")
-            print(args[entry])
-        print(f"\nError: '{type(e)}' \n")
-        print(e)
-        traceback.print_exc()
-        print("=====================================================\n")
-        print(f"END of GenTS Argument Dump for {type(e)}\n")
-        print("=====================================================")
-        raise type(e)(f"{e}") from e
-
-
 def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_data, overwrite=False, complevel=0, compression=None):
     """
     Writes a single time-series netCDF file for one primary variable.
@@ -179,7 +149,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
                 chunksizes = [time_chunk_size] + var_shape[1:]
 
             var_data = ts_ds.createVariable(primary_var,
-                                            agg_hf_ds.get_var_dtype(primary_var),
+                                            var_dtype,
                                             var_dims,
                                             complevel=complevel,
                                             compression=compression,
@@ -382,7 +352,12 @@ class TSCollection:
                 
                 times = []
                 for path in hf_paths:
-                    times.append(self.__hf_collection[path].get_cftimes())
+                    time_bnds = self.__hf_collection[path].get_cftime_bounds()
+                    if time_bnds is None:
+                        time = self.__hf_collection[path].get_cftimes()
+                    else:
+                        time = [time_bnds[0][0] + (time_bnds[0][1] - time_bnds[0][0]) / 2]
+                    times.append(time)
                 times = np.concatenate(times)
                 start_time = min(times)
                 end_time = max(times)
@@ -425,10 +400,10 @@ class TSCollection:
         return len(self.__orders)
 
     def items(self):
-        return self.__orders.items()
+        return self.__orders
 
     def values(self):
-        return self.__orders.values()
+        return self.__orders
     
     def get_hf_collection(self):
         """
@@ -657,21 +632,22 @@ class TSCollection:
         for order_dict in copy.deepcopy(self.__orders):
             if fnmatch.fnmatch(order_dict["primary_var"], var_glob):
                 dt = self.__hf_collection.get_timestep_delta(order_dict["hf_paths"][0])
-                hours = np.rint(dt.total_seconds() / 60.0 / 60.0)
-                days = np.rint(hours / 24.0)
-                months = np.rint(days / 30)
-                years = np.rint(months / 12)
 
                 if dt is None:
                     timestep_label = "unsorted"
-                elif hours < 24:
-                    timestep_label = f"hour_{int(hours)}"
-                elif days < 28:
-                    timestep_label = f"day_{int(days)}"
-                elif months < 12:
-                    timestep_label = f"month_{int(months)}"
                 else:
-                    timestep_label = f"year_{int(years)}"
+                    hours = np.rint(dt.total_seconds() / 60.0 / 60.0)
+                    days = np.rint(hours / 24.0)
+                    months = np.rint(days / 30)
+                    years = np.rint(months / 12)
+                    if hours < 24:
+                        timestep_label = f"hour_{int(hours)}"
+                    elif days < 28:
+                        timestep_label = f"day_{int(days)}"
+                    elif months < 12:
+                        timestep_label = f"month_{int(months)}"
+                    else:
+                        timestep_label = f"year_{int(years)}"
 
                 template = Path(order_dict["ts_path_template"])
                 order_dict["ts_path_template"] = str(template.parent) + f"/{timestep_label}/" + template.name
@@ -707,7 +683,7 @@ class TSCollection:
         for order_dict in self.__orders:
             makedirs(Path(order_dict['ts_path_template']).parent, exist_ok=exist_ok)
 
-    def execute(self, optimize=True, optimize_batch_n=200):
+    def execute(self, optimize=True, optimize_batch_n=200, raise_errors=False):
         """
         Executes all time-series generation orders in parallel.
 
@@ -726,6 +702,9 @@ class TSCollection:
         :param optimize_batch_n: Maximum number of variables per optimised batch.
             Defaults to ``200``.
         :type optimize_batch_n: int
+        :param raise_errors: If ``True`` (default ``False``), calls errors are raised
+            rather than just logged.
+        :type raise_errors: bool
         :returns: List of paths to all generated time-series output files.
         :rtype: list[str]
         """
@@ -789,8 +768,15 @@ class TSCollection:
             futures = {executor.submit(generate_time_series, **args): args for args in optimized_orders}
             prog_bar = ProgressBar(total=len(futures), label="Generating Timeseries")
             for future in as_completed(futures):
-                results.append(future.result())
-                prog_bar.step()
+                try:
+                    results.append(future.result())
+                except Exception as exc:
+                    path = futures[future]
+                    logger.warning(f"Failed to load metadata for {path}: {exc}")
+                    if raise_errors:
+                        raise exc
+                finally:
+                    prog_bar.step()
         
         output_paths = []
         for result in results:

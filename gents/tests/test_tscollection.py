@@ -57,7 +57,7 @@ def test_generate_time_series(simple_case):
 
     ts_args[var_name]["complevel"] = 9
     ts_args[var_name]["compression"] = "zlib"
-    ts_args[var_name]["overwrite"] = "True"
+    ts_args[var_name]["overwrite"] = True
     ts_path = generate_time_series(hf_paths, f"{output_head_dir}/test_ts.", ["time", "time_bounds"], ts_args)[0]
 
     assert getsize(ts_path) < original_size
@@ -289,7 +289,7 @@ def test_simple_monthly_case_timestr(simple_monthly_case):
     compare_timestr(hf_collection, ts_paths, 30, "%Y%m")
 
 
-def test_simple_monthly_case_timestr(simple_yearly_case):
+def test_simple_yearly_case_timestr(simple_yearly_case):
     """Yearly TS filenames use the ``%Y`` timestamp format."""
     input_head_dir, output_head_dir = simple_yearly_case
     hf_collection = HFCollection(input_head_dir)

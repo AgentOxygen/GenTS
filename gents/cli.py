@@ -65,15 +65,33 @@ def parse_arguments():
         help="Maximum length of individual time series files in years. (Default 10)"
     )
     parser.add_argument(
-        "-nc", "--numcores",
+        "-hc", "--hfcores",
         type=int,
         default=64,
-        help="Maximum number of cores to use if running in parallel. (Default 64)"
+        help="Maximum number of cores to use for metadata-reads if running in parallel. (Default 64)"
+    )
+    parser.add_argument(
+        "-tc", "--tscores",
+        type=int,
+        default=8,
+        help="Maximum number of cores to use for writing timeseries if running in parallel. (Default 8)"
     )
     parser.add_argument(
         "-e3", "--e3sm",
         action="store_true",
         help="Enable E3SM configuration."
+    )
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        help="Pattern to exclude (can be specified multiple times). Overrides default."
+    )
+    parser.add_argument(
+        "--include",
+        action="append",
+        default=[],
+        help="Pattern to include (can be specified multiple times). Overrides default."
     )
     return parser.parse_args()
 
@@ -113,6 +131,7 @@ def main():
         print(f"  Overwrite TS Files           : {args.overwrite}")
         print(f"  Slice size                   : {args.slice}")
         print(f"  Dry run                      : {args.dryrun}")
-        print(f"  Number of processes (cores)  : {args.numcores}")
+        print(f"  Number of HF processes (cores)  : {args.hfcores}")
+        print(f"  Number of TS processes (cores)  : {args.tscores}")
 
     run_config(args)

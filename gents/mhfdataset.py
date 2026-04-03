@@ -94,8 +94,9 @@ class MHFDataset:
         """
         Closes all open netCDF4 file handles.
         """
-        for ds in self.__hf_datasets:
-            ds.close()
+        if self.__hf_datasets is not None:
+            for ds in self.__hf_datasets:
+                ds.close()
 
     def get_time_vals(self):
         """
