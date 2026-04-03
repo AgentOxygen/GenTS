@@ -149,7 +149,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
                 chunksizes = [time_chunk_size] + var_shape[1:]
 
             var_data = ts_ds.createVariable(primary_var,
-                                            agg_hf_ds.get_var_dtype(primary_var),
+                                            var_dtype,
                                             var_dims,
                                             complevel=complevel,
                                             compression=compression,
@@ -352,7 +352,12 @@ class TSCollection:
                 
                 times = []
                 for path in hf_paths:
-                    times.append(self.__hf_collection[path].get_cftimes())
+                    time_bnds = self.__hf_collection[path].get_cftime_bounds()
+                    if time_bnds is None:
+                        time = self.__hf_collection[path].get_cftimes()
+                    else:
+                        time = [time_bnds[0][0] + (time_bnds[0][1] - time_bnds[0][0]) / 2]
+                    times.append(time)
                 times = np.concatenate(times)
                 start_time = min(times)
                 end_time = max(times)
