@@ -98,8 +98,9 @@ class ProgressBar:
         self.total = total
         self.length = length
         self.start_time = time()
-        self.count = 0
+        self.count = -1
         self.label = label
+        self.step()
 
     def step(self):
         """
