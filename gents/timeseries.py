@@ -6,7 +6,6 @@ Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
 Last Header Update: 01/31/25
 """
-import netCDF4
 import numpy as np
 import fnmatch
 from os.path import isfile
@@ -14,6 +13,7 @@ from os import remove, makedirs
 from pathlib import Path
 from gents.meta import get_attributes
 from gents.mhfdataset import MHFDataset
+from gents.datastore import GenTSDataStore
 from gents.utils import get_version, LOG_LEVEL_IO_WARNING, ProgressBar
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import traceback
@@ -37,7 +37,7 @@ def check_timeseries_integrity(ts_path: str):
     :rtype: bool
     """
     try:
-        with netCDF4.Dataset(ts_path, mode="r") as ts_ds:
+        with GenTSDataStore(ts_path, mode="r") as ts_ds:
             attrs = get_attributes(ts_ds)
         if "gents_version" in attrs:
             return True
@@ -62,7 +62,7 @@ def check_timeseries_conform(ts_path: str):
         ``False`` otherwise.
     :rtype: bool
     """
-    with netCDF4.Dataset(ts_path, mode="r") as ts_ds:
+    with GenTSDataStore(ts_path, mode="r") as ts_ds:
         if list(ts_ds["time"].chunking()) != list(ts_ds["time"].shape):
             return False
         for variable in ts_ds.variables:
@@ -131,7 +131,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
         else:
             remove(ts_out_path)
 
-    with netCDF4.Dataset(ts_out_path, mode="w") as ts_ds:
+    with GenTSDataStore(ts_out_path, mode="w") as ts_ds:
         if primary_var != "auxiliary":
             var_shape = agg_hf_ds.get_var_data_shape(primary_var)
             var_dims = agg_hf_ds.get_var_dimensions(primary_var)

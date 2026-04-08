@@ -2,7 +2,7 @@ from gents.utils import get_version
 from gents.hfcollection import HFCollection
 from gents.timeseries import TSCollection
 from gents.tests.test_cases import *
-from netCDF4 import Dataset
+from gents.datastore import GenTSDataStore
 from os import listdir, makedirs, rename
 import pytest
 import numpy as np
@@ -38,7 +38,7 @@ def test_simple_workflow(simple_case):
     
     for path in ts_paths:
         assert "*" not in path
-        with Dataset(path, 'r') as ts_ds:
+        with GenTSDataStore(path, 'r') as ts_ds:
             assert ts_ds["time"].size == SIMPLE_NUM_TEST_HIST_FILES
             assert ts_ds["time_bounds"].shape[0] == SIMPLE_NUM_TEST_HIST_FILES
             assert ts_ds.getncattr("gents_version") == get_version()
@@ -50,7 +50,7 @@ def test_simple_workflow(simple_case):
                 assert time_bounds.count() == 2
                 assert time_bounds[0] <= ts_ds["time"][index] <= time_bounds[1]
                 
-                with Dataset(list(hf_collection)[index], 'r') as hf_ds:
+                with GenTSDataStore(list(hf_collection)[index], 'r') as hf_ds:
                     assert (ts_ds[var_name][index] == hf_ds[var_name]).all()
 
                     for key in hf_ds.ncattrs():
@@ -71,7 +71,7 @@ def test_simple_workflow_slicing(simple_case):
     for path in ts_paths:
         assert "[sorting_pivot]" not in path
         assert "*" not in path
-        with Dataset(path, 'r') as ts_ds:
+        with GenTSDataStore(path, 'r') as ts_ds:
             assert ts_ds["time"].size == ts_ds["time_bounds"].shape[0]
 
             for index in range(ts_ds["time"].size):
@@ -99,7 +99,7 @@ def test_time_bounds_workflow(time_bounds_case):
     ts_paths = ts_collection.execute()
 
     for path in ts_paths:
-        with Dataset(path, 'r') as ts_ds:
+        with GenTSDataStore(path, 'r') as ts_ds:
             assert "Time_Bounds" in ts_ds.variables
             assert "Time" in ts_ds.variables
             assert "Time" in ts_ds.dimensions
@@ -119,13 +119,13 @@ def test_no_time_bounds_workflow(no_time_bounds_case):
     assert len(ts_paths) == SIMPLE_NUM_VARS
     
     for path in ts_paths:
-        with Dataset(path, 'r') as ts_ds:
+        with GenTSDataStore(path, 'r') as ts_ds:
             assert ts_ds["time"].size == SIMPLE_NUM_TEST_HIST_FILES
             assert ts_ds.getncattr("gents_version") == get_version()
             var_name = path.split(".")[-3]
             
             for index in range(ts_ds["time"].size):
-                with Dataset(list(hf_collection)[index], 'r') as hf_ds:
+                with GenTSDataStore(list(hf_collection)[index], 'r') as hf_ds:
                     assert (ts_ds[var_name][index] == hf_ds[var_name]).all()
 
                     for key in hf_ds.ncattrs():
@@ -145,7 +145,7 @@ def test_scrambled_workflow(scrambled_case):
     assert len(ts_paths) == SCRAMBLED_NUM_VARS
 
     for path in ts_paths:
-        with Dataset(path, 'r') as ts_ds:
+        with GenTSDataStore(path, 'r') as ts_ds:
             assert ts_ds["time"].size == SCRAMBLED_NUM_TEST_HIST_FILES
             assert is_monotonic(ts_ds["time"][:])
 
@@ -172,7 +172,7 @@ def test_multistep_workflow(multistep_case):
     assert len(ts_paths) == SIMPLE_NUM_VARS
 
     for path in ts_paths:
-        with Dataset(path, 'r') as ts_ds:
+        with GenTSDataStore(path, 'r') as ts_ds:
             assert is_monotonic(ts_ds["time"][:])
 
 
@@ -185,7 +185,7 @@ def test_with_auxiliary_workflow(with_auxiliary_case):
 
     assert len(ts_paths) == 1
 
-    with Dataset(ts_paths[0], 'r') as ts_ds:
+    with GenTSDataStore(ts_paths[0], 'r') as ts_ds:
         assert is_monotonic(ts_ds["time"][:])
         for var_index in range(SIMPLE_NUM_VARS):
             assert f"VAR_AUX_{var_index}" in ts_ds.variables
@@ -206,7 +206,7 @@ def test_modified_extensions_workflow(simple_case):
     assert len(ts_paths) == SIMPLE_NUM_VARS
     
     for path in ts_paths:
-        with Dataset(path, 'r') as ts_ds:
+        with GenTSDataStore(path, 'r') as ts_ds:
             assert ts_ds["time"].size == SIMPLE_NUM_TEST_HIST_FILES
 
 
@@ -222,7 +222,7 @@ def test_spatially_fragmented_workflow(spatial_fragment_case):
     assert len(ts_paths) == SIMPLE_NUM_VARS
 
     for path in ts_paths:
-        with Dataset(path, 'r') as ds:
+        with GenTSDataStore(path, 'r') as ds:
             assert ds["lat"].size == FRAGMENTED_NUM_LAT_FILES*FRAGMENTED_NUM_LAT_PTS_PER_HF
             assert ds["lon"].size == FRAGMENTED_NUM_LON_FILES*FRAGMENTED_NUM_LON_PTS_PER_HF
             assert ds["time"].size == FRAGMENTED_NUM_TIMESTEPS

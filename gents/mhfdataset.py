@@ -1,4 +1,4 @@
-from netCDF4 import Dataset
+from gents.datastore import GenTSDataStore
 from pathlib import Path
 from gents.meta import get_attributes, get_time_variables_names
 from cftime import num2date
@@ -72,7 +72,7 @@ class MHFDataset:
         :raises Exception: If the spatial fragmentation is not consistent over time.
         """
         if self.__hf_datasets is None:
-            self.__hf_datasets = [Dataset(path, 'r') for path in self.__hf_files]
+            self.__hf_datasets = [GenTSDataStore(path, 'r') for path in self.__hf_files]
             self.__time_name, self.time_bnds_name = get_time_variables_names(self.__hf_datasets[0])
             self.__time_vals = [np.squeeze(hf_data[self.__time_name][:]) for hf_data in self.__hf_datasets]
 

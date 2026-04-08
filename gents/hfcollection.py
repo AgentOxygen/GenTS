@@ -15,7 +15,6 @@ import numpy as np
 import os
 import fnmatch
 import cftime
-import netCDF4
 import warnings
 import logging
 import copy

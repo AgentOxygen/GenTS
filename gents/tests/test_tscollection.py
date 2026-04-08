@@ -1,9 +1,9 @@
 from gents.tests.test_cases import *
 from gents.hfcollection import HFCollection, find_files
+from gents.datastore import GenTSDataStore
 from gents.timeseries import *
 from os.path import isfile, getsize, isdir
 from os import listdir, remove, makedirs
-from netCDF4 import Dataset
 from shutil import rmtree
 from cftime import num2date
 import warnings
@@ -44,11 +44,11 @@ def test_generate_time_series(simple_case):
     assert isfile(ts_path)
     assert check_timeseries_integrity(ts_path)
 
-    with Dataset(ts_path, 'r') as ts_ds:
+    with GenTSDataStore(ts_path, 'r') as ts_ds:
         assert ts_ds["time"][:].size == len(hf_paths)
         
         for index in range(len(hf_paths)):
-            with Dataset(hf_paths[index], 'r') as hf_ds:
+            with GenTSDataStore(hf_paths[index], 'r') as hf_ds:
                 assert (ts_ds[var_name][:][index] == hf_ds[var_name][:]).all()
         assert "time" in ts_ds.variables
         assert "time_bounds" in ts_ds.variables
@@ -238,7 +238,7 @@ def test_ts_collection_append_timestep_dirs(mixed_timestep_case):
 
 
 def compare_timestr(hf_collection, ts_paths, timestep, time_format):
-    with Dataset(list(hf_collection)[0], 'r') as hf_ds:
+    with GenTSDataStore(list(hf_collection)[0], 'r') as hf_ds:
         units = hf_ds["time"].units
         calendar = hf_ds["time"].calendar
         start_time = hf_ds["time"][:][0]
@@ -325,7 +325,7 @@ def test_chunking(large_file_for_chunking_case):
 
     for path in ts_paths:
         assert check_timeseries_conform(path)
-        with Dataset(path, 'r') as ts_ds:
+        with GenTSDataStore(path, 'r') as ts_ds:
             assert list(ts_ds["VAR0"].chunking()) != list(ts_ds["VAR0"].shape)
 
 def test_dask_deprecation_warning(simple_case):

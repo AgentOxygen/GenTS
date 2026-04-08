@@ -1,4 +1,4 @@
-from netCDF4 import Dataset
+from gents.datastore import GenTSDataStore
 from os import makedirs
 import numpy as np
 import pytest
@@ -52,7 +52,7 @@ def generate_history_file(
             "lev": 1
         }
     
-    with Dataset(path, "w", format=nc_format) as ds:
+    with GenTSDataStore(path, "w", format=nc_format) as ds:
         for dim in dim_shapes:
             ds.createDimension(dim, dim_shapes[dim])
             if dim in dim_vals:
