@@ -10,5 +10,11 @@ API
 .. automodule:: gents.timeseries
    :members:
 
+.. automodule:: gents.mhfdataset
+   :members:
+
 .. automodule:: gents.utils
+   :members:
+
+.. automodule:: gents.cli
    :members:

@@ -6,27 +6,24 @@
 GenTS documentation
 ===================
 
-Generate Time Series (GenTS) is an open-source Python library and tool for converting output from Earth System Models and Global Climate models in the "history file" format to the "time series" format. GenTS utilizes a simplified Python interface to make this common post-processing task as easy as possible and leverages Dask parallelism for optimal performance.
+Generate Time Series (GenTS) is an open-source Python library and tool for converting output from Earth System Models and Global Climate models in the "history file" format to the "time series" format. GenTS utilizes a simplified Python interface to make this common post-processing task as easy as possible and leverages parallelism for optimal performance.
 
-.. image:: assets/SoftwareStack.PNG
-   :width: 600
-
-GenTS consolidates the conversion of history files to time series files into three steps:
+GenTS consolidates the conversion of history files to time series files into four steps:
 
 #. Detect and read the metadata for all history files into a ``HFCollection`` 
 #. Apply filters to include/exclude certain history files and then group them by model component (sub directory) and namelist (file name).
 #. Derive a ``TSCollection`` from the ``HFCollection`` and apply configurations/filters to obtain the desired time series files
-#. Generate an embarrasingly parallel workload that can be executed using a Dask cluster to generate each fo the time series files
-
-Each of these steps can be accelerated by a Dask cluster, either created locally (using a LocalCluster) or connected to over a distributed system (such as PBS or SLURM using Dask-Jobqueue). This process is visualized below.
-
-Note that after groups are created, the user can specify additional group settings such as slicing the timeseries into chunks of a specified length (10 years by default). All filtering and grouping functions are described in the User Guide (with more to come in the future).
+#. Generate an embarrasingly parallel workload to write the time series files
 
 .. image:: assets/ProcessSchematic.PNG
    :width: 600
 
+These steps can be executed through a command-line interface (CLI) or via a Python script using the API. Model specific configurations for CESM3, CESM2, and E3SM are included in the CLI.
+
+Note that the framework for GenTS is intended to be agnostic to the format of model output (making it more resilient to future model updates). Configurations for CESM, E3SM, and NorESM all use different implementations of the same GenTS API. Therefore, API functions in the core GenTS library are not model-specific. Instead, Python scripts that use GenTS functions are provided for each model under `gents/configs`. These scripts are then called by the CLI.
+
 .. toctree::
     install
     user
+    dev
     api
-    tests

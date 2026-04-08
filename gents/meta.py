@@ -6,12 +6,12 @@ Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
 Last Header Update: 07/03/25
 """
-import netCDF4
 import numpy as np
 from cftime import num2date
+from gents.datastore import GenTSDataStore
 
 
-def is_var_secondary(variable: netCDF4._netCDF4._Variable,
+def is_var_secondary(variable,
                      secondary_vars: list = ["time_bnds", "time_bnd", "time_bounds", "time_bound"],
                      secondary_dims: list = ["nbnd", "chars", "string_length", "hist_interval"],
                      max_num_dims: int = 1,
@@ -127,7 +127,7 @@ class netCDFMeta:
     :mod:`gents.hfcollection`.
     """
 
-    def __init__(self, ds: netCDF4.Dataset, path: str):
+    def __init__(self, ds, path: str):
         """
         Reads and caches metadata from an open netCDF4 dataset.
 
@@ -361,7 +361,7 @@ def get_meta_from_path(path: str):
     """
     ds_meta = None
     try:
-        with netCDF4.Dataset(path, 'r') as ds:
+        with GenTSDataStore(path, 'r') as ds:
             ds_meta = netCDFMeta(ds, path)
     except Exception as e:
         raise type(e)(f"{e} Path: {path}") from e

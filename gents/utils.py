@@ -8,7 +8,6 @@ Last Header Update: 07/03/25
 """
 from time import time
 from importlib.metadata import version
-from netCDF4 import Dataset
 import logging
 import sys
 import datetime

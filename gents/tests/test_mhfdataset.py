@@ -1,7 +1,7 @@
 from gents.tests.test_cases import *
 from gents.mhfdataset import *
 from gents.hfcollection import HFCollection
-from netCDF4 import Dataset
+from gents.datastore import GenTSDataStore
 import numpy as np
 
 

@@ -7,39 +7,19 @@ The GenTS (Generate Time Series) is an open-source Python Package designed to si
 
     from gents.hfcollection import HFCollection
     from gents.timeseries import TSCollection
-    from dask.distributed import LocalCluster, Client
-    
-    cluster = LocalCluster(n_workers=30, threads_per_worker=1, memory_limit="2GB")
-    client = cluster.get_client()
     
     input_head_dir = "... case directory with model output ..."
     output_head_dir = "... scratch directory to output time series to ..."
-    
-    hf_collection = HFCollection(input_head_dir)
-    hf_collection = hf_collection.include_patterns(["*/atm/*", "*/ocn/*", "*.h4.*"])
-    hf_collection.pull_metadata()
-    
-    ts_collection = TSCollection(hf_collection.include_years(0, 5), output_head_dir)
+
+    hf_collection = HFCollection(input_head_dir, num_processes=64)
+    hf_collection = hf_collection.include(["*/atm/*", "*/ocn/*", "*.h4.*"])
+
+    ts_collection = TSCollection(hf_collection.include_years(0, 5), output_head_dir, num_processes=32)
     ts_collection = ts_collection.apply_overwrite("*")
     ts_collection.execute()
 
 
-The bulk of functionality in this package is provided by two Python classes: ``gents.hfcollection.HFCollection`` and ``gents.timeseries.TSCollection``. These classes centralize the organization of history files and provides an interface for customizing time series output through sequences of operations. In general, the user begins by spinning up a Dask cluster and then defining a ``HFCollection`` which searches recursively through a directory structure for history files. The user can then optionally apply filters to the selection to include only specific history file types. Once the desired history files have been identified, the class object automatically groups them by sub-directory and file name patterns. The user then creates a ``TSCollection`` from the populated ``HFCollection`` which organizes the history file groupings into a list of Dask delayed function calls that can be sent to a cluster for distributed computing.
-
-Creating a Dask Cluster
------------------------
-
-GenTS utilizes the `Dask <https://docs.dask.org/en/stable/>`_ Python library for distributed computing. By utilizing multiple cores across multiple nodes, Dask allows GenTS to achieve significantly higher throughput than purely serial post-processing. Creating a cluster on a local machine is relatively simple. For example, here we create a cluster of 30 workers, each with 2GB of memory, on a single machine:
-
-.. code-block:: python
-
-    from dask.distributed import LocalCluster, Client
-    cluster = LocalCluster(n_workers=30, threads_per_worker=1, memory_limit="2GB")
-    client = cluster.get_client()
-
-"Workers" are Dask processes that will recieve tasks to then compute with their allocated resources. Workers can have multiple threads, but since GenTS is mostly I/O, multithreading does not offer much performance uplift. The memory overhead is dependent on the grid size of the datasets, since GenTS chunks over time steps by default. The number of workers for a ``LocalCluster`` should not exceed the number of cores available on the machine. It should be noted this process is I/O bottlenecked, meaning the GenTS is more likely to encounter data-transfer limits than CPU limits. Depending on the machine and its connectivity to the file system, allocating additional workers/cores at a certain point may not improve performance (or could even slow it down). Some testing is required, but some amount of parallelism is likely going to be signficantly faster than pure serial processing.
-
-Once the I/O bottleneck has been identified on a single machine, Dask can interface with job schedulers to leverage multiple nodes allowing it to scale with even larger datasets.
+The bulk of functionality in this package is provided by two Python classes: ``gents.hfcollection.HFCollection`` and ``gents.timeseries.TSCollection``. These classes centralize the organization of history files and provides an interface for customizing time series output through sequences of operations. In general, the user begins by defining a ``HFCollection`` which searches recursively through a directory structure for history files. The user can then optionally apply filters to the selection to include only specific history file types. Once the desired history files have been identified, ``HFCollection`` automatically groups them by sub-directory and file name patterns. The user then creates a ``TSCollection`` from the populated ``HFCollection`` which organizes the history file groupings into a list of executable functions that create the time series files. These functions run indepedently of each other in an embarrasingly parallel scheme using the Python Standard Library ``ProcessPoolExecutor``. However, they may be ported to third-party distributed computing libraries such as `Dask <https://docs.dask.org/en/stable/>`_ .
 
 Creating the ``HFCollection``
 -----------------------------
@@ -64,29 +44,35 @@ The ``gents.meta.netCDFMeta`` stores useful metadata information that can be qui
 
 .. code-block:: python
 
-    hf_collection = hf_collection.include_patterns(["*.h1.*"])
+    hf_collection = hf_collection.include(["*.h1.*"])
     first_entry_path = list(hf_collection)[0]
     hf_collection.pull_metadata()
     first_entry_meta = hf_collection[first_entry_path]
 
-Note that ``HFCollection.include_patterns`` is called before the metadata is pulled. This allows GenTS to filter out history files that do not include the specified patterns and avoid unnecessary header reads. Although header reads are lightweight (~2-10 ms each), with thousands of files they can start to add up and this process must be repeated (at the moment) each time the Python kernel is restarted. This is also just an information-gathering stage, so no actual work is being done to post-process the data (just reading, no writing). This process can be done in serial, but it is reccomended to pull metadata after creating a Dask cluster to save time.
-
-Similarly, we can exclude patterns using ``HFCollection.exclude_patterns`` too:
+Note that ``HFCollection.include`` is called before the metadata is pulled. This allows GenTS to filter out history files that do not include the specified patterns and avoid unnecessary header reads. Similarly, we can exclude patterns using ``HFCollection.exclude`` too:
 
 .. code-block:: python
 
-    hf_collection = hf_collection.exclude_patterns(glob_patterns=["*.once.*", "*/rof/*"])
+    hf_collection = hf_collection.exclude(glob=["*.once.*", "*/rof/*"])
     first_entry_path = list(hf_collection)[0]
     hf_collection.pull_metadata()
     first_entry_meta = hf_collection[first_entry_path]
 
-Note that the user can specify multiple entries as glob patterns which can filter directories too (the glob pattern is applied to the absolute path string). Both ``HFCollection.include_patterns`` and ``HFCollection.exclude_patterns`` should be executed before pulling metadata for optimal performance. These functions also return copies of the ``HFCollection`` that allow the user to create multiple objects for better organization:
+Note that the user can specify multiple entries as glob patterns which can filter directories too (the glob pattern is applied to the absolute path string). Both ``HFCollection.include`` and ``HFCollection.exclude`` should be executed before pulling metadata for optimal performance. Although header reads are lightweight, thousands of files can start to add up and this process must be repeated each time the Python kernel is restarted. This can be done in serial (as above), but it is reccomended to specify multiple cores when initializing ``HFCollection`` to parallelize the process. Since gathering metadata is lightwieght and read-only, the throughput generally scales strongly with the number of cores:
 
 .. code-block:: python
 
-    hf_atm_only = hf_collection.include_patterns(glob_patterns=["*/atm/*"])
-    hf_ocn_only = hf_collection.include_patterns(glob_patterns=["*/ocn/*"])
-    hf_lnd_only = hf_collection.include_patterns(glob_patterns=["*/lnd/*"])
+    from gents.hfcollection import HFCollection
+    hf_collection = HFCollection(hf_dir="my/file/system/scratch/GCM_run/output/history_files/", num_processes=64)
+    hf_collection.pull_metadata() # happens across 64 cores
+
+These functions also return copies of the ``HFCollection`` that allow the user to create multiple objects for better organization:
+
+.. code-block:: python
+
+    hf_atm_only = hf_collection.include(glob=["*/atm/*"])
+    hf_ocn_only = hf_collection.include(glob=["*/ocn/*"])
+    hf_lnd_only = hf_collection.include(glob=["*/lnd/*"])
 
 Note that pulling metadata for ``hf_atm_only`` in this case does not pull metadata for the other two collections. However, if metadata was pulled for ``hf_collection``, all three sub-collections would inherit those metadata objects (and thus would not need to pull again).
 
@@ -94,7 +80,7 @@ A common step may be to filter by a date-time string in the file name:
 
 .. code-block:: python
 
-    hf_2010_2019 = hf_collection.include_patterns(glob_patterns=["*20100101-20191231.nc"])
+    hf_2010_2019 = hf_collection.include(glob=["*20100101-20191231.nc"])
 
 This may work in most cases, but file names are not always reliable and may be difficult to apply across multiple model components. A more robust way of filtering is to operate over the time bounds provided in the metadata. This requires a metadata pull before running, so there is a performance hit for large datasets, but for smaller datasets the decrease is negligible:
 
@@ -102,13 +88,13 @@ This may work in most cases, but file names are not always reliable and may be d
 
     hf_2010_2019 = hf_collection.include_years(2010, 2019)
 
-Additionally, the user may combine an inclusive filter by using the ``glob_patterns`` argument:
+Additionally, the user may combine this filter with an inclusive filter by using the ``glob`` argument:
 
 .. code-block:: python
 
-    hf_atm_2010_2019 = hf_collection.include_years(2010, 2019, glob_patterns=["*/atm/*"])
+    hf_atm_2010_2019 = hf_collection.include_years(2010, 2019, glob=["*/atm/*"])
 
-Note that the glob patterns are applied after pulling metadata, so this function is designed for convenience rather than performance. ``HFCollection.include_years`` will automatically pull metadata if it has not already been done so by the user.
+Note that the glob patterns are applied after pulling metadata, so this argument is designed for convenience rather than performance (``HFCollection.include`` is preferred). ``HFCollection.include_years`` will automatically pull metadata if it has not already been done so by the user.
 
 Creating the ``TSCollection``
 -----------------------------
@@ -117,9 +103,9 @@ Once an ``HFCollection`` has been created and configured, a ``TSCollection`` may
 
 .. code-block:: python
 
-    ts_collection = TSCollection(hf_collection, output_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir, num_processes=16)
 
-Metadata for ``hf_collection`` will automatically  be pulled if not done so already. Similar to ``HFCollection``, inclusive and exclusive operations may be applied over the history file paths, but ``TSCollection`` adds variable-level filtering to singular path globs (whereas ``HFCollection`` didn't allow for per-variable filtering but could handle multiple path globs):
+Metadata for ``hf_collection`` will automatically  be pulled if not done so already. Note that the ``num_processes`` argument allows the user to parallelize time series generation across multiple cores. This is an I/O heavy process due to fully reading and writing netCDF files, so there is a limit to how strongly it scales with the number of cores allocated (scaling depends on the file system and networking). In general, scaling is much weaker than the metadata reads with ``HFCollection``. Similar to ``HFCollection``, inclusive and exclusive operations may be applied over the history file paths, but ``TSCollection`` adds variable-level filtering to singular path globs (whereas ``HFCollection`` didn't allow for per-variable filtering but could handle multiple path globs):
 
 .. code-block:: python
 
@@ -164,10 +150,28 @@ Note that swaps are made using the built-in ``replace`` string function, so matc
 
     print(list(ts_collection))
 
-The above code will print the list of time series dictionaries. By default, ``TSCollection`` compiles this list of arguments into a list of Dask delayed functions which can be executed across a Dask cluster. This allows the user to simply execute all time series generation functions in parallel:
+The above code will print the list of time series dictionaries. By default, ``TSCollection`` parses this list of arguments into a ``ProcessPoolExecutor`` if ``num_processes > 1``. This allows the user to simply execute all time series generation functions:
 
 .. code-block:: python
 
     ts_collection.execute()
 
-The list-type interface of ``TSCollection`` allows the user to directly modify the inputs to ``gents.timeseries.generate_time_series`` and build custom Dask workflows if necessary.
+Custom Dask Workflows with ``TSCollection``
+-----------------------------
+
+The list-type interface of ``TSCollection`` allows the user to directly modify the inputs to ``gents.timeseries.generate_time_series`` and build custom workflows if necessary. For example, if using Dask:
+
+.. code-block:: python
+
+    from dask import delayed
+    from dask.distributed import LocalCluster, Client
+    from gents.timeseries import generate_time_series
+
+    cluster = LocalCluster(n_workers=30, threads_per_worker=1, memory_limit="2GB")
+    client = cluster.get_client()
+
+    delayed_orders = []
+    for args in ts_collection:
+        delayed_orders.append(delayed(generate_time_series)(**args))
+    
+    client.compute(delayed_orders, sync=True)
