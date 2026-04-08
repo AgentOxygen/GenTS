@@ -1,7 +1,7 @@
 Installation
 ============
 
-You can install GenTS through PyPI or from source.
+You can install GenTS through PyPI, Container, or from source.
 
 pip
 ----
@@ -10,14 +10,22 @@ Pip can be used to easily install GenTS along with all of its dependencies in an
 
 .. code-block:: console
 
-    pip install gents['parallel']
+    pip install gents
 
-If you only wish to have the serial version of GenTS (without Dask for parallel computing), you can omit the ``['parallel']`` optional dependency group:
+Container
+---------
+
+GenTS is available in a pre-built Docker image from DockerHub at `agentoxygen/gents`. Most HPC container platforms such as Singularity and Apptainer natively support pulling from DockerHub. For calling the CLI:
 
 .. code-block:: console
 
-    pip install gents
+    apptainer run docker://agentoxygen/gents:latest run_gents --help
 
+Similarly, for accessing the Python environment:
+
+.. code-block:: console
+
+    apptainer run docker://agentoxygen/gents:latest python
 
 Source
 ------
@@ -33,10 +41,11 @@ Then install the package locally using ``pip``.
 
 .. code-block:: console
 
-    pip install -e .['parallel']
+    pip install -e .
 
 Alternatively, you can build the Docker image and run a virtual Python environment with only GenTS and its full dependencies installed:
 
 .. code-block:: console
+
     docker build -t gents:latest .
-    docker run --rm -it -v .:/project gents python
+    docker run --rm -it -v .:/usr/local/gents gents python
