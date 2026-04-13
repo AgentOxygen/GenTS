@@ -518,6 +518,9 @@ class HFCollection:
         self.__raw_paths = find_files(hf_dir, hf_glob_pattern)
         self.__num_processes = num_processes
 
+        if len(self.__raw_paths) == 0:
+            raise FileNotFoundError(f"No files matching '{hf_glob_pattern}' found in '{hf_dir}'")
+
         self.__hf_to_meta_map = {}
         if meta_map is None:
             for path in self.__raw_paths:
