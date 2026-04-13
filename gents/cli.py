@@ -77,21 +77,27 @@ def parse_arguments():
         help="Maximum number of cores to use for writing timeseries if running in parallel. (Default 8)"
     )
     parser.add_argument(
-        "-e3", "--e3sm",
-        action="store_true",
-        help="Enable E3SM configuration."
+        "-m", "--model",
+        type=str,
+        default="none",
+        help="Specify a model default GenTS configuration to use. ('CESM3', 'CESM2', 'E3SM')"
     )
     parser.add_argument(
         "--exclude",
         action="append",
         default=[],
-        help="Pattern to exclude (can be specified multiple times). Overrides default."
+        help="Pattern to exclude (can be specified multiple times). Overrides default unless '--append' used."
     )
     parser.add_argument(
         "--include",
         action="append",
         default=[],
-        help="Pattern to include (can be specified multiple times). Overrides default."
+        help="Pattern to include (can be specified multiple times). Overrides default unless '--append' used."
+    )
+    parser.add_argument(
+        "--append",
+        action="store_true",
+        help="Append arguments to base configuration instead of overwrite."
     )
     return parser.parse_args()
 
@@ -106,8 +112,8 @@ def main():
     2. Defaults ``outputdir`` to ``hf_head_dir`` when ``-o`` is not supplied.
     3. Selects the appropriate model configuration:
 
-       - ``--e3sm`` flag → imports :func:`~gents.configs.gents_e3sm.run_config` (E3SM).
-       - Otherwise → imports :func:`~gents.configs.gents_cesm3.run_config` (CESM3).
+       - ``--model e3sm`` flag → imports :func:`~gents.configs.gents_e3sm.run_config` (E3SM).
+       - ``--model cesm3`` → imports :func:`~gents.configs.gents_cesm3.run_config` (CESM3).
 
     4. If ``--verbose`` is set, prints a summary of all active settings to stdout.
     5. Delegates execution to the selected ``run_config(args)`` function.
@@ -117,21 +123,28 @@ def main():
     if args.outputdir is None:
         args.outputdir = args.hf_head_dir
     
-    if args.e3sm:
-        from gents.configs.gents_e3sm import run_config
-        model = "E3SM"
-    else:
+    args.model = args.model.lower()
+
+    if args.model == "cesm3":
         from gents.configs.gents_cesm3 import run_config
-        model = "CESM3"
-    
+    elif args.model == "e3sm":
+        from gents.configs.gents_e3sm import run_config
+    elif args.model == "none":
+        from gents.configs.gents_default import run_config
+    else:
+        raise ValueError(f"Configuration module for '{args.model}' not found ('gents.configs.gents_{args.model}' does not exist).")
+
     if args.verbose:
         print(f"  Input (HF) directory path    : {args.hf_head_dir}")
         print(f"  Output (TS) directory path   : {args.outputdir}")
-        print(f"  Model Configuration          : {model}")
+        print(f"  Model Configuration          : {args.model}")
         print(f"  Overwrite TS Files           : {args.overwrite}")
         print(f"  Slice size                   : {args.slice}")
         print(f"  Dry run                      : {args.dryrun}")
         print(f"  Number of HF processes (cores)  : {args.hfcores}")
         print(f"  Number of TS processes (cores)  : {args.tscores}")
+        print(f"  Include filters                 : {args.include}")
+        print(f"  Exclude filters                 : {args.exclude}")
+        print(f"  Append filters to defaults      : {args.append}")
 
     run_config(args)
