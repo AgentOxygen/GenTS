@@ -4,6 +4,7 @@ from gents.meta import netCDFMeta
 from gents.utils import enable_logging
 from pathlib import PosixPath
 from os.path import isfile
+import logging
 import numpy as np
 import fnmatch
 
@@ -73,6 +74,7 @@ def test_get_year_bounds(simple_case, scrambled_case, structured_case):
 
 def test_simple_hfcollection(simple_case, caplog):
     """Comprehensive test of HFCollection: file count, include/exclude, pull_metadata, check_validity, get_groups, and slice_groups."""
+    caplog.set_level(logging.WARNING, logger="gents")
     input_head_dir, output_head_dir = simple_case
     hf_collection = HFCollection(input_head_dir)
     
@@ -340,3 +342,9 @@ def test_spatially_fragmented_handling(spatial_fragment_case):
     hf_collection = HFCollection(input_head_dir)
     hf_collection = hf_collection.slice_groups()
     assert len(hf_collection.get_groups(check_fragmented=True)) == 1
+
+
+def test_no_history_files():
+    """No history files found should raise an error."""
+    with pytest.raises(FileNotFoundError) as exc:
+        empty_hfcollection = HFCollection("")

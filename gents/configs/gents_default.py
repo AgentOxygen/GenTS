@@ -27,11 +27,11 @@ def run_config(args):
         if len(args.exclude) > 0:
             exclude_patterns = args.exclude
 
-    hf_collection = HFCollection(args.hf_head_dir, num_processes=args.numcores)
-    hf_collection = hf_collection.include(include_patterns).exclude(exclude_patterns)
-    hf_collection = hf_collection.slice_groups(slice_size_years=args.slice)
-    ts_collection = TSCollection(hf_collection, args.outputdir, num_processes=args.numcores)
-    ts_collection = ts_collection.apply_path_swap("/hist/", "/proc/tseries/").append_timestep_dirs()
+    hf_collection = HFCollection(args.hf_head_dir, num_processes=args.hfcores)
+    hf_collection = hf_collection.include(include_patterns).exclude(exclude_patterns).slice_groups(slice_size_years=args.slice)
+    ts_collection = TSCollection(hf_collection, args.outputdir, num_processes=args.tscores)
+    ts_collection = ts_collection.append_timestep_dirs()
+
     if args.overwrite:
         ts_collection = ts_collection.apply_overwrite("*")
 
