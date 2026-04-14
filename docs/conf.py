@@ -11,7 +11,7 @@ import gents
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = 'GenTS'
-copyright = '2025, Cameron Cummins'
+copyright = '2026, Cameron Cummins'
 author = 'Cameron Cummins'
 
 # -- General configuration ---------------------------------------------------
