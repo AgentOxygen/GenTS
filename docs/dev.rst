@@ -4,7 +4,7 @@ Developer Guide
 Core Design Choices
 -------------------
 
-1. Minimal dependency stack - Keeping the number of dependencies to a minimum reduces the complexity of installing GenTS to other environments and lowers the burden of refactoring in response to major updates. Each additional package required to run GenTS is an additional layer to maintain. As of writing this documentation, the `netCDF4-python <https://github.com/Unidata/netcdf4-python>` package is the most critical dependency with the highest exposure.
+1. Minimal dependency stack - Keeping the number of dependencies to a minimum reduces the complexity of installing GenTS to other environments and lowers the burden of refactoring in response to major updates. Each additional package required to run GenTS is an additional layer to maintain. As of writing this documentation, the `netCDF4-python <https://github.com/Unidata/netcdf4-python>`_ package is the most critical dependency with the highest exposure.
 2. Narrow Scope - GenTS only generates time series. It should not implement additional computations or modifications to the netCDF files. Such additions would add complexity at the cost of modularity. In some cases, the API should be rewritten to work more effectively with other software, but its utility should not expand to take on responsibility for tasks that other software seek to accomplish (such as CMORization or regridding).
 3. Test-Driven Development - All new features and bug fixes should `start` with new, failing tests. Modifications to the source code should then seek to pass those tests (in addition to the tests that already exist).
 

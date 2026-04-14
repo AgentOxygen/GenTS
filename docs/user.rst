@@ -1,7 +1,79 @@
 User Guide
 ==========
 
-The GenTS (Generate Time Series) is an open-source Python Package designed to simplify the post-processing of history files into time series files. This package includes streamlined functions that require minimal input to operate and documented API for custom workflows. An example code snippet is featured below:
+The GenTS (Generate Time Series) is an open-source Python Package designed to simplify the post-processing of history files into time series files. This package includes streamlined functions that require minimal input to operate and a documented API for custom workflows. Users can either interface with the command line interface (CLI) ``run_gents`` or develop custom Python workflows by importing the ``gents`` module.
+
+Using the Command Line Interface (CLI)
+--------------------------------------
+
+To get help output:
+
+.. code-block:: console
+
+    run_gents --help
+
+This should outline CLI format, available arguments, and GenTS version. Depending on the installation method used, ``run_gents`` may contain a prefix such as ``apptainer run docker://agentoxygen/gents:latest`` for running inside containers.
+
+.. code-block:: console
+
+    run_gents <hf_head_dir> [options]
+
+``hf_head_dir`` the path to the head directory containing model output history files is the only required argument. GenTS recursively searches this directory for ``.nc`` files, groups them by sub-directory and file name pattern, and generates a corresponding set of time series files. By default, no filters are applied which will likely produce errors for case output directories. To apply the default configuration for a model, specify the ``--model`` argument:
+
+.. code-block:: console
+
+    run_gents /scratch/my_case/raw_output/ --model CESM3 --dryrun
+
+The ``--dryrun`` flag restricts GenTS to read-only operations for validating the configuration before generating new files. By default, the output directory is the same as the case directory (for CESM3, a ``proc/tseries/`` directory is created at the same level as ``hist/``). To specify a separate output directory, use the ``-o`` output path flag:
+
+
+.. code-block:: console
+
+    run_gents /scratch/my_case/raw_output/ -o /scratch/my_case/timeseries --model CESM3 --dryrun
+
+Parallelization is setup by default with 64 cores for reading metadata and 8 cores for reading/writing time series files. History file metadata reads scale strongly while time series writes scale weakly, so for a 128-core machine, you may want to adjust these sizes to leverage more parallelism (128 for metadata, 16 for writing):
+
+.. code-block:: console
+
+    run_gents /scratch/my_case/raw_output/ -o /scratch/my_case/timeseries/ --model CESM3 --dryrun --tscores 16 --hfcores 128
+
+Remove the ``--dryrun`` argument to read the CESM3 history file structure in ``/scratch/my_case/raw_output/`` and generate time series in a similar directory structure under ``/scratch/my_case/timeseries/``. In some cases, users may want to process individual model components. To do this, simply change the history file directory (example for processing only the ``atm`` directory):
+
+.. code-block:: console
+
+    run_gents /scratch/my_case/raw_output/atm/ -o /scratch/my_case/timeseries/atm/ --model CESM3 --dryrun
+
+GenTS will automatically create missing subdirectories in the output path. In some cases, the default configuration for a model may not perfectly handle the case output and read history files that should not be included. To exclude additional NetCDF files from GenTS, use the ``--exclude`` argument in combination with the ``--append`` flag:
+
+.. code-block:: console
+
+    run_gents /scratch/my_case/raw_output/atm/ --model CESM3 --dryrun --exclude "*log_file*" --append
+
+The ``--append`` flag adds this filter on top of the CESM3 default configuration (as specified by ``--model CESM3``). To replace all of the exclusive filters in the configuration, simply remove the ``--append`` flag. To exclude multiple glob patterns, use the ``--exclude`` argument multiple times:
+
+.. code-block:: console
+
+    run_gents /scratch/my_case/raw_output/atm/ --model CESM3 --dryrun --exclude "*log_file.nc" --exclude "*static.nc"
+
+Similarly, you can include files that are being excluded by default:
+
+.. code-block:: console
+
+    run_gents /scratch/my_case/raw_output/atm/ --model CESM3 --dryrun --include "*h4i*.nc"
+
+To adjust the slice length for time series output (which defaults to 10 year slices), use the ``--slice`` argument:
+
+Limit time series slice length to 5 years:
+
+.. code-block:: console
+
+    run_gents /scratch/my_case/raw_output/atm/ --model CESM3 --dryrun --slice 5
+
+
+
+Using the Python Package
+------------------------
+An example code snippet is featured below:
 
 .. code-block:: python
 
@@ -19,7 +91,7 @@ The GenTS (Generate Time Series) is an open-source Python Package designed to si
     ts_collection.execute()
 
 
-The bulk of functionality in this package is provided by two Python classes: ``gents.hfcollection.HFCollection`` and ``gents.timeseries.TSCollection``. These classes centralize the organization of history files and provides an interface for customizing time series output through sequences of operations. In general, the user begins by defining a ``HFCollection`` which searches recursively through a directory structure for history files. The user can then optionally apply filters to the selection to include only specific history file types. Once the desired history files have been identified, ``HFCollection`` automatically groups them by sub-directory and file name patterns. The user then creates a ``TSCollection`` from the populated ``HFCollection`` which organizes the history file groupings into a list of executable functions that create the time series files. These functions run indepedently of each other in an embarrasingly parallel scheme using the Python Standard Library ``ProcessPoolExecutor``. However, they may be ported to third-party distributed computing libraries such as `Dask <https://docs.dask.org/en/stable/>`_ .
+The bulk of functionality in this package is provided by two Python classes: ``gents.hfcollection.HFCollection`` and ``gents.timeseries.TSCollection``. These classes centralize the organization of history files and provides an interface for customizing time series output through sequences of operations. In general, the user begins by defining a ``HFCollection`` which searches recursively through a directory structure for history files. The user can then optionally apply filters to the selection to include only specific history file types. Once the desired history files have been identified, ``HFCollection`` automatically groups them by sub-directory and file name patterns. The user then creates a ``TSCollection`` from the populated ``HFCollection`` which organizes the history file groupings into a list of executable functions that create the time series files. These functions run independently of each other in an embarrassingly parallel scheme using the Python Standard Library ``ProcessPoolExecutor``. However, they may be ported to third-party distributed computing libraries such as `Dask <https://docs.dask.org/en/stable/>`_ .
 
 Creating the ``HFCollection``
 -----------------------------
@@ -58,7 +130,7 @@ Note that ``HFCollection.include`` is called before the metadata is pulled. This
     hf_collection.pull_metadata()
     first_entry_meta = hf_collection[first_entry_path]
 
-Note that the user can specify multiple entries as glob patterns which can filter directories too (the glob pattern is applied to the absolute path string). Both ``HFCollection.include`` and ``HFCollection.exclude`` should be executed before pulling metadata for optimal performance. Although header reads are lightweight, thousands of files can start to add up and this process must be repeated each time the Python kernel is restarted. This can be done in serial (as above), but it is reccomended to specify multiple cores when initializing ``HFCollection`` to parallelize the process. Since gathering metadata is lightwieght and read-only, the throughput generally scales strongly with the number of cores:
+Note that the user can specify multiple entries as glob patterns which can filter directories too (the glob pattern is applied to the absolute path string). Both ``HFCollection.include`` and ``HFCollection.exclude`` should be executed before pulling metadata for optimal performance. Although header reads are lightweight, thousands of files can start to add up and this process must be repeated each time the Python kernel is restarted. This can be done in serial (as above), but it is recommended to specify multiple cores when initializing ``HFCollection`` to parallelize the process. Since gathering metadata is lightweight and read-only, the throughput generally scales strongly with the number of cores:
 
 .. code-block:: python
 
@@ -99,13 +171,13 @@ Note that the glob patterns are applied after pulling metadata, so this argument
 Creating the ``TSCollection``
 -----------------------------
 
-Once an ``HFCollection`` has been created and configured, a ``TSCollection`` may be derived from it to map out and execute the post-processing. ``TSColleciton`` only requires a valid ``HFCollection`` object and a head directory to eventually output time series datasets to:
+Once an ``HFCollection`` has been created and configured, a ``TSCollection`` may be derived from it to map out and execute the post-processing. ``TSCollection`` only requires a valid ``HFCollection`` object and a head directory to eventually output time series datasets to:
 
 .. code-block:: python
 
     ts_collection = TSCollection(hf_collection, output_head_dir, num_processes=16)
 
-Metadata for ``hf_collection`` will automatically  be pulled if not done so already. Note that the ``num_processes`` argument allows the user to parallelize time series generation across multiple cores. This is an I/O heavy process due to fully reading and writing netCDF files, so there is a limit to how strongly it scales with the number of cores allocated (scaling depends on the file system and networking). In general, scaling is much weaker than the metadata reads with ``HFCollection``. Similar to ``HFCollection``, inclusive and exclusive operations may be applied over the history file paths, but ``TSCollection`` adds variable-level filtering to singular path globs (whereas ``HFCollection`` didn't allow for per-variable filtering but could handle multiple path globs):
+Metadata for ``hf_collection`` will automatically be pulled if not done so already. Note that the ``num_processes`` argument allows the user to parallelize time series generation across multiple cores. This is an I/O heavy process due to fully reading and writing netCDF files, so there is a limit to how strongly it scales with the number of cores allocated (scaling depends on the file system and networking). In general, scaling is much weaker than the metadata reads with ``HFCollection``. Similar to ``HFCollection``, inclusive and exclusive operations may be applied over the history file paths, but ``TSCollection`` adds variable-level filtering to singular path globs (whereas ``HFCollection`` didn't allow for per-variable filtering but could handle multiple path globs):
 
 .. code-block:: python
 
@@ -124,7 +196,7 @@ Just like with ``HFCollection``, both ``TSCollection.include`` and ``TSCollectio
 .. code-block:: python
 
     ts_h2_temps_only = ts_collection.include(path_glob="*.h2.*", var_glob="T*")
-    ts_h2_temps_no_pop = ts_h2_only.exclude(path_glob="*.pop.*", var_glob="*")
+    ts_h2_temps_no_pop = ts_h2_temps_only.exclude(path_glob="*.pop.*", var_glob="*")
 
 Once filtered, custom arguments can be applied to all time series or just a subset. Currently supported arguments include whether to overwrite existing time series, compression level, and compression algorithm. These arguments are passed to the `netCDF4 Python API <https://unidata.github.io/netcdf4-python/>`_. The arguments can be applied using glob patterns for both paths and variable names:
 
@@ -136,7 +208,7 @@ Once filtered, custom arguments can be applied to all time series or just a subs
 
 Note that add arguments modifies the existing ts_collection and does not return a copy. The first line sets all time series output to overwrite existing files. The second line applies level 5 compression using the "zlib" algorithm only to time series output derived from history files that contain "/atm/" in their path. The third line applies level 2 compression to all time series output with primary variables that contain the characters "HD". Note that line 3 overrides any possible overlap with line 2.
 
-By default, the output path templates ("templates" are incompate path strings where only the file prefix is provided so that date time and variable name can be assigned during generation) used for writing the time series netCDF files mirror the directory structure of the given ``HFCollection``. To modify the path template, the user may replace substrings. For example, to replace the "/hist/" subdirectory with "/tseries/":
+By default, the output path templates ("templates" are incomplete path strings where only the file prefix is provided so that date time and variable name can be assigned during generation) used for writing the time series netCDF files mirror the directory structure of the given ``HFCollection``. To modify the path template, the user may replace substrings. For example, to replace the "/hist/" subdirectory with "/tseries/":
 
 .. code-block:: python
 
@@ -144,7 +216,7 @@ By default, the output path templates ("templates" are incompate path strings wh
 
 Note that swaps are made using the built-in ``replace`` string function, so matches can be made to any part of the path string and should not use glob or re patterns.
 
-``TSCollection`` stores all time series as dictionaries in a list. Each dictionary contains contains arguments that can be passed to ``gents.timeseries.generate_time_series`` to generate a time series file. 
+``TSCollection`` stores all time series as dictionaries in a list. Each dictionary contains arguments that can be passed to ``gents.timeseries.generate_time_series`` to generate a time series file. 
 
 .. code-block:: python
 
@@ -157,7 +229,7 @@ The above code will print the list of time series dictionaries. By default, ``TS
     ts_collection.execute()
 
 Custom Dask Workflows with ``TSCollection``
------------------------------
+-------------------------------------------
 
 The list-type interface of ``TSCollection`` allows the user to directly modify the inputs to ``gents.timeseries.generate_time_series`` and build custom workflows if necessary. For example, if using Dask:
 

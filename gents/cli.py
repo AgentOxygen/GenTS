@@ -19,8 +19,12 @@ def parse_arguments():
     - ``-d`` / ``--dryrun``: Parse metadata only; do not write time-series files.
     - ``-w`` / ``--overwrite``: Overwrite existing time-series output files.
     - ``-sl`` / ``--slice``: Maximum length of individual time-series files in years (default ``10``).
-    - ``-nc`` / ``--numcores``: Maximum worker processes for parallel execution (default ``64``).
-    - ``-e3`` / ``--e3sm``: Use the E3SM model configuration instead of the default CESM3 configuration.
+    - ``-hc`` / ``--hfcores``: Maximum number of cores for parallel metadata reads (default ``64``).
+    - ``-tc`` / ``--tscores``: Maximum number of cores for parallel time-series writes (default ``8``).
+    - ``-m`` / ``--model``: Model default configuration to apply (``'CESM3'``, ``'CESM2'``, or ``'E3SM'``; default ``'none'``).
+    - ``--exclude``: Glob pattern to exclude; may be specified multiple times. Overrides the model default unless ``--append`` is also set.
+    - ``--include``: Glob pattern to include; may be specified multiple times. Overrides the model default unless ``--append`` is also set.
+    - ``--append``: Append ``--exclude``/``--include`` filters to the model default configuration instead of replacing them.
 
     :returns: Namespace object populated with parsed argument values.
     :rtype: argparse.Namespace

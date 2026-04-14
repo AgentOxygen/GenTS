@@ -6,7 +6,7 @@ You can install GenTS through PyPI, Container, or from source.
 pip
 ----
 
-Pip can be used to easily install GenTS along with all of its dependencies in any compatable Python virtual environment.
+Pip can be used to easily install GenTS along with all of its dependencies in any compatible Python virtual environment.
 
 .. code-block:: console
 
