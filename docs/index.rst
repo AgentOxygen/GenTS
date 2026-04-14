@@ -13,7 +13,7 @@ GenTS consolidates the conversion of history files to time series files into fou
 #. Detect and read the metadata for all history files into a ``HFCollection`` 
 #. Apply filters to include/exclude certain history files and then group them by model component (sub directory) and namelist (file name).
 #. Derive a ``TSCollection`` from the ``HFCollection`` and apply configurations/filters to obtain the desired time series files
-#. Generate an embarrasingly parallel workload to write the time series files
+#. Generate an embarrassingly parallel workload to write the time series files
 
 .. image:: assets/ProcessSchematic.PNG
    :width: 600
