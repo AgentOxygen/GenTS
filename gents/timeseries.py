@@ -772,9 +772,9 @@ class TSCollection:
                     results.append(future.result())
                 except Exception as exc:
                     path = futures[future]
-                    logger.warning(f"Failed to load metadata for {path}: {exc}")
+                    logger.warning(f"Failed to load metadata for {path}: {exc}", exc_info=True)
                     if raise_errors:
-                        raise exc
+                        raise
                 finally:
                     prog_bar.step()
         

@@ -678,9 +678,9 @@ class HFCollection:
                     result = future.result()
                     self.__hf_to_meta_map[path] = result
                 except Exception as exc:
-                    logger.warning(f"Failed to load metadata for {path}: {exc}")
+                    logger.warning(f"Failed to load metadata for {path}: {exc}", exc_info=True)
                     if raise_errors:
-                        raise exc
+                        raise
                 finally:
                     prog_bar.step()
 
