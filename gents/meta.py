@@ -198,12 +198,18 @@ class netCDFMeta:
         self.__var_names = list(ds.variables)
         self.__primary_var_names = []
         self.__secondary_var_names = []
-        
+        self.__variable_shapes = {}
+        self.__variable_dims = {}
+        self.__variable_dtypes = {}
+
         for variable in ds.variables:
             if is_var_secondary(ds[variable]):
                 self.__secondary_var_names.append(variable)
             else:
                 self.__primary_var_names.append(variable)
+            self.__variable_shapes[variable] = ds[variable].shape
+            self.__variable_dims[variable] = ds[variable].dimensions
+            self.__variable_dtypes[variable] = ds[variable].dtype
 
         self.__dim_bounds = {}
 
@@ -295,6 +301,39 @@ class netCDFMeta:
         :rtype: list
         """
         return self.__secondary_var_names
+
+    def get_variable_dims(self, variable):
+        """
+        Returns the dimension names for the given variable.
+
+        :param variable: Name of the variable to look up.
+        :type variable: str
+        :returns: Tuple or list of dimension name strings for the variable.
+        :rtype: tuple
+        """
+        return self.__variable_dims[variable]
+
+    def get_variable_shapes(self, variable):
+        """
+        Returns the shape of the given variable.
+
+        :param variable: Name of the variable to look up.
+        :type variable: str
+        :returns: Tuple of integers describing the size of each dimension.
+        :rtype: tuple
+        """
+        return self.__variable_shapes[variable]
+
+    def get_variable_dtype(self, variable):
+        """
+        Returns the data type of the given variable.
+
+        :param variable: Name of the variable to look up.
+        :type variable: str
+        :returns: NumPy dtype describing the element type of the variable.
+        :rtype: numpy.dtype
+        """
+        return self.__variable_dtypes[variable]
 
     def get_attributes(self):
         """
