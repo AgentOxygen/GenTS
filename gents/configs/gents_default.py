@@ -32,6 +32,11 @@ def run_config(args):
     ts_collection = TSCollection(hf_collection, args.outputdir, num_processes=args.tscores)
     ts_collection = ts_collection.append_timestep_dirs()
 
+    if args.align_method != "midpoint":
+        ts_collection = ts_collection.update_ts_orders(
+            time_alignment_method=args.align_method
+        )
+
     if args.overwrite:
         ts_collection = ts_collection.apply_overwrite("*")
 

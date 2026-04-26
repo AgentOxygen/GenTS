@@ -103,6 +103,12 @@ def parse_arguments():
         action="store_true",
         help="Append arguments to base configuration instead of overwrite."
     )
+    parser.add_argument(
+        "--align_method",
+        type=str,
+        default="midpoint",
+        help="Method to use when aligning the history files by time. ('midpoint', 'direct_time', 'start_bound', 'end_bound')"
+    )
     return parser.parse_args()
 
 
@@ -150,5 +156,6 @@ def main():
         print(f"  Include filters                 : {args.include}")
         print(f"  Exclude filters                 : {args.exclude}")
         print(f"  Append filters to defaults      : {args.append}")
+        print(f"  Time alignment method           : {args.align_method}")
 
     run_config(args)
