@@ -1,21 +1,11 @@
-FROM python:3.14-slim
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends git \
-    && apt-get purge -y --auto-remove \
-    && rm -rf /var/lib/apt/lists/*
+FROM ghcr.io/astral-sh/uv:python3.14-trixie-slim
 
 WORKDIR /usr/local/gents
-
-RUN pip install --upgrade pip
-RUN pip install pytest asv sphinx sphinx-autobuild
-
 COPY . .
 
-RUN pip install -e .
+RUN uv venv && \
+    uv pip install pytest asv sphinx sphinx-autobuild && \
+    uv pip install -e .
 
-RUN git config --global --add safe.directory /project/.git
-
-EXPOSE 8000
-
+ENV PATH="/usr/local/gents/.venv/bin/:$PATH"
 CMD ["pytest", "-v", "gents/tests/"]
