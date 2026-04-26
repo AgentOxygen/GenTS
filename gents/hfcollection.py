@@ -513,7 +513,7 @@ class HFCollection:
         :param dask_client: Deprecated. Pass ``num_processes`` instead.
         """
         if dask_client is not None:
-            warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism.", DeprecationWarning, stacklevel=2)
+            warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism or reference the ReadTheDocs for using Dask..", DeprecationWarning, stacklevel=2)
 
         self.__raw_paths = find_files(hf_dir, hf_glob_pattern)
         self.__num_processes = num_processes

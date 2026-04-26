@@ -324,7 +324,7 @@ class TSCollection:
         :param dask_client: Deprecated. Pass ``num_processes`` instead.
         """
         if dask_client is not None:
-            warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism.", DeprecationWarning, stacklevel=2)
+            warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism or reference the ReadTheDocs for using Dask.", DeprecationWarning, stacklevel=2)
 
         self.__num_processes = 1
         if num_processes is not None:
@@ -414,6 +414,9 @@ class TSCollection:
         """
         return self.__hf_collection
     
+    def get_output_dir(self):
+        return self.__output_dir
+
     def copy(self, hf_collection=None, output_dir=None, ts_orders=None, num_processes=None):
         """
         Creates a new ``TSCollection`` derived from this one with optional overrides.
