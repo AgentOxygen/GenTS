@@ -415,6 +415,12 @@ class TSCollection:
         return self.__hf_collection
     
     def get_output_dir(self):
+        """
+        Returns the output directory path for generated time series files.
+
+        :returns: Absolute path to the output directory.
+        :rtype: str
+        """
         return self.__output_dir
 
     def copy(self, hf_collection=None, output_dir=None, ts_orders=None, num_processes=None):

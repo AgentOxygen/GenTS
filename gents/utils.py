@@ -122,6 +122,27 @@ class ProgressBar:
 
 
 def log_hfcollection_info(hfc):
+    """
+    Logs summary statistics for an ``HFCollection`` at INFO level.
+
+    Iterates over all groups in the collection to compute aggregate metrics and
+    identify outliers. Requires metadata to have been pulled (calls
+    ``hfc.check_pulled()``). A progress bar is displayed on stdout during
+    the scan.
+
+    Statistics logged:
+
+    - Input directory and total number of history files found.
+    - Number of output groups formed.
+    - Total mapped data volume in TB and GB.
+    - Group with the most variables.
+    - Group with the most history files.
+    - Variable with the largest single-timestep memory footprint (shape,
+      dimensions, and size in MB).
+
+    :param hfc: A pulled ``HFCollection`` instance to inspect.
+    :type hfc: gents.hfcollection.HFCollection
+    """
     logger = logging.getLogger("gents")
 
     hfc.check_pulled()
@@ -186,6 +207,23 @@ def log_hfcollection_info(hfc):
 
 
 def log_tscollection_info(tsc):
+    """
+    Logs summary statistics for a ``TSCollection`` at INFO level.
+
+    Iterates over all time series orders in the collection to compute aggregate
+    metrics and identify the largest output file. Auxiliary-only orders are
+    skipped. A progress bar is displayed on stdout during the scan.
+
+    Statistics logged:
+
+    - Output directory and total number of time series files to generate.
+    - Largest time series file by estimated total size, including the sample
+      history file path, variable name, shape, dimensions, number of source
+      history files, and projected size in GB.
+
+    :param tsc: A ``TSCollection`` instance to inspect.
+    :type tsc: gents.timeseries.TSCollection
+    """
     logger = logging.getLogger("gents")
 
     logger.info(f"=============================================")
