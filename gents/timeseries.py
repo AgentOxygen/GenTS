@@ -246,20 +246,22 @@ def generate_time_series(hf_paths, ts_path_template, secondary_vars, ts_args):
     return ts_paths
 
 
-def get_timestamp_format(dt):
+def get_timestamp_format(dt, subhour_format="%Y%m%d%H%M%S", hourly_format="%Y%m%d%H", daily_format="%Y%m%d", monthly_format="%Y%m", yearly_format="%Y"):
     """
     Returns a ``strftime`` format string appropriate for a given time-step duration.
 
-    The format is selected by the magnitude of ``dt``:
-
-    - Sub-minute  → ``'%Y%m%d%H%M%S'``
-    - Hour-level (< 24 h)  → ``'%Y%m%d%H'``
-    - Day-level (< 28 days) → ``'%Y%m%d'``
-    - Month-level (< 12 months) → ``'%Y%m'``
-    - Year-level → ``'%Y'``
-
     :param dt: Duration of a single model time step.
     :type dt: datetime.timedelta
+    :param subhour_format: Format string for sub-minute time steps. Defaults to ``'%Y%m%d%H%M%S'``.
+    :type subhour_format: str
+    :param hourly_format: Format string for hour-level time steps (< 24 h). Defaults to ``'%Y%m%d%H'``.
+    :type hourly_format: str
+    :param daily_format: Format string for day-level time steps (< 28 days). Defaults to ``'%Y%m%d'``.
+    :type daily_format: str
+    :param monthly_format: Format string for month-level time steps (< 12 months). Defaults to ``'%Y%m'``.
+    :type monthly_format: str
+    :param yearly_format: Format string for year-level time steps. Defaults to ``'%Y'``.
+    :type yearly_format: str
     :returns: ``strftime``-compatible format string.
     :rtype: str
     """
@@ -269,15 +271,15 @@ def get_timestamp_format(dt):
     months = days / 30
 
     if minutes < 1:
-        time_format = "%Y%m%d%H%M%S"
+        time_format = subhour_format
     elif 0 < hours < 24:
-        time_format = "%Y%m%d%H"
+        time_format = hourly_format
     elif 0 < days < 28:
-        time_format = "%Y%m%d"
+        time_format = daily_format
     elif 0 < months < 12:
-        time_format = "%Y%m"
+        time_format = monthly_format
     else:
-        time_format = "%Y"
+        time_format = yearly_format
     
     return time_format
 
@@ -337,52 +339,8 @@ class TSCollection:
         self.__output_dir = output_dir
         
         if ts_orders is None:
-            self.__hf_collection.check_pulled()
-            self.__orders = []
-            for glob_template in self.__groups:
-                output_template = glob_template.split(str(self.__hf_collection.get_input_dir()))[1]
-                if "[sorting_pivot]" in output_template:
-                    output_template = output_template.split("[sorting_pivot]")[0]
-                ts_path_template = f"{self.__output_dir}{output_template}"
-                hf_paths = self.__groups[glob_template]
-
-                primary_vars = self.__hf_collection[hf_paths[0]].get_primary_variables()
-                secondary_vars = self.__hf_collection[hf_paths[0]].get_secondary_variables()
-                time_format = get_timestamp_format(self.__hf_collection.get_timestep_delta(hf_paths[0]))
-                
-                times = []
-                for path in hf_paths:
-                    time_bnds = self.__hf_collection[path].get_cftime_bounds()
-                    if time_bnds is None:
-                        time = self.__hf_collection[path].get_cftimes()
-                    else:
-                        time = [time_bnds[0][0] + (time_bnds[0][1] - time_bnds[0][0]) / 2]
-                    times.append(time)
-                times = np.concatenate(times)
-                start_time = min(times)
-                end_time = max(times)
-
-                timestamp_str = f"{start_time.strftime(time_format)}-{end_time.strftime(time_format)}"
-
-                if len(primary_vars) > 0:
-                    for var in primary_vars:
-                        self.__orders.append({
-                            "hf_paths": hf_paths,
-                            "ts_path_template": ts_path_template[:-1],
-                            "primary_var": var,
-                            "secondary_vars": secondary_vars,
-                            "ts_string": timestamp_str
-                        })
-                else:
-                    self.__orders.append({
-                        "hf_paths": hf_paths,
-                        "ts_path_template": ts_path_template[:-1],
-                        "primary_var": "auxiliary",
-                        "secondary_vars": secondary_vars,
-                        "ts_string": timestamp_str
-                    })
-
-            logger.debug(f"TSCollection initialized at '{output_dir}'.")
+            self.__orders = list(self.update_ts_orders())
+            logger.debug(f"TSCollection initialized at '{self.__output_dir}'.")
             logger.debug(f"{len(self.__orders)} timeseries orders generated.")
         else:
             self.__orders = ts_orders
@@ -422,6 +380,89 @@ class TSCollection:
         :rtype: str
         """
         return self.__output_dir
+
+    def update_ts_orders(self, strfrmt_kwargs={}, time_alignment_method="midpoint"):
+        """
+        Rebuilds the time-series order list and returns a new ``TSCollection``.
+
+        Re-derives one order per primary variable per history file group, applying
+        ``strfrmt_kwargs`` to override individual timestamp format strings and
+        ``time_alignment_method`` to control which point within each time bound is
+        used when computing ``start_time`` / ``end_time`` for the output filename.
+
+        Time alignment methods:
+
+        - ``'midpoint'`` *(default)*: midpoint of the first time bound.
+        - ``'direct_time'``: raw ``time`` coordinate values (ignores bounds).
+        - ``'start_bound'``: lower edge of the first time bound.
+        - ``'end_bound'``: upper edge of the first time bound.
+
+        :param strfrmt_kwargs: Format-string overrides forwarded to
+            :func:`get_timestamp_format` (e.g. ``{'monthly_format': '%Y%m%d'}``).
+            Defaults to ``{}``.
+        :type strfrmt_kwargs: dict
+        :param time_alignment_method: Method used to select the representative
+            time value from each file's time bounds. Must be one of
+            ``'midpoint'``, ``'direct_time'``, ``'start_bound'``, or
+            ``'end_bound'``. Defaults to ``'midpoint'``.
+        :type time_alignment_method: str
+        :returns: A new ``TSCollection`` with the rebuilt order list.
+        :rtype: TSCollection
+        :raises ValueError: If ``time_alignment_method`` is not one of the
+            accepted values.
+        """
+        self.__hf_collection.check_pulled()
+        orders = []
+        for glob_template in self.__groups:
+            output_template = glob_template.split(str(self.__hf_collection.get_input_dir()))[1]
+            if "[sorting_pivot]" in output_template:
+                output_template = output_template.split("[sorting_pivot]")[0]
+            ts_path_template = f"{self.__output_dir}{output_template}"
+            hf_paths = self.__groups[glob_template]
+
+            primary_vars = self.__hf_collection[hf_paths[0]].get_primary_variables()
+            secondary_vars = self.__hf_collection[hf_paths[0]].get_secondary_variables()
+            time_format = get_timestamp_format(self.__hf_collection.get_timestep_delta(hf_paths[0]), **strfrmt_kwargs)
+            
+            times = []
+            for path in hf_paths:
+                time_bnds = self.__hf_collection[path].get_cftime_bounds()
+                if time_alignment_method == "direct_time" or time_bnds is None:
+                    time = self.__hf_collection[path].get_cftimes()
+                elif time_alignment_method == "midpoint":
+                    time = [time_bnds[0][0] + (time_bnds[0][1] - time_bnds[0][0]) / 2]
+                elif time_alignment_method == "start_bound":
+                    time = [time_bnds[0][0]]
+                elif time_alignment_method == "end_bound":
+                    time = [time_bnds[0][1]]
+                else:
+                    raise ValueError(f"'{time_alignment_method}' is an invalid time-alignment method. Valid methods are ['direct_time', 'midpoint', 'start_bound', 'end_bound']")
+
+                times.append(time)
+            times = np.concatenate(times)
+            start_time = min(times)
+            end_time = max(times)
+
+            timestamp_str = f"{start_time.strftime(time_format)}-{end_time.strftime(time_format)}"
+
+            if len(primary_vars) > 0:
+                for var in primary_vars:
+                    orders.append({
+                        "hf_paths": hf_paths,
+                        "ts_path_template": ts_path_template[:-1],
+                        "primary_var": var,
+                        "secondary_vars": secondary_vars,
+                        "ts_string": timestamp_str
+                    })
+            else:
+                orders.append({
+                    "hf_paths": hf_paths,
+                    "ts_path_template": ts_path_template[:-1],
+                    "primary_var": "auxiliary",
+                    "secondary_vars": secondary_vars,
+                    "ts_string": timestamp_str
+                })
+        return self.copy(ts_orders=orders)
 
     def copy(self, hf_collection=None, output_dir=None, ts_orders=None, num_processes=None):
         """

@@ -328,6 +328,7 @@ def test_chunking(large_file_for_chunking_case):
         with GenTSDataStore(path, 'r') as ts_ds:
             assert list(ts_ds["VAR0"].chunking()) != list(ts_ds["VAR0"].shape)
 
+
 def test_dask_deprecation_warning(simple_case):
     """Passing dask_client=True to TSCollection raises a DeprecationWarning."""
     input_head_dir, output_head_dir = simple_case
@@ -335,3 +336,77 @@ def test_dask_deprecation_warning(simple_case):
 
     with pytest.warns(DeprecationWarning):
         ts_collection = TSCollection(hf_collection, output_head_dir, dask_client=True)
+
+
+def test_strfrmt_kwargs(simple_case):
+    """Test various inputs to TSCollection ``strfrmt_kwargs``."""
+    input_head_dir, output_head_dir = simple_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+
+    for order in ts_collection:
+        assert order["ts_string"] == "185001-185401"
+    
+    ts_collection = ts_collection.update_ts_orders(
+        strfrmt_kwargs={"monthly_format": "%Y%m%d%H"}
+    )
+    for order in ts_collection:
+        assert order["ts_string"] == "1850011600-1854011600"
+
+    ts_collection = ts_collection.update_ts_orders(
+        strfrmt_kwargs={"monthly_format": "%Y"}
+    )
+    for order in ts_collection:
+        assert order["ts_string"] == "1850-1854"
+
+    ts_collection = ts_collection.update_ts_orders(
+        strfrmt_kwargs={"daily_format": "%Y%m%d%H"}
+    )
+    for order in ts_collection:
+        assert order["ts_string"] == "185001-185401"
+
+    ts_collection = ts_collection.update_ts_orders(
+        strfrmt_kwargs={"yearly_format": "%Y%m%d%H"}
+    )
+    for order in ts_collection:
+        assert order["ts_string"] == "185001-185401"
+
+
+def test_time_alignment_kwargs(simple_case):
+    """Test various inputs to TSCollection ``time_alignment_method``."""
+    input_head_dir, output_head_dir = simple_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+
+    with pytest.raises(ValueError):
+        ts_collection = ts_collection.update_ts_orders(
+            time_alignment_method=None
+        )
+
+    ts_collection = ts_collection.update_ts_orders(
+        time_alignment_method="direct_time",
+        strfrmt_kwargs={"monthly_format": "%Y%m%d"}
+    )
+    for order in ts_collection:
+        assert order["ts_string"] == "18500116-18540116"
+
+    ts_collection = ts_collection.update_ts_orders(
+        time_alignment_method="midpoint",
+        strfrmt_kwargs={"monthly_format": "%Y%m%d"}
+    )
+    for order in ts_collection:
+        assert order["ts_string"] == "18500116-18540116"
+
+    ts_collection = ts_collection.update_ts_orders(
+        time_alignment_method="start_bound",
+        strfrmt_kwargs={"monthly_format": "%Y%m%d"}
+    )
+    for order in ts_collection:
+        assert order["ts_string"] == "18500101-18540101"
+
+    ts_collection = ts_collection.update_ts_orders(
+        time_alignment_method="end_bound",
+        strfrmt_kwargs={"monthly_format": "%Y%m%d"}
+    )
+    for order in ts_collection:
+        assert order["ts_string"] == "18500201-18540201"

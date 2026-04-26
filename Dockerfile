@@ -3,9 +3,11 @@ FROM ghcr.io/astral-sh/uv:python3.14-trixie-slim
 WORKDIR /usr/local/gents
 COPY . .
 
-RUN uv venv && \
-    uv pip install pytest asv sphinx sphinx-autobuild && \
-    uv pip install -e .
+ENV UV_PROJECT_ENVIRONMENT="/usr/local/gents-env"
 
-ENV PATH="/usr/local/gents/.venv/bin/:$PATH"
+RUN uv venv $UV_PROJECT_ENVIRONMENT && \
+    uv pip install --python $UV_PROJECT_ENVIRONMENT pytest asv sphinx sphinx-autobuild && \
+    uv pip install --python $UV_PROJECT_ENVIRONMENT -e .
+
+ENV PATH="/usr/local/gents-env/bin:$PATH"
 CMD ["pytest", "-v", "gents/tests/"]
