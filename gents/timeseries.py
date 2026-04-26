@@ -324,7 +324,7 @@ class TSCollection:
         :param dask_client: Deprecated. Pass ``num_processes`` instead.
         """
         if dask_client is not None:
-            warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism.", DeprecationWarning, stacklevel=2)
+            warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism or reference the ReadTheDocs for using Dask.", DeprecationWarning, stacklevel=2)
 
         self.__num_processes = 1
         if num_processes is not None:
@@ -414,6 +414,15 @@ class TSCollection:
         """
         return self.__hf_collection
     
+    def get_output_dir(self):
+        """
+        Returns the output directory path for generated time series files.
+
+        :returns: Absolute path to the output directory.
+        :rtype: str
+        """
+        return self.__output_dir
+
     def copy(self, hf_collection=None, output_dir=None, ts_orders=None, num_processes=None):
         """
         Creates a new ``TSCollection`` derived from this one with optional overrides.
@@ -772,9 +781,9 @@ class TSCollection:
                     results.append(future.result())
                 except Exception as exc:
                     path = futures[future]
-                    logger.warning(f"Failed to load metadata for {path}: {exc}")
+                    logger.warning(f"Failed to load metadata for {path}: {exc}", exc_info=True)
                     if raise_errors:
-                        raise exc
+                        raise
                 finally:
                     prog_bar.step()
         

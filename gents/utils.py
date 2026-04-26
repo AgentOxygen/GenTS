@@ -119,3 +119,156 @@ class ProgressBar:
 
         if self.count >= self.total:
             sys.stdout.write("\n")
+
+
+def log_hfcollection_info(hfc):
+    """
+    Logs summary statistics for an ``HFCollection`` at INFO level.
+
+    Iterates over all groups in the collection to compute aggregate metrics and
+    identify outliers. Requires metadata to have been pulled (calls
+    ``hfc.check_pulled()``). A progress bar is displayed on stdout during
+    the scan.
+
+    Statistics logged:
+
+    - Input directory and total number of history files found.
+    - Number of output groups formed.
+    - Total mapped data volume in TB and GB.
+    - Group with the most variables.
+    - Group with the most history files.
+    - Variable with the largest single-timestep memory footprint (shape,
+      dimensions, and size in MB).
+
+    :param hfc: A pulled ``HFCollection`` instance to inspect.
+    :type hfc: gents.hfcollection.HFCollection
+    """
+    logger = logging.getLogger("gents")
+
+    hfc.check_pulled()
+    logger.info(f"=============================================")
+    logger.info(f"              HFCollection Info              ")
+    logger.info(f"=============================================")
+    logger.info(f"Input Directory: {hfc.get_input_dir()}")
+    logger.info(f"Number history files found: {len(hfc)}")
+    
+    hf_groups = hfc.get_groups()
+    logger.info(f"Output Groups formed: {len(hf_groups)}")
+
+    prog_bar = ProgressBar(total=len(hf_groups), label="Calculating HFCollection Statistics")
+    total_data_tb = 0
+    largest_num_vars = 0
+    largest_group_num_vars = None
+    largest_timestep_mb = 0
+    largest_timestep_group_num_hf = 0
+    largest_timestep_group_num_hf_count = 0
+    largest_timestep_group = None
+    largest_timestep_var = None
+    largest_timestep_shape = None
+    largest_timestep_dims = None
+
+    for hf_group_name in hf_groups:
+        prog_bar.step()
+        if len(hf_groups[hf_group_name]) > largest_timestep_group_num_hf_count:
+            largest_timestep_group_num_hf_count = len(hf_groups[hf_group_name])
+            largest_timestep_group_num_hf = hf_group_name
+
+        hf_meta = hfc[hf_groups[hf_group_name][0]]
+        if len(hf_meta.get_variables()) > largest_num_vars:
+            largest_num_vars = len(hf_meta.get_variables())
+            largest_group_num_vars = hf_group_name
+
+        for var_name in hf_meta.get_variables():
+            var_shape = hf_meta.get_variable_shapes(var_name)
+            var_dims = hf_meta.get_variable_dims(var_name)
+            var_dtype = hf_meta.get_variable_dtype(var_name)
+            var_data_size_mb = var_dtype.itemsize * np.prod(var_shape) / (1024**2)
+            total_data_tb += (var_data_size_mb / (1024**2))*len(hf_groups[hf_group_name])
+            
+            if var_data_size_mb > largest_timestep_mb:
+                largest_timestep_group = hf_group_name
+                largest_timestep_mb = var_data_size_mb
+                largest_timestep_var = var_name
+                largest_timestep_shape = var_shape
+                largest_timestep_dims = var_dims
+
+    logger.info(f"Total data mapped (TB): {total_data_tb}")
+    logger.info(f"Total data mapped (GB): {total_data_tb * 1024}")
+    logger.info(f"Largest group by number of variables: {largest_num_vars} variables for {largest_group_num_vars}")
+    logger.info(f"Largest group by number of files: {largest_timestep_group_num_hf_count} files for {largest_timestep_group_num_hf}")
+    logger.info(
+        f"Largest variable timestep (memory footprint) \n" +
+        f"    Group: {largest_timestep_group}\n" +
+        f"    Variable: {largest_timestep_var}\n" +
+        f"    Shape: {largest_timestep_shape}\n" +
+        f"    Dimensions: {largest_timestep_dims}\n" +
+        f"    Timestep size (MB): {largest_timestep_mb}"
+    )
+
+
+def log_tscollection_info(tsc):
+    """
+    Logs summary statistics for a ``TSCollection`` at INFO level.
+
+    Iterates over all time series orders in the collection to compute aggregate
+    metrics and identify the largest output file. Auxiliary-only orders are
+    skipped. A progress bar is displayed on stdout during the scan.
+
+    Statistics logged:
+
+    - Output directory and total number of time series files to generate.
+    - Largest time series file by estimated total size, including the sample
+      history file path, variable name, shape, dimensions, number of source
+      history files, and projected size in GB.
+
+    :param tsc: A ``TSCollection`` instance to inspect.
+    :type tsc: gents.timeseries.TSCollection
+    """
+    logger = logging.getLogger("gents")
+
+    logger.info(f"=============================================")
+    logger.info(f"              TSCollection Info              ")
+    logger.info(f"=============================================")
+    logger.info(f"Output Directory: {tsc.get_output_dir()}")
+    logger.info(f"Number time series files to generate: {len(tsc)}")
+
+    total_files_in = 0
+    total_data_out_mb = 0
+    largest_ts_size_mb = 0
+    largest_ts_hf_sample = None
+    largest_ts_variable = None
+    largest_ts_shape = None
+    largest_ts_dims = None
+    largest_ts_num_files = None
+
+    prog_bar = ProgressBar(total=len(tsc), label="Calculating TSCollection Statistics")
+    for order in tsc:
+        prog_bar.step()
+        if order["primary_var"] != "auxiliary":
+            path = order["hf_paths"][0]
+            hf_meta = tsc.get_hf_collection()[path]
+            var_shape = hf_meta.get_variable_shapes(order["primary_var"])
+            var_dims = hf_meta.get_variable_dims(order["primary_var"])
+            var_dtype = hf_meta.get_variable_dtype(order["primary_var"])
+            var_data_size_mb = var_dtype.itemsize * np.prod(var_shape) / (1024**2)* len(order["hf_paths"])
+
+            total_data_out_mb += var_data_size_mb * len(order["hf_paths"])
+            total_files_in += len(order["hf_paths"])
+
+            if var_data_size_mb > largest_ts_size_mb:
+                largest_ts_size_mb = var_data_size_mb
+                largest_ts_hf_sample = path
+                largest_ts_variable = order["primary_var"]
+                largest_ts_shape = var_shape
+                largest_ts_dims = var_dims
+                largest_ts_num_files = len(order["hf_paths"])
+        
+    logger.info(
+        f"Largest time series file (minimum memory requirement) \n" +
+        f"    Sample HF path: {largest_ts_hf_sample}\n" +
+        f"    Variable: {largest_ts_variable}\n" +
+        f"    Shape: {largest_ts_shape}\n" +
+        f"    Dimensions: {largest_ts_dims}\n" +
+        f"    Number of history files to read: {largest_ts_num_files}\n"
+        f"    Time series size (GB): {largest_ts_size_mb / 1024}"
+    )
