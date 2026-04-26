@@ -1,4 +1,7 @@
 from gents.utils import *
+from gents.tests.test_cases import *
+from gents.hfcollection import HFCollection
+from gents.timeseries import TSCollection
 import pytest
 
 LOGGER_HEADER_NUM_LINES = 2
@@ -48,3 +51,40 @@ def test_logging(log_output_dir):
 
     with open(f"{log_output_dir}/verbose.txt") as f:
         assert len(f.readlines()) == LOGGER_HEADER_NUM_LINES + 4
+
+
+def test_hfc_info_logger(structured_case, log_output_dir):
+    logger = logging.getLogger("gents")
+    enable_logging(verbose=True, output_path=f"{log_output_dir}/hfc_logger.txt")
+
+    input_head_dir, output_head_dir = structured_case
+    hf_collection = HFCollection(input_head_dir)
+
+    log_hfcollection_info(hf_collection)
+
+    with open(f"{log_output_dir}/hfc_logger.txt") as f:
+        info_output_found = False
+        for line in f.readlines():
+            if "HFCollection Info" in line:
+                info_output_found = True
+                break
+        assert info_output_found
+
+
+def test_hfc_info_logger(structured_case, log_output_dir):
+    logger = logging.getLogger("gents")
+    enable_logging(verbose=True, output_path=f"{log_output_dir}/tsc_logger.txt")
+
+    input_head_dir, output_head_dir = structured_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+
+    log_tscollection_info(ts_collection)
+
+    with open(f"{log_output_dir}/tsc_logger.txt") as f:
+        info_output_found = False
+        for line in f.readlines():
+            if "TSCollection Info" in line:
+                info_output_found = True
+                break
+        assert info_output_found
