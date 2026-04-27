@@ -1,9 +1,9 @@
 Installation
 ============
 
-You can install GenTS through PyPI, Container, or from source.
+GenTS is available for download as a Python package through the Python Package Index (PyPI) or as a container.
 
-pip
+PyPI
 ----
 
 Pip can be used to easily install GenTS along with all of its dependencies in any compatible Python virtual environment.
@@ -37,15 +37,17 @@ First, clone the GitHub repository.
     git clone https://github.com/AgentOxygen/GenTS.git
     cd GenTS
 
-Then install the package locally using ``pip``.
+Then, create or activate a Python virtual environment (using ``conda``, ``uv``, or Python 3 ``venv``) and install the package locally using ``pip``.
 
 .. code-block:: console
 
     pip install -e .
 
-Alternatively, you can build the Docker image and run a virtual Python environment with only GenTS and its full dependencies installed:
+Alternatively, you can build the Docker image and run a Python virtual environment with only GenTS and its full dependencies installed:
 
 .. code-block:: console
 
     docker build -t gents:latest .
     docker run --rm -it -v .:/usr/local/gents gents python
+
+You can also reference the ``Dockerfile`` in the GenTS source code repository for how to install from source, specifically using ``uv``.

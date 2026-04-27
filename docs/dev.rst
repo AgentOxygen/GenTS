@@ -25,13 +25,13 @@ Make sure you have `Docker <https://www.docker.com/>`_ installed on your system.
     git clone https://github.com/AgentOxygen/GenTS.git
     cd GenTS
 
-Build the Docker container, you should only need to do this once (unless the environment needs to be updated or changed):
+Build the Docker container; you should only need to do this once (unless the environment inside the container needs to be updated or changed):
 
 .. code-block:: console
 
     docker build -t gents .
 
-Now run the container. If you want to make live-edits without restarting the container, volume-mount the repo directory to ``/usr/local/gents``:
+Now run the container. If you want to make live-edits without restarting the container, bind-mount the repo directory to ``/usr/local/gents``:
 
 .. code-block:: console
 
@@ -54,14 +54,13 @@ The webpages should then be accessible via `http://localhost:8000 <http://localh
 Local environment
 -----------------
 
-Make sure you have a Python instance installed. Ideally, create a virtual environment using ``python -m venv`` or `miniconda <https://www.anaconda.com/docs/getting-started/miniconda/main>`_ before installing GenTS and its dependencies:
+Make sure you have a Python installed. Ideally, create a virtual environment using ``python -m venv``, `uv <https://docs.astral.sh/uv/pip/environments/>`_, or `miniconda <https://www.anaconda.com/docs/getting-started/miniconda/main>`_ before installing GenTS and its dependencies:
 
 .. code-block:: console
 
     git clone https://github.com/AgentOxygen/GenTS.git
     cd GenTS
     pip install --no-cache-dir -r requirements.txt
-    pip install pytest
     pip install -e .
 
 Then execute the tests using ``pytest``:
