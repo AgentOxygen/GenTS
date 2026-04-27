@@ -1,5 +1,6 @@
 from gents.hfcollection import HFCollection
 from gents.timeseries import TSCollection
+from gents.utils import log_hfcollection_info, log_tscollection_info
 import gents
 
 INCLUDE_PATTERNS = [
@@ -52,6 +53,9 @@ def run_config(args):
 
     if args.overwrite:
         ts_collection = ts_collection.apply_overwrite("*")
+
+    log_hfcollection_info(hf_collection)
+    log_tscollection_info(ts_collection)
 
     if not args.dryrun:
         ts_collection.execute()
