@@ -15,6 +15,7 @@ The GenTS (Generate Time Series) is an open-source Python Package designed to si
 - Checks existing time series output for integrity to generate only the remaining files needed
 - Adaptive re-chunking for compliance with CMOR (Climate Model Output Rewriter) standards
 - Comprehensive testing suite for ensuring accuracy and reliability
+- ASV benchmarking suite for maintaining performance across releases
 - Docker/Apptainer/Singularity containers for bypassing complicated environment setups
 - Detailed documentation for self-debugging and quickly on-boarding contributors
 
