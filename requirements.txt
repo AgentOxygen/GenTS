@@ -1,3 +1,7 @@
 numpy
 netcdf4
 cftime
+pytest
+asv
+sphinx
+sphinx-autobuild

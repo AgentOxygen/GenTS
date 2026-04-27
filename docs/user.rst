@@ -1,7 +1,7 @@
 User Guide
 ==========
 
-The GenTS (Generate Time Series) is an open-source Python Package designed to simplify the post-processing of history files into time series files. This package includes streamlined functions that require minimal input to operate and a documented API for custom workflows. Users can either interface with the command line interface (CLI) ``run_gents`` or develop custom Python workflows by importing the ``gents`` module.
+Users can either interact with the command line interface (CLI) ``run_gents`` or develop custom Python workflows by importing the ``gents`` module.
 
 Using the Command Line Interface (CLI)
 --------------------------------------
@@ -18,7 +18,7 @@ This should outline CLI format, available arguments, and GenTS version. Dependin
 
     run_gents <hf_head_dir> [options]
 
-``hf_head_dir`` the path to the head directory containing model output history files is the only required argument. GenTS recursively searches this directory for ``.nc`` files, groups them by sub-directory and file name pattern, and generates a corresponding set of time series files. By default, no filters are applied which will likely produce errors for case output directories. To apply the default configuration for a model, specify the ``--model`` argument:
+The path to the head directory containing model output history files (``hf_head_dir``) is the only required argument. GenTS recursively searches this directory for ``.nc`` files, groups them by sub-directory and file name pattern, and generates a corresponding set of time series files. By default, no filters are applied which will likely produce errors for case output directories. To apply the default configuration for a model, specify the ``--model`` argument:
 
 .. code-block:: console
 
@@ -91,7 +91,7 @@ An example code snippet is featured below:
     ts_collection.execute()
 
 
-The bulk of functionality in this package is provided by two Python classes: ``gents.hfcollection.HFCollection`` and ``gents.timeseries.TSCollection``. These classes centralize the organization of history files and provides an interface for customizing time series output through sequences of operations. In general, the user begins by defining a ``HFCollection`` which searches recursively through a directory structure for history files. The user can then optionally apply filters to the selection to include only specific history file types. Once the desired history files have been identified, ``HFCollection`` automatically groups them by sub-directory and file name patterns. The user then creates a ``TSCollection`` from the populated ``HFCollection`` which organizes the history file groupings into a list of executable functions that create the time series files. These functions run independently of each other in an embarrassingly parallel scheme using the Python Standard Library ``ProcessPoolExecutor``. However, they may be ported to third-party distributed computing libraries such as `Dask <https://docs.dask.org/en/stable/>`_ .
+The bulk of functionality in this package is provided by two Python classes: ``gents.hfcollection.HFCollection`` and ``gents.timeseries.TSCollection``. These classes centralize the organization of history files and provide an interface for customizing time series output. In general, the user begins by defining a ``HFCollection`` which searches recursively through a directory structure for history files. The user can then optionally apply filters to the selection to include only specific history file types. Once the desired history files have been identified, ``HFCollection`` automatically groups them by sub-directory and file name patterns. The user then creates a ``TSCollection`` from the populated ``HFCollection`` which organizes the history file groupings into a list of executable functions that create the time series files. These functions run independently of each other in an embarrassingly parallel scheme using the Python Standard Library ``ProcessPoolExecutor``. They may also be ported to third-party distributed computing libraries such as `Dask <https://docs.dask.org/en/stable/>`_ .
 
 Creating the ``HFCollection``
 -----------------------------
@@ -130,13 +130,13 @@ Note that ``HFCollection.include`` is called before the metadata is pulled. This
     hf_collection.pull_metadata()
     first_entry_meta = hf_collection[first_entry_path]
 
-Note that the user can specify multiple entries as glob patterns which can filter directories too (the glob pattern is applied to the absolute path string). Both ``HFCollection.include`` and ``HFCollection.exclude`` should be executed before pulling metadata for optimal performance. Although header reads are lightweight, thousands of files can start to add up and this process must be repeated each time the Python kernel is restarted. This can be done in serial (as above), but it is recommended to specify multiple cores when initializing ``HFCollection`` to parallelize the process. Since gathering metadata is lightweight and read-only, the throughput generally scales strongly with the number of cores:
+Note that the user can specify multiple entries as glob patterns which can filter directories too (the glob pattern is applied to the absolute path string). Both ``HFCollection.include`` and ``HFCollection.exclude`` should be executed before pulling metadata for optimal performance. Although header reads are lightweight, thousands of files can start to add up. This can be done in serial (as above), but it is recommended to specify multiple cores when initializing ``HFCollection`` to parallelize the process. Since gathering metadata is lightweight and read-only, the throughput generally scales strongly with the number of cores:
 
 .. code-block:: python
 
     from gents.hfcollection import HFCollection
     hf_collection = HFCollection(hf_dir="my/file/system/scratch/GCM_run/output/history_files/", num_processes=64)
-    hf_collection.pull_metadata() # happens across 64 cores
+    hf_collection.pull_metadata() # distributed across 64 cores
 
 These functions also return copies of the ``HFCollection`` that allow the user to create multiple objects for better organization:
 
@@ -166,7 +166,7 @@ Additionally, the user may combine this filter with an inclusive filter by using
 
     hf_atm_2010_2019 = hf_collection.include_years(2010, 2019, glob=["*/atm/*"])
 
-Note that the glob patterns are applied after pulling metadata, so this argument is designed for convenience rather than performance (``HFCollection.include`` is preferred). ``HFCollection.include_years`` will automatically pull metadata if it has not already been done so by the user.
+Note that the glob patterns are applied after pulling metadata, so this argument is designed for convenience rather than performance (``HFCollection.include`` is preferred). ``HFCollection.include_years`` will automatically pull metadata, if it has not already been done by the user.
 
 Creating the ``TSCollection``
 -----------------------------
@@ -202,17 +202,17 @@ Once filtered, custom arguments can be applied to all time series or just a subs
 
 .. code-block:: python
 
-    ts_collection.add_args("*", "*", overwrite=True)
-    ts_collection.apply_compression(alg="zlib", level=5, path_glob="*/atm/*", var_glob="*")
-    ts_collection.add_args("*", "*HD*", alg="zlib", level=2)
+    ts_collection = ts_collection.add_args("*", "*", overwrite=True)
+    ts_collection = ts_collection.apply_compression(alg="zlib", level=5, path_glob="*/atm/*", var_glob="*")
+    ts_collection = ts_collection.add_args("*", "*HD*", alg="zlib", level=2)
 
-Note that add arguments modifies the existing ts_collection and does not return a copy. The first line sets all time series output to overwrite existing files. The second line applies level 5 compression using the "zlib" algorithm only to time series output derived from history files that contain "/atm/" in their path. The third line applies level 2 compression to all time series output with primary variables that contain the characters "HD". Note that line 3 overrides any possible overlap with line 2.
+The first line sets all time series output to overwrite existing files. The second line applies level 5 compression using the "zlib" algorithm only to time series output derived from history files that contain "/atm/" in their path. The third line applies level 2 compression to all time series output with primary variables that contain the characters "HD". Note that line 3 overrides any possible overlap with line 2.
 
 By default, the output path templates ("templates" are incomplete path strings where only the file prefix is provided so that date time and variable name can be assigned during generation) used for writing the time series netCDF files mirror the directory structure of the given ``HFCollection``. To modify the path template, the user may replace substrings. For example, to replace the "/hist/" subdirectory with "/tseries/":
 
 .. code-block:: python
 
-    ts_collection.apply_path_swap(string_match="/hist", string_swap="/tseries/")
+    ts_collection = ts_collection.apply_path_swap(string_match="/hist", string_swap="/tseries/")
 
 Note that swaps are made using the built-in ``replace`` string function, so matches can be made to any part of the path string and should not use glob or re patterns.
 
