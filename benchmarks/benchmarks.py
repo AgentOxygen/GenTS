@@ -3,7 +3,6 @@ from gents.timeseries import TSCollection
 from gents.mhfdataset import MHFDataset
 from gents.tests.test_cases import generate_history_file
 from gents.meta import get_attributes
-import netCDF4
 from os import listdir, makedirs
 
 SIMPLE_SUITE_NUM_HIST_FILES = 100
@@ -41,10 +40,4 @@ class SimpleSuite:
         with MHFDataset(self.hf_paths) as agg_hf_ds:
             global_attrs = agg_hf_ds.get_global_attrs()
             data_vals = agg_hf_ds.get_var_vals("VAR0")
-            assert data_vals is not None
-
-    def time_nc_mfdataset(self):
-        with netCDF4.MFDataset(self.hf_paths, aggdim="time") as agg_hf_ds:
-            global_attrs = get_attributes(agg_hf_ds)
-            data_vals = agg_hf_ds["VAR0"][:]
             assert data_vals is not None

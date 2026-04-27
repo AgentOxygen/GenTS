@@ -1,7 +1,6 @@
 Dockerfile
 .*_history
 .asv
-.git
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
