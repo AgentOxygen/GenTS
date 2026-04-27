@@ -68,3 +68,23 @@ Then execute the tests using ``pytest``:
 .. code-block:: console
 
     pytest gents/tests/
+
+Benchmarking
+------------
+
+Benchmarks in ``gents/benchmarks`` are written with `Airspeed Velocity (ASV) <https://asv.readthedocs.io/en/stable/index.html>`_ to track performance across new releases. You can run benchmarks the same way you run tests. Note that if you use the container, you will need to specify ``--machine [MACHINE NAME]`` after creating a machine profile since the hostname inside a Docker container differs from the host. This may not be needed for Apptainer and Singularity ports however.
+
+To run the benchmarks for a particular tag, for example v0.9.9:
+
+.. code-block:: console
+
+    cd GenTS
+    docker run -v .:/usr/local/gents -v ./.asv-machine.json:/root/.asv-machine.json -it gents asv run v0.9.9^! --machine name-of-machine
+
+After running benchmarks, you can the view the results via an ASV web server:
+
+.. code-block:: console
+
+    docker run -v .:/usr/local/gents -v ./.asv-machine.json:/root/.asv-machine.json -p 8080:8080 -it gents   bash -c "asv publish && asv preview --port 8080"
+
+This hosts the webpage at ``http://127.0.0.1:8080/`` by default.
