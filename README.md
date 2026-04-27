@@ -7,9 +7,20 @@
 
 The GenTS (Generate Time Series) is an open-source Python Package designed to simplify the post-processing of history files into time series files. This package includes streamlined functions that require minimal input to operate and a documented API for custom workflows.
 
+## Features
+
+- Robust Python API with immutable framework that simplifies integration with existing post-processing workflows and development of new ones
+- Command line interface with sensible defaults for common CESM/E3SM cases and flags for edge/custom cases
+- Supports parallel processing for maximizing data throughput
+- Checks existing time series output for integrity to generate only the remaining files needed
+- Adaptive re-chunking for compliance with CMOR (Climate Model Output Rewriter) standards
+- Comprehensive testing suite for ensuring accuracy and reliability
+- Docker/Apptainer/Singularity containers for bypassing complicated environment setups
+- Detailed documentation for self-debugging and quickly on-boarding contributors
+
 ## Installation
 
-GenTS can be installed in a Python environment using `pip`. This requires either a Conda or Python virtual environment for installing GenTS depedencies (namely `numpy`, `netCDF4`, and `cftime`).
+GenTS can be installed in a Python environment using `pip`. This requires a conda, uv, or Python virtual environment for installing GenTS dependencies (namely `numpy`, `netCDF4`, and `cftime`).
 
 For maximum portability and to avoid environment issues, use the containerized version of GenTS.
 
@@ -44,6 +55,16 @@ shifter --image=docker:agentoxygen/gents:latest run_gents --help
 ```
 
 ## Running GenTS
+
+> **Note**
+> 
+> It is bad practice to run GenTS on a login node due to the large number of IO-heavy processes it can create. Instead, submit GenTS in a batch job or run it interactively on a compute node. Here are reference pages for deploying interactive sessions on compute nodes for popular HPC centers:
+> 
+> [Derecho/Casper Instructions](https://ncar-hpc-docs.readthedocs.io/en/latest/pbs/#batch-jobs)
+> 
+> [TACC Instructions](https://docs.tacc.utexas.edu/software/idev/)
+> 
+> [Perlmutter Instructions](https://docs.nersc.gov/jobs/interactive/)
 
 GenTS comes with a pre-configured CLI that can be run on most CESM model output and E3SM (atm-only) model output by calling `run_gents`. The CLI is built on a robust API which can also be configured in a Python script or Jupyter Notebook for custom cases/workflows.
 
@@ -85,7 +106,7 @@ python run.py
 Or run from the container:
 
 ```
-apptainer run docker://agentoxygen/gents:latest run.py
+apptainer run docker://agentoxygen/gents:latest python run.py
 ```
 
 ## Contributor/Bug Reporting Guidelines
@@ -94,3 +115,32 @@ Please report all issues to the [GitHub issue tracker](https://github.com/AgentO
 
 For development, it is recommended to use the [Docker method for testing](https://gents.readthedocs.io/en/latest/). These tests are automatically run in the GitHub workflow, but should be run before committing changes.
 
+## Citation
+
+If our software package helps you with your research, please consider citing it:
+
+ - Cummins, C. (2026). GenTS: Generate Time Series Python Package [Software]. Available from https://github.com/AgentOxygen/GenTS.
+
+In BibTeX:
+
+```
+@Manual{         cummins2026gents,
+ title         = {{GenTS}: Generate Time Series Python Package (Software)},
+ author        = {Cameron Cummins},
+ year          = {2026},
+ url           = {https://github.com/AgentOxygen/GenTS}
+}
+```
+
+## Acknowledgements
+
+The following people made the development of GenTS possible. Thank you!
+
+- [Nan Rosenbloom](https://staff.cgd.ucar.edu/nanr/)
+- [Adam Phillips](https://github.com/phillips-ad)
+- [Geeta Persad](https://www.jsg.utexas.edu/researcher/geeta_persad/)
+- [Jim Edwards](https://github.com/jedwards4b)
+- [Mariana Vertenstein](https://github.com/mvertens)
+- [Michael Levy](https://github.com/mnlevy1981)
+
+Portions of this work were supported by the Regional and Global Model Analysis (RGMA) component of the Earth and Environmental System Modeling Program of the U.S. Department of Energy's Office of Biological & Environmental Research (BER) under Lawrence Livermore National Lab subaward DE-AC52-07NA27344, Lawrence Berkeley National Lab subaward DE-AC02-05CH11231, and Pacific Northwest National Lab subaward  DE-AC05-76RL01830. This work was also supported by the National Science Foundation (NSF) National Center for Atmospheric Research, which is a major facility sponsored by NSF under Cooperative Agreement No. 1852977.
