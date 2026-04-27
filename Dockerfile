@@ -6,7 +6,7 @@ COPY . .
 ENV UV_PROJECT_ENVIRONMENT="/usr/local/gents-env"
 
 RUN uv venv $UV_PROJECT_ENVIRONMENT && \
-    uv pip install --python $UV_PROJECT_ENVIRONMENT pytest asv sphinx sphinx-autobuild && \
+    uv pip install --python $UV_PROJECT_ENVIRONMENT -r requirements.txt && \
     uv pip install --python $UV_PROJECT_ENVIRONMENT -e .
 
 ENV PATH="/usr/local/gents-env/bin:$PATH"
