@@ -260,6 +260,19 @@ def test_long_hf_slicing(long_case):
         assert len(groups[list(groups)[index]]) == 60
     assert len(groups[list(groups)[-1]]) == 48
 
+    offset = 2
+    hf_coll1 = hf_collection.include_years(CASE_START_YEAR+offset, CASE_START_YEAR+offset+9)
+    assert len(hf_coll1) == 120
+    hf_coll1 = hf_coll1.slice_groups(slice_size_years=10, start_year=None)
+    groups = hf_coll1.get_groups()
+    assert len(groups) == 1
+    assert len(groups[list(groups)[0]]) == 120
+
+    hf_coll1 = hf_coll1.slice_groups(slice_size_years=10, start_year=CASE_START_YEAR)
+    groups = hf_coll1.get_groups()
+    assert len(groups) == 2
+    assert len(groups[list(groups)[0]]) == 120 - (offset*12)
+
 
 def test_include_years(long_case):
     """include_years() returns the correct number of files for single- and multi-year ranges."""
