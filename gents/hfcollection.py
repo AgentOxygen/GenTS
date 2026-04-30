@@ -866,7 +866,7 @@ class HFCollection:
 
         return self.__hf_groups
 
-    def slice_groups(self, slice_size_years=10, start_year=0, pattern=None):
+    def slice_groups(self, slice_size_years=10, start_year=0, pattern="*"):
         """
         Returns a new collection with history file groups partitioned into time slices.
 
@@ -880,11 +880,11 @@ class HFCollection:
         :param slice_size_years: Maximum width of each time slice in years.
             Defaults to ``10``.
         :type slice_size_years: int
-        :param start_year: Override for the starting year; set to ``0`` to begin
+        :param start_year: Override for the starting year; set to ``None`` to begin
             at the dataset's own minimum year. Defaults to ``0``.
         :type start_year: int or None
         :param pattern: ``fnmatch`` glob to restrict slicing to matching group IDs.
-            Defaults to ``None`` (all groups).
+            Defaults to ``*`` (all groups).
         :type pattern: str or None
         :returns: New ``HFCollection`` with sliced groups embedded.
         :rtype: HFCollection
@@ -894,7 +894,7 @@ class HFCollection:
 
         for group in self.get_groups():
             hf_paths = self.get_groups()[group]
-            if pattern is not None and not fnmatch.fnmatch(group, pattern):
+            if not fnmatch.fnmatch(group, pattern):
                 sliced_groups[group] = hf_paths
                 continue
             
