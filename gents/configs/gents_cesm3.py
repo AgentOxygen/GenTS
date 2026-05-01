@@ -41,7 +41,11 @@ def run_config(args):
             exclude_patterns = args.exclude
 
     hf_collection = HFCollection(args.hf_head_dir, num_processes=args.hfcores)
-    hf_collection = hf_collection.include(include_patterns).exclude(exclude_patterns).slice_groups(slice_size_years=args.slice, start_year=args.slice_start_year)
+    hf_collection = hf_collection.include(include_patterns).exclude(exclude_patterns).slice_groups(
+        slice_size_years=args.slice,
+        start_year=args.slice_start_year,
+        time_alignment_method=args.align_method
+    )
     ts_collection = TSCollection(hf_collection, args.outputdir, num_processes=args.tscores)
     ts_collection = ts_collection.apply_path_swap("/hist/", "/proc/tseries/").append_timestep_dirs()
     ts_collection = ts_collection.apply_compression(2, "zlib", "*", "*")
