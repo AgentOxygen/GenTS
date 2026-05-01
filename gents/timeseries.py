@@ -81,7 +81,7 @@ def check_timeseries_conform(ts_path: str):
     return True
 
 
-def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_data, overwrite=False, complevel=0, compression=None):
+def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_data, overwrite=False, complevel=0, compression=None, ts_start_index=None, ts_end_index=None):
     """
     Writes a single time-series netCDF file for one primary variable.
 
@@ -118,6 +118,14 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
     :param compression: netCDF4 compression algorithm (e.g. ``'zlib'``).
         Defaults to ``None``.
     :type compression: str or None
+    :param ts_start_index: Time index to start reading from aggregated history files.
+        If ``None``, read from the first time step for the full aggregation.
+        Defaults to ``None``.
+    :type ts_start_index: int or None
+    :param ts_end_index: Time index to stop reading from aggregated history files.
+        If ``None``, read to the last time step for the full aggregation.
+        Defaults to ``None``.
+    :type ts_end_index: int or None
     :returns: Path to the written (or skipped) output file.
     :rtype: str
     """
@@ -131,10 +139,18 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
         else:
             remove(ts_out_path)
 
+    if ts_start_index is None:
+        ts_start_index = 0
+
     with GenTSDataStore(ts_out_path, mode="w") as ts_ds:
         if primary_var != "auxiliary":
             var_shape = agg_hf_ds.get_var_data_shape(primary_var)
             var_dims = agg_hf_ds.get_var_dimensions(primary_var)
+            
+            if ts_end_index is None:
+                ts_end_index = var_shape[0]
+            var_shape[0] = ts_end_index - ts_start_index
+
             for index, dim in enumerate(var_dims):
                 if dim == "time":
                     ts_ds.createDimension(dim, None)
@@ -164,14 +180,19 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
                 for i in range(0, var_shape[0], chunksizes[0]):
                     end = min(i + chunksizes[0], var_shape[0])
                     var_data[i:end] = agg_hf_ds.get_var_vals(
-                        primary_var, time_index_start=i, time_index_end=end
+                        primary_var, time_index_start=ts_start_index+i, time_index_end=ts_start_index+end
                     )
             else:
-                var_data[:] = agg_hf_ds.get_var_vals(primary_var)
+                var_data[:] = agg_hf_ds.get_var_vals(primary_var)[ts_start_index:ts_end_index]
 
         for secondary_var in secondary_vars_data:
             var_shape = agg_hf_ds.get_var_data_shape(secondary_var)
             var_dims = agg_hf_ds.get_var_dimensions(secondary_var)
+
+            if ts_end_index is None:
+                ts_end_index = var_shape[0]
+            if "time" in var_dims:
+                var_shape[0] = ts_end_index - ts_start_index
 
             for index, dim in enumerate(var_dims):
                 if dim not in ts_ds.dimensions:
@@ -192,7 +213,10 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
             svar_data.set_always_mask(False)
 
             ts_ds[secondary_var].setncatts(agg_hf_ds.get_var_attrs(secondary_var))
-            svar_data[:] = secondary_vars_data[secondary_var]
+            if "time" in var_dims:
+                svar_data[:] = secondary_vars_data[secondary_var][ts_start_index:ts_end_index]
+            else:
+                svar_data[:] = secondary_vars_data[secondary_var]
         
         ts_ds.setncatts(global_attrs | {"gents_version": str(get_version())})
     return ts_out_path
@@ -242,7 +266,6 @@ def generate_time_series(hf_paths, ts_path_template, secondary_vars, ts_args):
                 secondary_vars_data=secondary_vars_data,
                 **args
             ))
-    
     return ts_paths
 
 
@@ -416,7 +439,7 @@ class TSCollection:
         for glob_template in self.__groups:
             output_template = glob_template.split(str(self.__hf_collection.get_input_dir()))[1]
             if "[sorting_pivot]" in output_template:
-                output_template = output_template.split("[sorting_pivot]")[0]
+                output_template, slice_years = output_template.split("[sorting_pivot]")
             ts_path_template = f"{self.__output_dir}{output_template}"
             hf_paths = self.__groups[glob_template]
 
@@ -425,26 +448,59 @@ class TSCollection:
             time_format = get_timestamp_format(self.__hf_collection.get_timestep_delta(hf_paths[0]), **strfrmt_kwargs)
             
             times = []
+            sliced_times = []
+            unsliced_times = []
             for path in hf_paths:
+                time_slice_bounds = self.__hf_collection.get_multistep_slices(path)
                 time_bnds = self.__hf_collection[path].get_cftime_bounds()
-                if time_alignment_method == "direct_time" or time_bnds is None:
-                    time = self.__hf_collection[path].get_cftimes()
-                elif time_alignment_method == "midpoint":
-                    time = [time_bnds[0][0] + (time_bnds[0][1] - time_bnds[0][0]) / 2]
-                elif time_alignment_method == "start_bound":
-                    time = [time_bnds[0][0]]
-                elif time_alignment_method == "end_bound":
-                    time = [time_bnds[0][1]]
-                else:
-                    raise ValueError(f"'{time_alignment_method}' is an invalid time-alignment method. Valid methods are ['direct_time', 'midpoint', 'start_bound', 'end_bound']")
+                time_cfvals = self.__hf_collection[path].get_cftimes()
+                unsliced_times.append(copy.deepcopy(time_cfvals))
 
-                times.append(time)
+                if time_slice_bounds is not None:
+                    time_slice_bounds = time_slice_bounds[slice_years]
+                    time_cfvals = time_cfvals[time_slice_bounds[0]:time_slice_bounds[1]]
+                    if time_bnds is not None:
+                        time_bnds = time_bnds[time_slice_bounds[0]:time_slice_bounds[1]]
+                sliced_times.append(time_cfvals)
+
+                hf_times = []
+                if time_bnds is None or time_alignment_method == "direct_time":
+                    hf_times = time_cfvals
+                else:
+                    for ts in time_bnds:
+                        if time_alignment_method == "midpoint":
+                            hf_times.append(ts[0] + (ts[1] - ts[0]) / 2)
+                        elif time_alignment_method == "start_bound":
+                            hf_times.append(ts[0])
+                        elif time_alignment_method == "end_bound":
+                            hf_times.append(ts[1])
+                        else:
+                            raise ValueError(f"'{time_alignment_method}' is an invalid time-alignment method. Valid methods are ['direct_time', 'midpoint', 'start_bound', 'end_bound']")
+                times.append(hf_times)
             times = np.concatenate(times)
             start_time = min(times)
             end_time = max(times)
 
-            timestamp_str = f"{start_time.strftime(time_format)}-{end_time.strftime(time_format)}"
+            start_index = None
+            end_index = None
+            sliced_times = np.concatenate(sliced_times)
+            unsliced_times = np.concatenate(unsliced_times)
+            if not np.array_equal(sliced_times, unsliced_times):
+                for index, ts in enumerate(unsliced_times):
+                    if start_index is None and ts in sliced_times:
+                        start_index = index
+                    elif start_index is not None and end_index is None and ts not in sliced_times:
+                        end_index = index
+                    elif start_index is not None and end_index is not None:
+                        break
 
+                if end_index is None:
+                    end_index = len(unsliced_times)
+
+                assert start_index is not None
+                assert start_index < end_index <= len(unsliced_times)
+
+            timestamp_str = f"{start_time.strftime(time_format)}-{end_time.strftime(time_format)}"
             if len(primary_vars) > 0:
                 for var in primary_vars:
                     orders.append({
@@ -452,7 +508,9 @@ class TSCollection:
                         "ts_path_template": ts_path_template[:-1],
                         "primary_var": var,
                         "secondary_vars": secondary_vars,
-                        "ts_string": timestamp_str
+                        "ts_string": timestamp_str,
+                        "ts_start_index": start_index,
+                        "ts_end_index": end_index
                     })
             else:
                 orders.append({
@@ -460,7 +518,9 @@ class TSCollection:
                     "ts_path_template": ts_path_template[:-1],
                     "primary_var": "auxiliary",
                     "secondary_vars": secondary_vars,
-                    "ts_string": timestamp_str
+                    "ts_string": timestamp_str,
+                    "ts_start_index": start_index,
+                    "ts_end_index": end_index
                 })
         return self.copy(ts_orders=orders)
 
@@ -766,19 +826,20 @@ class TSCollection:
             order_index_merge_map = {}
             for index, order in enumerate(self.__orders):
                 first_hf_path = order["hf_paths"][0]
-                if first_hf_path in order_index_merge_map:
-                    order_index_merge_map[first_hf_path].append(index)
+                start_index = order["ts_start_index"]
+                end_index = order["ts_end_index"]
+                key = f"{first_hf_path}.{start_index}.{end_index}"
+                if key in order_index_merge_map:
+                    order_index_merge_map[key].append(index)
                 else:
-                    order_index_merge_map[first_hf_path] = [index]
+                    order_index_merge_map[key] = [index]
             
             batched_index_lists = []
-            for first_hf_path in order_index_merge_map:
-                indices = order_index_merge_map[first_hf_path]
+            for key in order_index_merge_map:
+                indices = order_index_merge_map[key]
                 chunked_indices = [indices[i:i+optimize_batch_n] for i in range(0, len(indices), optimize_batch_n)]
                 for index_list in chunked_indices:
                     batched_index_lists.append(index_list)
-
-
             for index_list in batched_index_lists:
                 init_index = index_list[0]
                 init_order = self.__orders[init_index]
@@ -813,7 +874,6 @@ class TSCollection:
                     "secondary_vars": order["secondary_vars"],
                     "ts_args": ts_args
                 })
-
         with ProcessPoolExecutor(max_workers=self.__num_processes) as executor:
             futures = {executor.submit(generate_time_series, **args): args for args in optimized_orders}
             prog_bar = ProgressBar(total=len(futures), label="Generating Timeseries")
@@ -822,7 +882,7 @@ class TSCollection:
                     results.append(future.result())
                 except Exception as exc:
                     path = futures[future]
-                    logger.warning(f"Failed to load metadata for {path}: {exc}", exc_info=True)
+                    logger.warning(f"Failed to generate time series for {path}: {exc}", exc_info=True)
                     if raise_errors:
                         raise
                 finally:
