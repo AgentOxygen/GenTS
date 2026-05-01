@@ -23,6 +23,8 @@ FRAGMENTED_NUM_TIMESTEPS = 20
 UNSTRUCT_GRID_NUM_NCOLS = 8
 MIXED_TS_NUM_TEST_HIST_FILES = 10
 LONG_TEST_NUM_HIST_FILES = 240
+MS_LARGE_NUM_TEST_HIST_FILES = 4
+MS_LARGE_NUM_TIMESTEPS = 15
 
 
 def generate_history_file(
@@ -227,15 +229,32 @@ def simple_case_missing_attrs(tmp_path_factory):
 
 @pytest.fixture(scope="function")
 def multistep_case(tmp_path_factory):
-    """49 history files each containing 3 consecutive time steps."""
+    """49 history files each containing 3 consecutive monthly time steps."""
     head_hf_dir = tmp_path_factory.mktemp("multistep_history_files")
     head_ts_dir = tmp_path_factory.mktemp("multistep_timeseries_files")
     
     hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
     index = 0
-    for  path in hf_paths:
+    for path in hf_paths:
         generate_history_file(path, [(index)*30, (index+1)*30, (index+2)*30], [[(index)*30, (index+1)*30], [(index+1)*30, (index+2)*30], [(index+2)*30, (index+3)*30]])
         index += 3
+
+    return head_hf_dir, head_ts_dir
+
+
+@pytest.fixture(scope="function")
+def multistep_large_case(tmp_path_factory):
+    """4 history files each containing 15 consecutive monthly time steps."""
+    head_hf_dir = tmp_path_factory.mktemp("multistep_large_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("multistep_large_timeseries_files")
+    
+    hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(MS_LARGE_NUM_TEST_HIST_FILES)]
+    index = 0
+    for path in hf_paths:
+        times = [(index+i)*30 for i in range(0, MS_LARGE_NUM_TIMESTEPS)]
+        time_bounds = [[(index+i)*30, (index+i+1)*30] for i in range(0, MS_LARGE_NUM_TIMESTEPS)]
+        generate_history_file(path, times, time_bounds)
+        index += MS_LARGE_NUM_TIMESTEPS
 
     return head_hf_dir, head_ts_dir
 

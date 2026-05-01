@@ -69,6 +69,12 @@ def parse_arguments():
         help="Maximum length of individual time series files in years. (Default 10)"
     )
     parser.add_argument(
+        "--slice_start_year",
+        type=int,
+        default=None,
+        help="Year to start slice windows at. (Default is start year for history files)"
+    )
+    parser.add_argument(
         "-hc", "--hfcores",
         type=int,
         default=64,
@@ -83,8 +89,8 @@ def parse_arguments():
     parser.add_argument(
         "-m", "--model",
         type=str,
-        default="none",
-        help="Specify a model default GenTS configuration to use. ('CESM3', 'CESM2', 'E3SM')"
+        default=None,
+        help="Specify a model default GenTS configuration to use: 'CESM3', 'CESM2', 'E3SM'. (Default None)"
     )
     parser.add_argument(
         "--exclude",
@@ -133,13 +139,14 @@ def main():
     if args.outputdir is None:
         args.outputdir = args.hf_head_dir
     
-    args.model = args.model.lower()
+    if args.model is not None:
+        args.model = args.model.lower()
 
-    if args.model == "cesm3":
+    if args.model == "cesm3" or args.model == "cesm2":
         from gents.configs.gents_cesm3 import run_config
     elif args.model == "e3sm":
         from gents.configs.gents_e3sm import run_config
-    elif args.model == "none":
+    elif args.model == None:
         from gents.configs.gents_default import run_config
     else:
         raise ValueError(f"Configuration module for '{args.model}' not found ('gents.configs.gents_{args.model}' does not exist).")
@@ -157,5 +164,6 @@ def main():
         print(f"  Exclude filters                 : {args.exclude}")
         print(f"  Append filters to defaults      : {args.append}")
         print(f"  Time alignment method           : {args.align_method}")
+        print(f"  Slice start year                : {args.slice_start_year}")
 
     run_config(args)

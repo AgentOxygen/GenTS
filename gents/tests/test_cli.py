@@ -28,9 +28,10 @@ def test_parse_defaults():
     assert args.slice == 10
     assert args.hfcores == 64
     assert args.tscores == 8
-    assert args.model == "none"
+    assert args.model is None
     assert args.exclude == []
     assert args.include == []
+    assert args.slice_start_year is None
 
 
 def test_parse_outputdir():
@@ -99,6 +100,7 @@ def test_main_verbose_prints_settings(capsys):
 
 
 def test_cli_simple_case(simple_case):
+    """CLI produces expected time series for a simple case."""
     input_head_dir, output_head_dir = simple_case
     with patch.object(sys, "argv", ["run_gents", str(input_head_dir), "-o", str(output_head_dir)]):
         main()
@@ -115,3 +117,14 @@ def test_cli_simple_case(simple_case):
             assert ts_ds.getncattr("gents_version") == get_version()
             assert is_monotonic(ts_ds["time"][:])
             var_name = str(path).split(".")[-3]
+
+
+def test_cli_long_hf_slicing(long_case):
+    """Changing slicing parameters has intended effect."""
+
+    input_head_dir, output_head_dir = long_case
+    with patch.object(sys, "argv", ["run_gents", str(input_head_dir), "-o", str(output_head_dir), "-sl", "5"]):
+        main()
+
+    ts_paths = find_files(output_head_dir, "*.nc")
+    assert len(ts_paths) == LONG_TEST_NUM_HIST_FILES / 12 / 5

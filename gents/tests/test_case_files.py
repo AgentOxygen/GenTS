@@ -114,6 +114,28 @@ def test_no_time_case(no_time_case):
             assert 'time_bounds' not in hf_ds.variables
 
 
+def test_multistep_large_case(multistep_large_case):
+    """Confirms time is a 1-D variable and the expected number of files were created."""
+    input_head_dir, output_head_dir = multistep_large_case
+    assert len(listdir(input_head_dir)) == MS_LARGE_NUM_TEST_HIST_FILES
+
+    times = []
+    for file_name in listdir(input_head_dir):
+        with GenTSDataStore(f"{input_head_dir}/{file_name}", 'r') as hf_ds:
+            assert len(hf_ds['time'].dimensions) == 1
+            assert hf_ds['time'].size == MS_LARGE_NUM_TIMESTEPS
+            calendar = hf_ds["time"].calendar
+            units = hf_ds["time"].units
+            times.append(hf_ds['time'][:])
+
+    times = np.concatenate(times)
+    start_date = num2date(np.min(times), units=units, calendar=calendar)
+    end_date = num2date(np.max(times), units=units, calendar=calendar)
+
+    assert start_date.year == CASE_START_YEAR
+    assert end_date.year == CASE_START_YEAR + int(np.ceil((MS_LARGE_NUM_TEST_HIST_FILES-1)*MS_LARGE_NUM_TIMESTEPS / 12))
+    
+
 def test_multistep_case(multistep_case):
     """Confirms time is a 1-D variable and the expected number of files were created."""
     input_head_dir, output_head_dir = multistep_case
@@ -121,6 +143,7 @@ def test_multistep_case(multistep_case):
     for file_name in listdir(input_head_dir):
         with GenTSDataStore(f"{input_head_dir}/{file_name}", 'r') as hf_ds:
             assert len(hf_ds['time'].dimensions) == 1
+            assert hf_ds['time'].size > 1
 
 
 def test_with_auxiliary_case(with_auxiliary_case):

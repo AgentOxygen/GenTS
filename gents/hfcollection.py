@@ -484,7 +484,7 @@ class HFCollection:
     new ``HFCollection`` instances, preserving an immutable-style fluent API.
     """
 
-    def __init__(self, hf_dir, num_processes=1, meta_map=None, hf_groups=None, step_map=None, hf_glob_pattern="*.nc*", dask_client=None):
+    def __init__(self, hf_dir, num_processes=1, meta_map=None, hf_groups=None, step_map=None, hf_glob_pattern="*.nc*", dask_client=None, multistep_slice_map={}):
         """
         Initialises the collection by discovering history files under ``hf_dir``.
 
@@ -510,6 +510,9 @@ class HFCollection:
         :param hf_glob_pattern: ``fnmatch`` pattern used when searching for files.
             Defaults to ``'*.nc*'``.
         :type hf_glob_pattern: str
+        :param multistep_slice_map: For multi-timestep history files, the map of 
+            slice indices to use for groups (mostly internal kwarg).
+        :type multistep_slice_map: dict
         :param dask_client: Deprecated. Pass ``num_processes`` instead.
         """
         if dask_client is not None:
@@ -522,6 +525,7 @@ class HFCollection:
             raise FileNotFoundError(f"No files matching '{hf_glob_pattern}' found in '{hf_dir}'")
 
         self.__hf_to_meta_map = {}
+        self.__hf_multistep_slices = multistep_slice_map
         if meta_map is None:
             for path in self.__raw_paths:
                 self.__hf_to_meta_map[path] = None
@@ -571,6 +575,31 @@ class HFCollection:
                 return False
         return True
 
+    
+    def get_multistep_slices(self, hf_path):
+        """
+        Checks if the history file is multistep and returns the slice indices
+        if they are needed.
+
+        This only matters for history files with mutliple time steps that
+        overlap a yearly boundary being sliced on.
+
+        :param hf_path: Path to the history file.
+        :type hf_path: pathlib.Path
+        :returns: Dictionary with slice labels as keys and the start and end indicies
+             to slice the history file by as values, or ``None`` if the history file 
+             is not muiltistep or doesn't need to be sliced.
+        :rtype: dict
+        """
+        self.check_pulled()
+        if hf_path in self.__hf_multistep_slices:
+            return self.__hf_multistep_slices[hf_path]
+        elif hf_path not in self.__hf_to_meta_map:
+            raise KeyError(f"History file '{hf_path}' not found in HFCollection")
+        else:
+            return None
+
+
     def get_timestep_delta(self, hf_path):
         """
         Returns the pre-computed time-step duration for a given history file.
@@ -601,7 +630,7 @@ class HFCollection:
         if not self.is_pulled():
             self.pull_metadata()
 
-    def copy(self, num_processes=None, meta_map=None, hf_groups=None, step_map=None):
+    def copy(self, num_processes=None, meta_map=None, hf_groups=None, step_map=None, multistep_slice_map=None):
         """
         Creates a new ``HFCollection`` derived from this one with optional overrides.
 
@@ -620,6 +649,9 @@ class HFCollection:
         :param step_map: Timestep delta map to assign to the copy. Defaults to
             the current map.
         :type step_map: dict or None
+        :param multistep_slice_map: Slice indices map for multisteps to assign to the copy. Defaults to
+            the current map.
+        :type step_map: dict or None
         :returns: New ``HFCollection`` instance.
         :rtype: HFCollection
         """
@@ -631,7 +663,9 @@ class HFCollection:
             hf_groups = self.get_groups()
         if step_map is None:
             step_map = self.__hf_to_timestep_delta_map
-        return HFCollection(self.__hf_dir, num_processes=num_processes, meta_map=meta_map, hf_groups=hf_groups, step_map=step_map)
+        if multistep_slice_map is None:
+            multistep_slice_map = self.__hf_multistep_slices
+        return HFCollection(self.__hf_dir, num_processes=num_processes, meta_map=meta_map, hf_groups=hf_groups, step_map=step_map, multistep_slice_map=multistep_slice_map)
 
     def sort_along_time(self):
         """
@@ -866,7 +900,7 @@ class HFCollection:
 
         return self.__hf_groups
 
-    def slice_groups(self, slice_size_years=10, start_year=0, pattern=None):
+    def slice_groups(self, slice_size_years=10, start_year=0, pattern="*", time_alignment_method="midpoint"):
         """
         Returns a new collection with history file groups partitioned into time slices.
 
@@ -877,15 +911,27 @@ class HFCollection:
         ``[sorting_pivot]<start>-<end>`` to carry the year range through to
         :class:`~gents.timeseries.TSCollection`.
 
+        Time alignment methods:
+
+        - ``'midpoint'`` *(default)*: midpoint of the first time bound.
+        - ``'direct_time'``: raw ``time`` coordinate values (ignores bounds).
+        - ``'start_bound'``: lower edge of the first time bound.
+        - ``'end_bound'``: upper edge of the first time bound.
+
         :param slice_size_years: Maximum width of each time slice in years.
             Defaults to ``10``.
         :type slice_size_years: int
-        :param start_year: Override for the starting year; set to ``0`` to begin
+        :param start_year: Override for the starting year; set to ``None`` to begin
             at the dataset's own minimum year. Defaults to ``0``.
         :type start_year: int or None
         :param pattern: ``fnmatch`` glob to restrict slicing to matching group IDs.
-            Defaults to ``None`` (all groups).
+            Defaults to ``*`` (all groups).
         :type pattern: str or None
+        :param time_alignment_method: Method used to select the representative
+            time value from each file's time bounds. Must be one of
+            ``'midpoint'``, ``'direct_time'``, ``'start_bound'``, or
+            ``'end_bound'``. Defaults to ``'midpoint'``.
+        :type time_alignment_method: str
         :returns: New ``HFCollection`` with sliced groups embedded.
         :rtype: HFCollection
         """
@@ -894,7 +940,7 @@ class HFCollection:
 
         for group in self.get_groups():
             hf_paths = self.get_groups()[group]
-            if pattern is not None and not fnmatch.fnmatch(group, pattern):
+            if not fnmatch.fnmatch(group, pattern):
                 sliced_groups[group] = hf_paths
                 continue
             
@@ -902,35 +948,58 @@ class HFCollection:
                 sliced_groups[group] = hf_paths
                 warnings.warn("Cannot slice history file group of size 1.", RuntimeWarning)
                 continue
-            else:
-                group_meta_map = {path: self.__hf_to_meta_map[path] for path in hf_paths}
-                
-                min_year, max_year = get_year_bounds(group_meta_map)
-                if start_year is not None:
-                    min_year = start_year
-                
-                time_slices = calculate_year_slices(slice_size_years, min_year, max_year)
 
-                hf_slices = {}
-                variable_set = None
-                for hf_path in hf_paths:
-                    meta_ds = self.__hf_to_meta_map[hf_path]
-        
-                    if meta_ds.get_cftime_bounds() is not None:
-                        time_bnds = meta_ds.get_cftime_bounds()[0]
-                        time = time_bnds[0] + ((time_bnds[1] - time_bnds[0]) / 2)
-                    else:
-                        time = meta_ds.get_cftimes()[0]
-                    
-                    for time_slice in time_slices:
+            group_meta_map = {path: self.__hf_to_meta_map[path] for path in hf_paths}
+            
+            min_year, max_year = get_year_bounds(group_meta_map)
+            if start_year is not None:
+                min_year = start_year
+            
+            time_slices = calculate_year_slices(slice_size_years, min_year, max_year)
+
+            hf_slices = {}
+            variable_set = None
+            for hf_path in hf_paths:
+                meta_ds = self.__hf_to_meta_map[hf_path]
+
+                times = []
+                time_bnds = meta_ds.get_cftime_bounds()
+                if time_bnds is None:
+                    times = [meta_ds.get_cftimes()]
+                else:
+                    for ts in time_bnds:
+                        if time_alignment_method == "midpoint":
+                            times.append([ts[0] + (ts[1] - ts[0]) / 2])
+                        elif time_alignment_method == "start_bound":
+                            times.append([ts[0]])
+                        elif time_alignment_method == "end_bound":
+                            times.append([ts[1]])
+                        else:
+                            raise ValueError(f"'{time_alignment_method}' is an invalid time-alignment method. Valid methods are ['direct_time', 'midpoint', 'start_bound', 'end_bound']")
+                times = np.concatenate(times)
+                for time_slice in time_slices:
+                    slice_matched = False
+                    for start_index, time in enumerate(times):
                         if time_slice[0] <= time.year <= time_slice[1]:
+                            slice_matched = True
                             if time_slice in hf_slices:
                                 hf_slices[time_slice].append(hf_path)
                             else:
                                 hf_slices[time_slice] = [hf_path]
                             break
 
-                for time_slice in hf_slices:
-                    sliced_groups[f"{group}[sorting_pivot]{time_slice[0]}-{time_slice[1]}"] = hf_slices[time_slice]
+                    if slice_matched:
+                        if len(times) > 1:
+                            for end_index, time in enumerate(times):
+                                if time.year > time_slice[1]:
+                                    break
+                            if start_index != 0 or end_index != len(times) - 1:
+                                if hf_path in self.__hf_multistep_slices:
+                                    assert f"{time_slice[0]}-{time_slice[1]}" not in self.__hf_multistep_slices[hf_path]
+                                    self.__hf_multistep_slices[hf_path][f"{time_slice[0]}-{time_slice[1]}"] = (start_index, end_index)
+                                else:
+                                    self.__hf_multistep_slices[hf_path] = {f"{time_slice[0]}-{time_slice[1]}": (start_index, end_index)}
+            for time_slice in hf_slices:
+                sliced_groups[f"{group}[sorting_pivot]{time_slice[0]}-{time_slice[1]}"] = hf_slices[time_slice]
         logger.debug(f"Slicing groups into {slice_size_years} year long slices for '{pattern}'.")
         return self.copy(hf_groups=sliced_groups)
