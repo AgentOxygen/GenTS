@@ -63,21 +63,23 @@ def test_simple_workflow(simple_case):
 def test_simple_workflow_slicing(simple_case):
     """Sliced workflow produces one TS per variable per year slice with no sorting_pivot tokens in output paths."""
     input_head_dir, output_head_dir = simple_case
-    hf_collection = HFCollection(input_head_dir).slice_groups(slice_size_years=1)
+    hf_collection = HFCollection(input_head_dir).slice_groups(slice_size_years=1, start_year=None)
     ts_collection = TSCollection(hf_collection, output_head_dir)
     ts_paths = ts_collection.execute()
 
     assert len(ts_paths) == SIMPLE_NUM_VARS*int(np.ceil(SIMPLE_NUM_TEST_HIST_FILES / 12))
+
     for path in ts_paths:
         assert "[sorting_pivot]" not in path
         assert "*" not in path
         with GenTSDataStore(path, 'r') as ts_ds:
             assert ts_ds["time"].size == ts_ds["time_bounds"].shape[0]
+            assert ts_ds["time"].size == 12 or ts_ds["time"].size == SIMPLE_NUM_TEST_HIST_FILES % 12
 
             for index in range(ts_ds["time"].size):
                 time_bounds = ts_ds["time_bounds"][index]
                 assert time_bounds.count() == 2
-                assert time_bounds[0] <= ts_ds["time"][index] <= time_bounds[1]
+                assert time_bounds[0] <= ts_ds["time"][index] <= time_bounds[1]   
 
 
 def test_unstructured_grid_workflow(unstructured_grid_case):
