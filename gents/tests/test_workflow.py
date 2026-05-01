@@ -249,3 +249,13 @@ def test_include_years_workflow(long_case):
 
     for path in ts_paths:
         assert path.split(".")[-2] == "185001-185212"
+
+
+def test_multistep_large_slicing_workflow(multistep_large_case):
+    """Slicing along large multi-timestep-per-file history files produce TS files correct bounds."""
+    input_head_dir, output_head_dir = multistep_large_case
+    hf_collection = HFCollection(input_head_dir).slice_groups(slice_size_years=1, start_year=None)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+
+    ts_paths = ts_collection.execute(optimize=True)
+    assert len(ts_paths) == SIMPLE_NUM_VARS*int(np.ceil(MS_LARGE_NUM_TEST_HIST_FILES*MS_LARGE_NUM_TIMESTEPS / 12))

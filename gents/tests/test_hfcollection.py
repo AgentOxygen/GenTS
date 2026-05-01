@@ -53,7 +53,7 @@ def test_hf_sorting(structured_case):
     assert num_files == 2*len(hf_paths)
 
 
-def test_get_year_bounds(simple_case, scrambled_case, structured_case):
+def test_get_year_bounds(simple_case, scrambled_case, structured_case, multistep_large_case):
     """get_year_bounds() returns correct min/max years for simple, scrambled, and structured cases."""
     input_head_dir, output_head_dir = simple_case
     hf_collection = HFCollection(input_head_dir)
@@ -70,6 +70,11 @@ def test_get_year_bounds(simple_case, scrambled_case, structured_case):
     hf_collection = HFCollection(input_head_dir)
     hf_collection.pull_metadata()
     assert get_year_bounds(hf_collection) == (CASE_START_YEAR, int(CASE_START_YEAR+((STRUCTURED_NUM_TEST_HIST_FILES-1)/12)))
+
+    input_head_dir, output_head_dir = multistep_large_case
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection.pull_metadata()
+    assert get_year_bounds(hf_collection) == (CASE_START_YEAR, np.ceil(CASE_START_YEAR+(((MS_LARGE_NUM_TEST_HIST_FILES-1)*MS_LARGE_NUM_TIMESTEPS)/12)))
 
 
 def test_simple_hfcollection(simple_case, caplog):
@@ -272,6 +277,27 @@ def test_long_hf_slicing(long_case):
     groups = hf_coll1.get_groups()
     assert len(groups) == 2
     assert len(groups[list(groups)[0]]) == 120 - (offset*12)
+
+
+def test_multistep_hf_slicing(multistep_large_case):
+    """slice_groups() produces the expected per-group file counts for history files with a large number of time steps."""
+    input_head_dir, output_head_dir = multistep_large_case
+    hf_collection = HFCollection(input_head_dir)
+    assert len(hf_collection) == MS_LARGE_NUM_TEST_HIST_FILES
+
+    with pytest.raises(KeyError) as exc:
+        hf_collection.get_multistep_slices("non-existent history file.nc")
+    assert hf_collection.get_multistep_slices(list(hf_collection)[0]) is None
+
+    hf_coll1 = hf_collection.slice_groups(slice_size_years=1, start_year=None)
+    assert len(hf_coll1.get_groups()) == int(np.ceil(MS_LARGE_NUM_TEST_HIST_FILES*MS_LARGE_NUM_TIMESTEPS / 12))
+    for hf_path in hf_coll1:
+        assert hf_coll1.get_multistep_slices(hf_path) is not None
+
+    hf_coll1 = hf_collection.slice_groups(slice_size_years=2, start_year=None)
+    assert len(hf_coll1.get_groups()) == int(np.ceil(MS_LARGE_NUM_TEST_HIST_FILES*MS_LARGE_NUM_TIMESTEPS / 24))
+    for hf_path in hf_coll1:
+        assert hf_coll1.get_multistep_slices(hf_path) is not None
 
 
 def test_include_years(long_case):
