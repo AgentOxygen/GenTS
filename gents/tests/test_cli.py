@@ -117,6 +117,7 @@ def test_cli_simple_case(simple_case):
             assert ts_ds.getncattr("gents_version") == get_version()
             assert is_monotonic(ts_ds["time"][:])
             var_name = str(path).split(".")[-3]
+            assert ts_ds.getncattr("gents_command") == f"run_gents {str(input_head_dir)} -o {str(output_head_dir)}"
 
 
 def test_cli_long_hf_slicing(long_case):

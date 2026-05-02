@@ -993,7 +993,7 @@ class HFCollection:
                             for end_index, time in enumerate(times):
                                 if time.year > time_slice[1]:
                                     break
-                            if start_index != 0 or end_index != len(times) - 1:
+                            if start_index != 0 or times[-1].year > time_slice[1]:
                                 if hf_path in self.__hf_multistep_slices:
                                     assert f"{time_slice[0]}-{time_slice[1]}" not in self.__hf_multistep_slices[hf_path]
                                     self.__hf_multistep_slices[hf_path][f"{time_slice[0]}-{time_slice[1]}"] = (start_index, end_index)

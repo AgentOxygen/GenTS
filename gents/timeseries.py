@@ -81,7 +81,7 @@ def check_timeseries_conform(ts_path: str):
     return True
 
 
-def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_data, overwrite=False, complevel=0, compression=None, ts_start_index=None, ts_end_index=None):
+def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_data, overwrite=False, complevel=0, compression=None, ts_start_index=None, ts_end_index=None, append_attrs=None):
     """
     Writes a single time-series netCDF file for one primary variable.
 
@@ -126,6 +126,8 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
         If ``None``, read to the last time step for the full aggregation.
         Defaults to ``None``.
     :type ts_end_index: int or None
+    :param append_attrs: Attributes to append to output NetCDF files.
+    :type append_attrs: dict or None
     :returns: Path to the written (or skipped) output file.
     :rtype: str
     """
@@ -218,7 +220,9 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
             else:
                 svar_data[:] = secondary_vars_data[secondary_var]
         
-        ts_ds.setncatts(global_attrs | {"gents_version": str(get_version())})
+        if append_attrs is None:
+            append_attrs = {}
+        ts_ds.setncatts(global_attrs | append_attrs | {"gents_version": str(get_version())})
     return ts_out_path
 
 
@@ -436,12 +440,15 @@ class TSCollection:
         """
         self.__hf_collection.check_pulled()
         orders = []
-        for glob_template in self.__groups:
+        for index, glob_template in enumerate(self.__groups):
+            hf_paths = self.__groups[glob_template]
             output_template = glob_template.split(str(self.__hf_collection.get_input_dir()))[1]
             if "[sorting_pivot]" in output_template:
                 output_template, slice_years = output_template.split("[sorting_pivot]")
+                logger.debug(f"Group [{index+1}/{len(self.__groups)}] {len(hf_paths)} files: {output_template}, sliced to [{slice_years}]")
+            else:
+                logger.debug(f"Group [{index+1}/{len(self.__groups)}] {len(hf_paths)} files: {output_template}")
             ts_path_template = f"{self.__output_dir}{output_template}"
-            hf_paths = self.__groups[glob_template]
 
             primary_vars = self.__hf_collection[hf_paths[0]].get_primary_variables()
             secondary_vars = self.__hf_collection[hf_paths[0]].get_secondary_variables()
@@ -486,13 +493,8 @@ class TSCollection:
             sliced_times = np.concatenate(sliced_times)
             unsliced_times = np.concatenate(unsliced_times)
             if not np.array_equal(sliced_times, unsliced_times):
-                for index, ts in enumerate(unsliced_times):
-                    if start_index is None and ts in sliced_times:
-                        start_index = index
-                    elif start_index is not None and end_index is None and ts not in sliced_times:
-                        end_index = index
-                    elif start_index is not None and end_index is not None:
-                        break
+                start_index = int(np.searchsorted(unsliced_times, sliced_times[0]))
+                end_index = int(np.searchsorted(unsliced_times, sliced_times[-1], side="right"))
 
                 if end_index is None:
                     end_index = len(unsliced_times)
@@ -894,3 +896,18 @@ class TSCollection:
                 output_paths.append(path)
 
         return output_paths
+
+    def add_attrs(self, attrs):
+        """
+        Adds attributes to all output time series files associated with this collection.
+
+        :param attrs: Dictionary of key/value strings to append to output NetCDF files
+        :type attrs: dict
+        :returns: New ``TSCollection`` with updated attributes.
+        :rtype: TSCollection
+        """
+        new_orders = []
+        for order_dict in copy.deepcopy(self.__orders):
+            order_dict["append_attrs"] = attrs
+            new_orders.append(order_dict)
+        return self.copy(ts_orders=new_orders)

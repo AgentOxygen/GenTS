@@ -410,3 +410,20 @@ def test_time_alignment_kwargs(simple_case):
     )
     for order in ts_collection:
         assert order["ts_string"] == "18500201-18540201"
+
+
+def test_tscollection_add_attrs(simple_case):
+    """Adding attributes works as expected and is not an immutable function."""
+    input_head_dir, output_head_dir = simple_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+
+    ts_collection = ts_collection.add_attrs({"gents_test_key": "gents_test_val", "gents_test_key2": "gents_test_val2"})
+    ts_paths = ts_collection.execute()
+
+    assert len(ts_paths) > 0
+
+    for path in ts_paths:
+        with GenTSDataStore(path, 'r') as ts_ds:
+            assert ts_ds.getncattr("gents_test_key") == "gents_test_val"
+            assert ts_ds.getncattr("gents_test_key2") == "gents_test_val2"
