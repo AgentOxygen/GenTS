@@ -81,7 +81,7 @@ def check_timeseries_conform(ts_path: str):
     return True
 
 
-def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_data, overwrite=False, complevel=0, compression=None, ts_start_index=None, ts_end_index=None):
+def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_data, overwrite=False, complevel=0, compression=None, ts_start_index=None, ts_end_index=None, append_attrs=None):
     """
     Writes a single time-series netCDF file for one primary variable.
 
@@ -126,6 +126,8 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
         If ``None``, read to the last time step for the full aggregation.
         Defaults to ``None``.
     :type ts_end_index: int or None
+    :param append_attrs: Attributes to append to output NetCDF files.
+    :type append_attrs: dict or None
     :returns: Path to the written (or skipped) output file.
     :rtype: str
     """
@@ -218,7 +220,9 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
             else:
                 svar_data[:] = secondary_vars_data[secondary_var]
         
-        ts_ds.setncatts(global_attrs | {"gents_version": str(get_version())})
+        if append_attrs is None:
+            append_attrs = {}
+        ts_ds.setncatts(global_attrs | append_attrs | {"gents_version": str(get_version())})
     return ts_out_path
 
 
@@ -894,3 +898,18 @@ class TSCollection:
                 output_paths.append(path)
 
         return output_paths
+
+    def add_attrs(self, attrs):
+        """
+        Adds attributes to all output time series files associated with this collection.
+
+        :param attrs: Dictionary of key/value strings to append to output NetCDF files
+        :type attrs: dict
+        :returns: New ``TSCollection`` with updated attributes.
+        :rtype: TSCollection
+        """
+        new_orders = []
+        for order_dict in copy.deepcopy(self.__orders):
+            order_dict["append_attrs"] = attrs
+            new_orders.append(order_dict)
+        return self.copy(ts_orders=new_orders)
