@@ -1,6 +1,6 @@
 import argparse
 import sys
-from gents.utils import get_version
+from gents.utils import get_version, log_hfcollection_info, log_tscollection_info
 
 def parse_arguments():
     """
@@ -134,6 +134,7 @@ def main():
     4. If ``--verbose`` is set, prints a summary of all active settings to stdout.
     5. Delegates execution to the selected ``run_config(args)`` function.
     """
+    command_str = " ".join(sys.argv)
     args = parse_arguments()
 
     if args.outputdir is None:
@@ -143,11 +144,11 @@ def main():
         args.model = args.model.lower()
 
     if args.model == "cesm3" or args.model == "cesm2":
-        from gents.configs.gents_cesm3 import run_config
+        from gents.configs.gents_cesm3 import CESM3Config as ModelConfig
     elif args.model == "e3sm":
-        from gents.configs.gents_e3sm import run_config
+        from gents.configs.gents_e3sm import E3SMConfig as ModelConfig
     elif args.model == None:
-        from gents.configs.gents_default import run_config
+        from gents.configs.config import GenTSConfig as ModelConfig
     else:
         raise ValueError(f"Configuration module for '{args.model}' not found ('gents.configs.gents_{args.model}' does not exist).")
 
@@ -166,4 +167,39 @@ def main():
         print(f"  Time alignment method           : {args.align_method}")
         print(f"  Slice start year                : {args.slice_start_year}")
 
-    run_config(args)
+    model_conf = ModelConfig(args.hf_head_dir, args.outputdir)
+
+    if args.append:
+        for pattern in args.include:
+            model_conf.hf_include_patterns.append(pattern)
+        for pattern in args.exclude:
+            model_conf.hf_exclude_patterns.append(pattern)
+    else:
+        if len(args.include) > 0:
+            model_conf.hf_include_patterns = args.include
+        if len(args.exclude) > 0:
+            model_conf.hf_exclude_patterns = args.exclude
+
+    hf_collection = model_conf.get_hfcollection(
+        num_cores=args.hfcores,
+        slice_size_years=args.slice,
+        slice_start_year=args.slice_start_year,
+        align_method=args.align_method
+    )
+    ts_collection = model_conf.get_tscollection(
+        hfc=hf_collection,
+        num_cores=args.tscores,
+        append_dirs=True,
+        overwrite=args.overwrite
+    )
+
+    ts_collection = ts_collection.add_attrs({"gents_command": command_str})
+
+    log_hfcollection_info(hf_collection)
+    log_tscollection_info(ts_collection)
+
+    if not args.dryrun:
+        ts_collection.execute()
+    else:
+        print(f"Dry run: {len(ts_collection)} timeseries files would be generated.")
+    print("GenTS done!")

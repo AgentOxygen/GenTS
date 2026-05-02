@@ -1,20 +1,17 @@
-from gents.configs.config import GenTSConfig
 from gents.hfcollection import HFCollection
 from gents.timeseries import TSCollection
 
 
-class E3SMConfig(GenTSConfig):
-    hf_include_patterns = [
-        "*.nc"
-    ]
-    hf_exclude_patterns = [
-        "*/proc/tseries/*",
-        "*/rest/*",
-        "*/logs/*",
-    ]
+class GenTSConfig:
+    hf_include_patterns = ["*.nc"]
+    hf_exclude_patterns = ["*.log"]
+
+    def __init__(self, input_dir, output_dir):
+        self._input_dir = input_dir
+        self._output_dir = output_dir
 
     def get_hfcollection(self, num_cores, slice_size_years=10, slice_start_year=None, align_method="midpoint"):
-        hfc = HFCollection(self._input_dir, num_processes=num_cores)
+        hfc = HFCollection(self._input_dir , num_processes=num_cores)
         hfc = hfc.include(self.hf_include_patterns).exclude(self.hf_exclude_patterns)
         hfc = hfc.slice_groups(
             slice_size_years=slice_size_years,
@@ -24,6 +21,9 @@ class E3SMConfig(GenTSConfig):
         return hfc
 
     def get_tscollection(self, hfc, num_cores, append_dirs=True, overwrite=False):
-        tsc = super().get_tscollection(hfc, num_cores, append_dirs=False, overwrite=overwrite)
-        tsc = tsc.apply_path_swap("/hist/", "/proc/tseries/").append_timestep_dirs()
+        tsc = TSCollection(hfc, self._output_dir , num_processes=num_cores)
+        if append_dirs:
+            tsc = tsc.append_timestep_dirs()
+        if overwrite:
+            tsc = tsc.apply_overwrite("*")
         return tsc
