@@ -441,14 +441,14 @@ class TSCollection:
         self.__hf_collection.check_pulled()
         orders = []
         for index, glob_template in enumerate(self.__groups):
+            hf_paths = self.__groups[glob_template]
             output_template = glob_template.split(str(self.__hf_collection.get_input_dir()))[1]
             if "[sorting_pivot]" in output_template:
                 output_template, slice_years = output_template.split("[sorting_pivot]")
-                logger.debug(f"Grouped [{index}/{len(self.__groups)}]: {output_template}, sliced to [{slice_years}]")
+                logger.debug(f"Group [{index}/{len(self.__groups)}] {len(hf_paths)} files: {output_template}, sliced to [{slice_years}]")
             else:
-                logger.debug(f"Grouped [{index}/{len(self.__groups)}]: {output_template}")
+                logger.debug(f"Group [{index}/{len(self.__groups)}] {len(hf_paths)} files: {output_template}")
             ts_path_template = f"{self.__output_dir}{output_template}"
-            hf_paths = self.__groups[glob_template]
 
             primary_vars = self.__hf_collection[hf_paths[0]].get_primary_variables()
             secondary_vars = self.__hf_collection[hf_paths[0]].get_secondary_variables()
@@ -493,13 +493,8 @@ class TSCollection:
             sliced_times = np.concatenate(sliced_times)
             unsliced_times = np.concatenate(unsliced_times)
             if not np.array_equal(sliced_times, unsliced_times):
-                for index, ts in enumerate(unsliced_times):
-                    if start_index is None and ts in sliced_times:
-                        start_index = index
-                    elif start_index is not None and end_index is None and ts not in sliced_times:
-                        end_index = index
-                    elif start_index is not None and end_index is not None:
-                        break
+                start_index = int(np.searchsorted(unsliced_times, sliced_times[0]))
+                end_index = int(np.searchsorted(unsliced_times, sliced_times[-1], side="right"))
 
                 if end_index is None:
                     end_index = len(unsliced_times)
