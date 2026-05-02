@@ -1,6 +1,6 @@
 import argparse
 import sys
-from gents.utils import get_version, log_hfcollection_info, log_tscollection_info
+from gents.utils import get_version, log_hfcollection_info, log_tscollection_info, enable_logging
 
 def parse_arguments():
     """
@@ -166,6 +166,7 @@ def main():
         print(f"  Append filters to defaults      : {args.append}")
         print(f"  Time alignment method           : {args.align_method}")
         print(f"  Slice start year                : {args.slice_start_year}")
+        enable_logging(verbose=True)
 
     model_conf = ModelConfig(args.hf_head_dir, args.outputdir)
 
