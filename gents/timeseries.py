@@ -440,10 +440,13 @@ class TSCollection:
         """
         self.__hf_collection.check_pulled()
         orders = []
-        for glob_template in self.__groups:
+        for index, glob_template in enumerate(self.__groups):
             output_template = glob_template.split(str(self.__hf_collection.get_input_dir()))[1]
             if "[sorting_pivot]" in output_template:
                 output_template, slice_years = output_template.split("[sorting_pivot]")
+                logger.debug(f"Grouped [{index}/{len(self.__groups)}]: {output_template}, sliced to [{slice_years}]")
+            else:
+                logger.debug(f"Grouped [{index}/{len(self.__groups)}]: {output_template}")
             ts_path_template = f"{self.__output_dir}{output_template}"
             hf_paths = self.__groups[glob_template]
 
