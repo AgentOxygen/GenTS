@@ -999,7 +999,7 @@ class HFCollection:
                                     self.__hf_multistep_slices[hf_path][f"{time_slice[0]}-{time_slice[1]}"] = (start_index, end_index)
                                 else:
                                     self.__hf_multistep_slices[hf_path] = {f"{time_slice[0]}-{time_slice[1]}": (start_index, end_index)}
-            for time_slice in hf_slices:
-                sliced_groups[f"{group}[sorting_pivot]{time_slice[0]}-{time_slice[1]}"] = hf_slices[time_slice]
+                for time_slice in hf_slices:
+                    sliced_groups[f"{group}[sorting_pivot]{time_slice[0]}-{time_slice[1]}"] = hf_slices[time_slice]
         logger.debug(f"Slicing groups into {slice_size_years} year long slices for '{pattern}'.")
         return self.copy(hf_groups=sliced_groups)
