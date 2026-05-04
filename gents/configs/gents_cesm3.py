@@ -35,6 +35,6 @@ class CESM3Config(GenTSConfig):
 
     def get_tscollection(self, hfc, num_cores, append_dirs=True, overwrite=False):
         tsc = super().get_tscollection(hfc, num_cores, append_dirs=append_dirs, overwrite=overwrite)
-        tsc = tsc.apply_path_swap("/hist/", "/proc/tseries/").append_timestep_dirs()
+        tsc = tsc.apply_path_swap("/hist/", "/proc/tseries/")
         tsc = tsc.apply_compression(2, "zlib", "*", "*")
         return tsc
