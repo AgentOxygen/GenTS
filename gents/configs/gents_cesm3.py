@@ -20,7 +20,8 @@ class CESM3Config(GenTSConfig):
         "*.ocean_geometry.nc",
         "*mom6.ic.*",
         "*cam.i.*",
-        "*.static.*"
+        "*.static.*",
+        "*.pop.hv.*"
     ]
 
     def get_hfcollection(self, num_cores, slice_size_years=10, slice_start_year=None, align_method="midpoint"):
