@@ -964,7 +964,7 @@ class HFCollection:
 
                 times = []
                 time_bnds = meta_ds.get_cftime_bounds()
-                if time_bnds is None:
+                if time_bnds is None or time_alignment_method == "direct_time":
                     times = [meta_ds.get_cftimes()]
                 else:
                     for ts in time_bnds:
