@@ -300,6 +300,19 @@ def test_multistep_hf_slicing(multistep_large_case):
         assert hf_coll1.get_multistep_slices(hf_path) is not None
 
 
+def test_slice_groups_time_alignment(simple_case):
+    """slice_groups() accepts each valid time_alignment_method, conserving all files, and rejects invalid ones."""
+    input_head_dir, output_head_dir = simple_case
+    hf_collection = HFCollection(input_head_dir)
+
+    for method in ["direct_time", "midpoint", "start_bound", "end_bound"]:
+        groups = hf_collection.slice_groups(slice_size_years=1, time_alignment_method=method).get_groups()
+        assert sum(len(paths) for paths in groups.values()) == SIMPLE_NUM_TEST_HIST_FILES
+
+    with pytest.raises(ValueError, match="invalid time-alignment method"):
+        hf_collection.slice_groups(slice_size_years=1, time_alignment_method="not_a_method")
+
+
 def test_include_years(long_case):
     """include_years() returns the correct number of files for single- and multi-year ranges."""
     input_head_dir, output_head_dir = long_case
