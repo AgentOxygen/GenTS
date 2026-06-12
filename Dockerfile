@@ -12,8 +12,7 @@ RUN apt-get update && \
     git config --global --add safe.directory /usr/local/gents/.git
 
 RUN uv venv $UV_PROJECT_ENVIRONMENT && \
-    uv pip install --python $UV_PROJECT_ENVIRONMENT -r requirements.txt && \
-    uv pip install --python $UV_PROJECT_ENVIRONMENT -e .
+    uv pip install --python $UV_PROJECT_ENVIRONMENT -e ".[dev]"
 
 ENV PATH="/usr/local/gents-env/bin:$PATH"
 CMD ["pytest", "-v", "gents/tests/"]

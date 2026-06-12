@@ -31,3 +31,6 @@ packages = ["gents"]
 
 [project.scripts]
 run_gents = "gents.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest", "asv", "sphinx", "sphinx-autobuild"]
