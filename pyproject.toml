@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools", "setuptools-scm", "numpy", "netCDF4", "cftime"]
+requires = ["setuptools>=77", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -12,14 +12,17 @@ description = "A useful tool for post-processing Earth System Model output 'hist
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-  "numpy",
-  "netcdf4",
-  "cftime"
+  "numpy>=2.0",
+  "netCDF4>=1.7.0",
+  "cftime>=1.6.4",
 ]
 classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Operating System :: OS Independent",
 ]
 
 [tool.setuptools_scm]
