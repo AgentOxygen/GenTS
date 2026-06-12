@@ -2,11 +2,11 @@ name: Run Unit Tests
 
 on:
   push:
-    paths:
-      - '**.py'
+    branches: [main]
+    paths: ['**.py', 'pyproject.toml', 'Dockerfile']
   pull_request:
-    paths:
-      - '**.py'
+    paths: ['**.py', 'pyproject.toml', 'Dockerfile']
+
 
 jobs:
   build-linux:
@@ -15,9 +15,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+        with:
+          fetch-depth: 0
+
       - name: Build image
-        run: docker build -t gents-tests .
+        run: docker build --target test -t gents-tests .
 
       - name: Run unit tests
-        run: docker run --rm -v .:/project gents-tests
+        run: docker run --rm gents-tests
