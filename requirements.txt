@@ -1,6 +1,5 @@
-numpy
-netcdf4
-cftime
+# requirements.txt - development environment
+-e .
 pytest
 asv
 sphinx

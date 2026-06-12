@@ -1,0 +1,28 @@
+name: Check Dependency Version Compatibility
+
+on:
+  push:
+    branches: [main]
+    paths: ['**.py', 'pyproject.toml', 'Dockerfile']
+  pull_request:
+    paths: ['**.py', 'pyproject.toml', 'Dockerfile']
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Test minimum version dependencies
+        run: docker build --target deptest-floor -t gents-deptests-floor .
+
+      - name: Test latest version dependencies
+        continue-on-error: ${{ github.event_name != 'schedule' }}
+        run: docker build --target deptest-latest -t gents-deptests-latest .
