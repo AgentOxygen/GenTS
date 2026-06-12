@@ -28,6 +28,7 @@ classifiers = [
 ]
 
 [tool.setuptools_scm]
+fallback_version = "0.0.0"
 
 [project.urls]
 Homepage = "https://github.com/AgentOxygen/GenTS"
@@ -40,4 +41,7 @@ packages = ["gents"]
 run_gents = "gents.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest", "asv", "sphinx", "sphinx-autobuild"]
+test = ["pytest"]
+docs = ["sphinx", "sphinx-autobuild"]
+bench = ["asv"]
+dev = ["GenTS[test,docs,bench]"]
