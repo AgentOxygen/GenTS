@@ -17,13 +17,14 @@ permissions:
 
 jobs:
   deploy:
-
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
     - name: Set up Python
-      uses: actions/setup-python@v3
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10.x'
     - name: Install dependencies
@@ -39,11 +40,14 @@ jobs:
         password: ${{ secrets.PYPI_API_TOKEN }}
 
   build-and-push:
+    needs: deploy
     runs-on: ubuntu-latest
  
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
  
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -55,6 +59,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          target: runtime
           push: true
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/gents:${{ github.event.release.tag_name }}
