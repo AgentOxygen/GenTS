@@ -400,3 +400,10 @@ def test_no_history_files():
     """No history files found should raise an error."""
     with pytest.raises(FileNotFoundError) as exc:
         empty_hfcollection = HFCollection("")
+
+
+def test_extraneous_hfcollection(extraneous_file_case):
+    """Check that HFCollection handles extraneous files correctly, including slicing."""
+    input_head_dir, output_head_dir = extraneous_file_case
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection = hf_collection.slice_groups()

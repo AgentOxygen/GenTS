@@ -456,3 +456,18 @@ def large_file_for_chunking_case(tmp_path_factory):
         )
 
     return head_hf_dir, head_ts_dir
+
+
+@pytest.fixture(scope="function")
+def extraneous_file_case(tmp_path_factory):
+    """Same as simple case but with an extraneous netCDF file added in."""
+    head_hf_dir = tmp_path_factory.mktemp("extraneous_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("extraneous_timeseries_files")
+
+    hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
+    for file_index, path in enumerate(hf_paths):
+        generate_history_file(path, [(file_index+0.5)*30], [[file_index*30, (file_index+1)*30]])
+    
+    generate_history_file(f"{head_hf_dir}/extraneous.nc", [0], [[0,0]])
+
+    return head_hf_dir, head_ts_dir
