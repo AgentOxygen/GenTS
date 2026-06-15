@@ -400,3 +400,11 @@ def test_no_history_files():
     """No history files found should raise an error."""
     with pytest.raises(FileNotFoundError) as exc:
         empty_hfcollection = HFCollection("")
+
+
+def test_extraneous_hfcollection(extraneous_file_case):
+    """An extraneous history file should raise a ValueError naming the offending file."""
+    input_head_dir, output_head_dir = extraneous_file_case
+    hf_collection = HFCollection(input_head_dir)
+    with pytest.raises(ValueError, match="extraneous.nc"):
+        hf_collection.slice_groups()

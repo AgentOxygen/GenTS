@@ -320,3 +320,16 @@ def test_large_case(large_file_for_chunking_case):
             assert "VAR1" not in hf_ds.variables
             variable_size = np.prod(hf_ds["VAR0"].shape) * hf_ds["VAR0"].dtype.itemsize
             assert variable_size > 4*(1024**2)
+
+
+def test_extraneous_case(simple_case, extraneous_file_case):
+    """Confirms that extraneous case is just simple case with an extra tmp.nc"""
+    simple_input_head_dir, simple_output_head_dir = simple_case
+    input_head_dir, output_head_dir = extraneous_file_case
+    extraneous_file_names = listdir(input_head_dir)
+
+    for file_name in listdir(simple_input_head_dir):
+        assert file_name in extraneous_file_names
+
+    with GenTSDataStore(f"{input_head_dir}/extraneous.nc", 'r') as hf_ds:
+        pass
