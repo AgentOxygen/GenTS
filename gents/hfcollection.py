@@ -177,13 +177,17 @@ def sort_hf_groups(hf_paths, delimiter=".", substring_index=2):
         group_paths = [path for path in directory_groups[parent_path]]
         substrings = []
         for path in group_paths:
-            parsed = path.name[:find_all_indices(path.name, delimiter)[-1 * substring_index]]
+            num_delims = len(path.name.split(delimiter)) - 1
+            delim_index = -1 * min(num_delims, substring_index)
+            parsed = path.name[:find_all_indices(path.name, delimiter)[delim_index]]
             substrings.append(parsed)
         
         for substring in np.unique(substrings):
             hf_groups[f"{parent_path}/{substring}*"] = []
             for path in group_paths:
-                parsed = path.name[:find_all_indices(path.name, delimiter)[-1 * substring_index]]
+                num_delims = len(path.name.split(delimiter)) - 1
+                delim_index = -1 * min(num_delims, substring_index)
+                parsed = path.name[:find_all_indices(path.name, delimiter)[delim_index]]
                 if substring == parsed:
                     hf_groups[f"{parent_path}/{substring}*"].append(path)
         
