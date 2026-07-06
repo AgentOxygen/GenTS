@@ -250,7 +250,7 @@ def main():
     tsc = TSCollection(hfc, args.outputdir)
 
     if args.compression is not None:
-        tsc.apply_compression(alg=args.compression, level=args.level)
+        tsc = tsc.apply_compression(alg=args.compression, level=args.level, path_glob="*")
 
     if "path_swaps" in yaml_config["output_ts"]:
         for swap_batch in yaml_config["output_ts"]["path_swaps"]:
