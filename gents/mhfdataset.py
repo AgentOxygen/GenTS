@@ -73,6 +73,8 @@ class MHFDataset:
         """
         if self.__hf_datasets is None:
             self.__hf_datasets = [GenTSDataStore(path, 'r') for path in self.__hf_files]
+            for ds in self.__hf_datasets:
+                ds.set_auto_maskandscale(False)
             self.__time_name, self.time_bnds_name = get_time_variables_names(self.__hf_datasets[0])
             self.__time_vals = [np.squeeze(hf_data[self.__time_name][:]) for hf_data in self.__hf_datasets]
 
@@ -259,19 +261,19 @@ class MHFDataset:
                 hf_index = self.__time_mapping[time_val][0]
                 hf_data = self.__hf_datasets[hf_index]
                 if hf_data[self.__time_name].shape[0] > 1:
-                    sub_t_index = np.where(self.__time_vals[hf_index] == time_val)[0]
+                    sub_t_index = int(np.where(self.__time_vals[hf_index] == time_val)[0][0])
                     var_vals[index] = hf_data[var_name][sub_t_index]
                 else:
-                    var_vals[index] = hf_data[var_name][:]
+                    var_vals[index] = hf_data[var_name][0]
         else:
             for time_index, time_val in enumerate(time_vals):
                 for hf_index in self.__time_mapping[time_val]:
                     hf_data = self.__hf_datasets[hf_index]
                     if self.__time_name in hf_data[var_name].dimensions and hf_data[self.__time_name].shape[0] > 1:
-                        sub_t_index = np.where(self.__time_vals[hf_index] == time_val)[0]
+                        sub_t_index = int(np.where(self.__time_vals[hf_index] == time_val)[0][0])
                         hf_data_fragment = hf_data[var_name][sub_t_index]
                     else:
-                        hf_data_fragment = hf_data[var_name][:]
+                        hf_data_fragment = hf_data[var_name][0]
                     
                     index_ranges = []
                     for dim_index, dim in enumerate(hf_data[var_name].dimensions):
