@@ -4,7 +4,17 @@ import yaml
 from pathlib import Path
 from unittest.mock import patch
 from gents.cli import check_config, main
+import collections
+import collections.abc
 
+# PyYAML releases prior to 5.3 reference ``collections.Hashable`` (and a few
+# sibling ABCs) that were relocated to ``collections.abc`` in Python 3.3 and
+# removed outright in Python 3.10. Restoring the aliases keeps the full range
+# of PyYAML versions permitted by our dependency floor importable and usable on
+# modern Python rather than pinning the dependency to a newer release.
+for _abc_name in ("Hashable", "Mapping", "MutableMapping", "Sequence"):
+    if not hasattr(collections, _abc_name):
+        setattr(collections, _abc_name, getattr(collections.abc, _abc_name))
 
 CONFIG_DIR = Path(__file__).parents[1] / "configs"
 REQUIRED_KEYS = ["version", "model", "input_hf", "output_ts"]
