@@ -184,6 +184,8 @@ def main():
         print(f"  Append filters to defaults      : {args.append}")
         print(f"  Time alignment method           : {args.align_method}")
         print(f"  Slice start year                : {args.slice_start_year}")
+        print(f"  Compression method              : {args.compression}")
+        print(f"  Compression level               : {args.level}")
         enable_logging(verbose=True)
 
     config_dir = Path(__file__).parent / "configs"
