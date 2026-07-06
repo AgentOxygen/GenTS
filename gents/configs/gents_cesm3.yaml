@@ -1,0 +1,43 @@
+version: 1 # Required
+
+model: "CESM3" # Required
+
+input_hf:
+  match: "*.nc*"
+  include:
+    - "*/atm/*"
+    - "*/ice/*"
+    - "*/lnd/*"
+    - "*/glc/*"
+    - "*/ocn/*"
+    - "*/rof/*"
+    - "*.nc"
+  exclude:
+    - "*/proc/tseries/*"
+    - "*/rest/*"
+    - "*/logs/*"
+    - "*.ocean_geometry.nc"
+    - "*mom6.ic.*"
+    - "*cam.i.*"
+    - "*.static.*"
+    - "*.pop.hv.*"
+    - "*tmp.nc"
+    - "*initial_hist*"
+  slicing:
+    - pattern: "*"
+      slice_size_years: 10
+      start_year: null
+      time_alignment_method: midpoint
+
+output_ts:
+  append_timestep_dirs: true
+  path_swaps:
+    - string_match: "/hist/"
+      string_swap: "/proc/tseries/"
+      path_glob: "*"
+      var_glob: "*"
+  compression:
+    - path_glob: "*"
+      var_glob: "*"
+      level: 2
+      alg: zlib
