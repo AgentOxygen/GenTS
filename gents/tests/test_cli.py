@@ -32,6 +32,8 @@ def test_parse_defaults():
     assert args.exclude == []
     assert args.include == []
     assert args.slice_start_year is None
+    assert args.compression is None
+    assert args.level is None
 
 
 def test_parse_outputdir():
@@ -71,6 +73,24 @@ def test_parse_include_exclude():
     assert args.exclude == ["*/rest/*", "*/logs/*"]
 
 
+def test_parse_compression_and_level():
+    """--compression and --level capture the algorithm name and integer level."""
+    with patch.object(sys, "argv", [
+        "run_gents", "/data/input", "--compression", "zlib", "--level", "3"
+    ]):
+        args = parse_arguments()
+    assert args.compression == "zlib"
+    assert args.level == 3
+
+
+def test_parse_compression_without_level():
+    """--compression may be parsed on its own; --level stays at its None default."""
+    with patch.object(sys, "argv", ["run_gents", "/data/input", "--compression", "zstd"]):
+        args = parse_arguments()
+    assert args.compression == "zstd"
+    assert args.level is None
+
+
 def test_parse_missing_required_exits():
     """Omitting hf_head_dir causes argparse to exit with a non-zero code."""
     with patch.object(sys, "argv", ["run_gents"]):
@@ -97,6 +117,65 @@ def test_main_verbose_prints_settings(capsys):
     out = capsys.readouterr().out
     assert "/data/input" in out
     assert "cesm3" in out
+
+
+def test_main_compression_without_level_raises():
+    """--compression without --level raises a ValueError before any work is done."""
+    with patch.object(sys, "argv", ["run_gents", "/data/input", "--compression", "zlib"]):
+        with pytest.raises(ValueError) as exc:
+            main()
+    assert "level" in str(exc.value).lower()
+
+
+def test_main_verbose_prints_compression(capsys):
+    """--verbose reports the selected compression method and level."""
+    with patch.object(sys, "argv", [
+        "run_gents", "/data/input", "--verbose", "--compression", "zlib", "--level", "5"
+    ]):
+        with pytest.raises(FileNotFoundError):
+            main()
+    out = capsys.readouterr().out
+    assert "Compression method" in out
+    assert "zlib" in out
+    assert "Compression level" in out
+    assert "5" in out
+
+
+def test_cli_compression_applied(simple_case):
+    """--compression / --level cause output time-series variables to be compressed."""
+    input_head_dir, output_head_dir = simple_case
+    with patch.object(sys, "argv", [
+        "run_gents", str(input_head_dir), "-o", str(output_head_dir),
+        "--compression", "zlib", "--level", "2"
+    ]):
+        main()
+
+    ts_paths = find_files(output_head_dir, "*.nc")
+    assert len(ts_paths) == SIMPLE_NUM_VARS
+
+    for path in ts_paths:
+        var_name = str(path).split(".")[-3]
+        with GenTSDataStore(path, 'r') as ts_ds:
+            filters = ts_ds[var_name].filters()
+            assert filters["zlib"] is True
+            assert filters["complevel"] == 2
+
+
+def test_cli_no_compression_by_default(simple_case):
+    """Without --compression, output variables are written uncompressed."""
+    input_head_dir, output_head_dir = simple_case
+    with patch.object(sys, "argv", ["run_gents", str(input_head_dir), "-o", str(output_head_dir)]):
+        main()
+
+    ts_paths = find_files(output_head_dir, "*.nc")
+    assert len(ts_paths) == SIMPLE_NUM_VARS
+
+    for path in ts_paths:
+        var_name = str(path).split(".")[-3]
+        with GenTSDataStore(path, 'r') as ts_ds:
+            filters = ts_ds[var_name].filters()
+            assert filters["zlib"] is False
+            assert filters["complevel"] == 0
 
 
 def test_cli_simple_case(simple_case):

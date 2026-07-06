@@ -1,0 +1,26 @@
+version: 1 # Required
+
+model: "Example" # Required
+
+input_hf:
+  match: "*.nc*"
+  include:
+    - "*.nc*"
+  exclude:
+    - "*/proc/tseries/*"
+    - "*/rest/*"
+    - "*/logs/*"
+    - "*tmp.nc"
+  slicing:
+    - pattern: "*"
+      slice_size_years: 10
+      start_year: null
+      time_alignment_method: midpoint
+
+output_ts:
+  append_timestep_dirs: true
+  path_swaps:
+    - string_match: "/hist/"
+      string_swap: "/proc/tseries/"
+      path_glob: "*"
+      var_glob: "*"

@@ -17,6 +17,7 @@ dependencies = [
   "numpy>=2.0",
   "netCDF4>=1.7.0",
   "cftime>=1.6.4",
+  "pyyaml>=3.01"
 ]
 classifiers = [
   "Programming Language :: Python :: 3.10",
@@ -35,7 +36,10 @@ Homepage = "https://github.com/AgentOxygen/GenTS"
 Issues = "https://github.com/AgentOxygen/GenTS"
 
 [tool.setuptools]
-packages = ["gents"]
+packages = ["gents", "gents.configs"]
+
+[tool.setuptools.package-data]
+"gents.configs" = ["*.yaml"]
 
 [project.scripts]
 run_gents = "gents.cli:main"

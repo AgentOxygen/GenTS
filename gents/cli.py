@@ -1,6 +1,18 @@
 import argparse
 import sys
+import yaml
 from gents.utils import get_version, log_hfcollection_info, log_tscollection_info, enable_logging
+from gents.hfcollection import HFCollection
+from gents.timeseries import TSCollection
+from pathlib import Path
+
+
+def check_config(config_dict):
+    assert "version" in config_dict
+    assert "model" in config_dict
+    assert "input_hf" in config_dict
+    assert "output_ts" in config_dict
+
 
 def parse_arguments():
     """
@@ -115,6 +127,19 @@ def parse_arguments():
         default="midpoint",
         help="Method to use when aligning the history files by time. ('midpoint', 'direct_time', 'start_bound', 'end_bound')"
     )
+    parser.add_argument(
+        "--compression",
+        type=str,
+        default=None,
+        help="Compression algorithm to use. ('zlib', 'szip', 'zstd', 'bzip2', 'blosc_lz', "
+             "'blosc_lz4', 'blosc_lz4hc', 'blosc_zlib', 'blosc_zstd')"
+    )
+    parser.add_argument(
+        "--level",
+        type=int,
+        default=None,
+        help="Compression level to use. (0-9, default 4; ignored if --compression is not set)"
+    )
     return parser.parse_args()
 
 
@@ -134,7 +159,6 @@ def main():
     4. If ``--verbose`` is set, prints a summary of all active settings to stdout.
     5. Delegates execution to the selected ``run_config(args)`` function.
     """
-    command_str = " ".join(sys.argv)
     args = parse_arguments()
 
     if args.outputdir is None:
@@ -143,14 +167,8 @@ def main():
     if args.model is not None:
         args.model = args.model.lower()
 
-    if args.model == "cesm3" or args.model == "cesm2":
-        from gents.configs.gents_cesm3 import CESM3Config as ModelConfig
-    elif args.model == "e3sm":
-        from gents.configs.gents_e3sm import E3SMConfig as ModelConfig
-    elif args.model == None:
-        from gents.configs.config import GenTSConfig as ModelConfig
-    else:
-        raise ValueError(f"Configuration module for '{args.model}' not found ('gents.configs.gents_{args.model}' does not exist).")
+    if args.compression is not None and args.level is None:
+        raise ValueError(f"Compression '{args.compression}' selected, please specifiy a level using `--level`")
 
     if args.verbose:
         print(f"  Input (HF) directory path    : {args.hf_head_dir}")
@@ -166,41 +184,90 @@ def main():
         print(f"  Append filters to defaults      : {args.append}")
         print(f"  Time alignment method           : {args.align_method}")
         print(f"  Slice start year                : {args.slice_start_year}")
+        print(f"  Compression method              : {args.compression}")
+        print(f"  Compression level               : {args.level}")
         enable_logging(verbose=True)
 
-    model_conf = ModelConfig(args.hf_head_dir, args.outputdir)
+    config_dir = Path(__file__).parent / "configs"
+    model_config_files = {
+        None: "gents_example.yaml",
+        "cesm3": "gents_cesm3.yaml",
+        "cesm2": "gents_cesm2.yaml",
+        "e3sm": "gents_e3sm.yaml",
+    }
+
+    if args.model not in model_config_files:
+        raise ValueError(f"No GenTS configuration available for model '{args.model}'.")
+
+    with open(str(config_dir / model_config_files[args.model]), 'r') as file:
+        yaml_config = yaml.safe_load(file)
+
+    check_config(yaml_config)
+
+    hfc = HFCollection(args.hf_head_dir, hf_glob_pattern=yaml_config["input_hf"]["match"])
+    if "include" in yaml_config["input_hf"]:
+        hf_include = yaml_config["input_hf"]["include"]
+    else:
+        hf_include = []
+
+    if "exclude" in yaml_config["input_hf"]:
+        hf_exclude = yaml_config["input_hf"]["exclude"]
+    else:
+        hf_exclude = []
 
     if args.append:
-        for pattern in args.include:
-            model_conf.hf_include_patterns.append(pattern)
-        for pattern in args.exclude:
-            model_conf.hf_exclude_patterns.append(pattern)
+        hf_include += args.include
+        hf_exclude += args.exclude
     else:
         if len(args.include) > 0:
-            model_conf.hf_include_patterns = args.include
+            hf_include = args.include
         if len(args.exclude) > 0:
-            model_conf.hf_exclude_patterns = args.exclude
+            hf_exclude = args.exclude
 
-    hf_collection = model_conf.get_hfcollection(
-        num_cores=args.hfcores,
-        slice_size_years=args.slice,
-        slice_start_year=args.slice_start_year,
-        align_method=args.align_method
-    )
-    ts_collection = model_conf.get_tscollection(
-        hfc=hf_collection,
-        num_cores=args.tscores,
-        append_dirs=True,
-        overwrite=args.overwrite
-    )
+    hfc = hfc.include(hf_include).exclude(hf_exclude)
 
-    ts_collection = ts_collection.add_attrs({"gents_command": command_str})
+    if "slicing" in yaml_config["input_hf"]:
+        slice_batches = yaml_config["input_hf"]["slicing"]
+    else:
+        slice_batches = []
+    
+    if args.append:
+        slice_batches.append({
+            "slice_size_years": args.slice,
+            "start_year": args.slice_start_year
+        })
+    else:
+        slice_batches = [{
+            "slice_size_years": args.slice,
+            "start_year": args.slice_start_year
+        }]
 
-    log_hfcollection_info(hf_collection)
-    log_tscollection_info(ts_collection)
+    for slice_batch in slice_batches:
+        if args.slice_start_year is not None:
+            slice_batch["start_year"] = args.slice_start_year
+        hfc = hfc.slice_groups(**slice_batch)
+
+    tsc = TSCollection(hfc, args.outputdir)
+
+    if args.compression is not None:
+        tsc = tsc.apply_compression(alg=args.compression, level=args.level, path_glob="*")
+
+    if "path_swaps" in yaml_config["output_ts"]:
+        for swap_batch in yaml_config["output_ts"]["path_swaps"]:
+            tsc = tsc.apply_path_swap(**swap_batch)
+
+    if "compression" in yaml_config["output_ts"]:
+        for comp_batch in yaml_config["output_ts"]["compression"]:
+            tsc = tsc.apply_compression(**comp_batch)
+
+    if args.verbose:
+        log_hfcollection_info(hfc)
+        log_tscollection_info(tsc)
+
+    tsc = tsc.add_attrs({"gents_command": " ".join(sys.argv)})
 
     if not args.dryrun:
-        ts_collection.execute()
+        tsc.execute()
     else:
-        print(f"Dry run: {len(ts_collection)} timeseries files would be generated.")
+        print(f"Dry run: {len(tsc)} timeseries files would be generated.")
     print("GenTS done!")
