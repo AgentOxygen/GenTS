@@ -17,6 +17,7 @@ dependencies = [
   "numpy>=2.0",
   "netCDF4>=1.7.0",
   "cftime>=1.6.4",
+  "pyyaml>=3.01"
 ]
 classifiers = [
   "Programming Language :: Python :: 3.10",
