@@ -31,6 +31,11 @@ classifiers = [
 [tool.setuptools_scm]
 fallback_version = "0.0.0"
 
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:Setting the shape on a NumPy array has been deprecated:DeprecationWarning",
+]
+
 [project.urls]
 Homepage = "https://github.com/AgentOxygen/GenTS"
 Issues = "https://github.com/AgentOxygen/GenTS"
