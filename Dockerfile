@@ -3,6 +3,7 @@ ARG FLOOR_PYTHON=3.10
 ARG LATEST_PYTHON=3.14
 
 FROM ghcr.io/astral-sh/uv:python${DEFAULT_PYTHON}-trixie-slim AS runtime
+ENV HDF5_USE_FILE_LOCKING=FALSE
 RUN apt-get update && apt-get install -y --no-install-recommends git
 WORKDIR /usr/local/gents
 COPY . .
