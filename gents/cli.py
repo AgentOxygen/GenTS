@@ -204,7 +204,7 @@ def main():
 
     check_config(yaml_config)
 
-    hfc = HFCollection(args.hf_head_dir, hf_glob_pattern=yaml_config["input_hf"]["match"])
+    hfc = HFCollection(args.hf_head_dir, hf_glob_pattern=yaml_config["input_hf"]["match"], num_processes=args.hfcores)
     if "include" in yaml_config["input_hf"]:
         hf_include = yaml_config["input_hf"]["include"]
     else:
@@ -247,7 +247,7 @@ def main():
             slice_batch["start_year"] = args.slice_start_year
         hfc = hfc.slice_groups(**slice_batch)
 
-    tsc = TSCollection(hfc, args.outputdir)
+    tsc = TSCollection(hfc, args.outputdir, num_processes=args.tscores)
 
     if args.compression is not None:
         tsc = tsc.apply_compression(alg=args.compression, level=args.level, path_glob="*")
