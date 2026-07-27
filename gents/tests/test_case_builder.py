@@ -141,11 +141,9 @@ def test_no_compress_mirrors_source_filters(tmp_path):
         assert filters["complevel"] == 4  # mirrored, not overridden to 9
 
 
-def test_netcdf3_source_is_not_compressed(tmp_path):
-    """netCDF3 formats do not support zlib, so the clone stays uncompressed."""
-    src = str(tmp_path / "src3.nc")
-    dst = str(tmp_path / "dst3.nc")
-    with Dataset(src, "w", format="NETCDF3_64BIT_OFFSET") as ds:
+def _write_cdf5_source(path):
+    """Write a CDF-5 (NETCDF3_64BIT_DATA) file with a float and an int64 field."""
+    with Dataset(path, "w", format="NETCDF3_64BIT_DATA") as ds:
         ds.createDimension("time", None)
         ds.createDimension("x", 4)
         tvar = ds.createVariable("time", np.double, ("time",))
@@ -153,13 +151,39 @@ def test_netcdf3_source_is_not_compressed(tmp_path):
         tvar.setncatts({"units": "days since 1850-01-01", "calendar": "360_day"})
         var = ds.createVariable("FIELD", np.float32, ("time", "x"))
         var[:] = np.ones((1, 4), dtype=np.float32)
+        # int64 is a CDF-5 extended type the classic data model cannot hold.
+        big = ds.createVariable("BIG", np.int64, ("time", "x"))
+        big[:] = np.arange(4, dtype=np.int64)
 
-    clone_netcdf_with_missing(src, dst)  # must not raise
+
+def test_cdf5_source_upgraded_to_netcdf4_and_compressed(tmp_path):
+    """A CDF-5 source is upgraded to NETCDF4 so its clone can be compressed."""
+    src = str(tmp_path / "src5.nc")
+    dst = str(tmp_path / "dst5.nc")
+    _write_cdf5_source(src)
+
+    clone_netcdf_with_missing(src, dst)
 
     with Dataset(dst) as d:
-        assert d.file_format.startswith("NETCDF3")
-        # netCDF3 variables carry no filters at all.
-        assert d.variables["FIELD"].filters() is None
+        assert d.file_format == "NETCDF4"
+        for name in ("FIELD", "BIG", "time"):
+            assert d.variables[name].filters()["zlib"] is True
+        assert np.all(np.isnan(np.asarray(d.variables["FIELD"][:])))
+        # int64 extended type survives the upgrade to NETCDF4.
+        assert d.variables["BIG"].dtype == np.int64
+
+
+def test_no_compress_preserves_netcdf3_format(tmp_path):
+    """With compress=False a netCDF3-model source keeps its original format."""
+    src = str(tmp_path / "src5.nc")
+    dst = str(tmp_path / "dst5.nc")
+    _write_cdf5_source(src)
+
+    clone_netcdf_with_missing(src, dst, compress=False)
+
+    with Dataset(dst) as d:
+        assert d.file_format == "NETCDF3_64BIT_DATA"
+        assert d.variables["FIELD"].filters() is None  # no filters in netCDF3
         assert np.all(np.isnan(np.asarray(d.variables["FIELD"][:])))
 
 

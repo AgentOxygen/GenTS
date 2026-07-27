@@ -149,12 +149,17 @@ def clone_netcdf_with_missing(src_path: str, dst_path: str, compress: bool = Tru
     shrinks the clone: the constant missing-value primaries compress to almost
     nothing. GenTS reads only variable values, dtypes, dimensions and attributes
     and never inspects on-disk layout, so this does not affect what the clones
-    validate. Compression is skipped for netCDF3 file formats, which do not
-    support it; there the source's own filters are mirrored instead and the
-    original file format is always preserved.
+    validate.
+
+    Compression requires an HDF5-backed netCDF4 format. If the source uses a
+    netCDF3-model format (classic, 64-bit offset, or CDF-5 / 64-bit data) the
+    clone is written as ``NETCDF4`` so it can still be compressed, since reducing
+    the data burden is the goal. The source file format is preserved only when it
+    already supports compression or when ``compress`` is ``False`` (in which case
+    the source's own filters are mirrored instead).
 
     Preserves dimensions (including unlimited), global and per-variable
-    attributes, endianness, fill values, groups and the file format.
+    attributes, endianness, fill values and groups.
 
     :param src_path: Path to the source netCDF file to clone.
     :type src_path: str
@@ -169,10 +174,19 @@ def clone_netcdf_with_missing(src_path: str, dst_path: str, compress: bool = Tru
     """
     Path(dst_path).parent.mkdir(parents=True, exist_ok=True)
 
-    with Dataset(src_path, "r") as src, Dataset(dst_path, "w", format=src.file_format) as dst:
-        # zlib is only available on the HDF5-backed netCDF4 formats.
-        force_compression = compress and src.file_format.startswith("NETCDF4")
-        _copy_group(src, dst, force_compression, complevel)
+    with Dataset(src_path, "r") as src:
+        dst_format = src.file_format
+        # zlib is only available on the HDF5-backed netCDF4 formats. Upgrade
+        # netCDF3-model sources (classic, 64-bit offset, CDF-5 / 64-bit data) to
+        # NETCDF4 so the clone can still be compressed. NETCDF4 (not
+        # NETCDF4_CLASSIC) is used because CDF-5 permits extended integer types
+        # that the classic data model cannot hold.
+        if compress and not dst_format.startswith("NETCDF4"):
+            dst_format = "NETCDF4"
+        force_compression = compress and dst_format.startswith("NETCDF4")
+
+        with Dataset(dst_path, "w", format=dst_format) as dst:
+            _copy_group(src, dst, force_compression, complevel)
 
 
 def _copy_group(src_grp, dst_grp, force_compression: bool, complevel: int):
