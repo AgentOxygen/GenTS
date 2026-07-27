@@ -43,7 +43,9 @@
 
 - **Primary variable:** A time-varying, multi-dimensional scientific field (e.g. surface
   temperature). Each primary variable gets its own TS output file. Classified by
-  `gents.meta.is_var_secondary` (see rules in its docstring).
+  `gents.meta.is_var_secondary` (see rules in its docstring). All name/dimension
+  comparisons there are **case-insensitive**, so a record dimension named `Time`
+  (MOM6) or a bounds variable named `Time_Bounds` is recognized like its lowercase form.
 - **Secondary variable:** Everything else — coordinates (`lat`, `lon`, `time`), bounds,
   character/metadata variables. Copied unchanged into *every* TS file of the group so
   each output is self-describing.
@@ -75,3 +77,18 @@
   time so each chunk is ≈ 4 MiB (CMOR-friendly). Files < 4 MiB are stored contiguously.
 - **Dry run:** CLI `--dryrun` — full metadata read and order construction, but no writes;
   prints how many TS files would be generated.
+- **Missing-value clone (validation case builder):** A structurally identical copy of a
+  history file produced by `gents.validation.case_builder` (`gents_valid_build`) in which
+  the primary/large fields hold no real data, so a multi-GB case directory mirrors down to
+  KB for cheap end-to-end testing. Primary variables (per `is_var_secondary`) are
+  *created but never written* — HDF5's lazy allocation stores nothing and returns the
+  fill value (NaN / integer fill) on read. Secondary variables (coordinates, time, bounds)
+  are copied verbatim so the clone stays self-describing. No compression is applied
+  (source filters/chunking are mirrored); the savings come purely from unwritten data.
+  A **size guard** (`--max-copy-mib`, default 0.5) additionally fills any *multi-dimensional*
+  variable above the threshold even if classified secondary, catching large static grid
+  geometry (e.g. CICE's ~1 MiB `TLON`/`tarea`/`tmask` arrays). Because lazy allocation
+  needs an HDF5 backend, netCDF3/CDF-5 sources are rewritten as `NETCDF4` unless
+  `--preserve-format` is set. The clones deliberately mirror the *raw* case tree
+  (discovered via `find_files`, not an `HFCollection`) so they also exercise files GenTS's
+  filters are meant to ignore.

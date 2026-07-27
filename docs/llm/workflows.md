@@ -75,6 +75,27 @@ batches; with `--append`, they are added on top. `--compression` requires `--lev
 the input dir (path swaps like `/hist/` → `/proc/tseries/` come from the YAML config).
 Don't run on HPC login nodes — this spawns many I/O-heavy processes.
 
+### Building test-fixture clones (`gents_valid_build`)
+
+Mirror a real (possibly multi-GB) case directory into tiny missing-value clones for
+end-to-end testing — see the "missing-value clone" concept in [concepts.md](concepts.md).
+
+```bash
+gents_valid_build <case_head_dir> -o <clone_dir>          # mirror, default settings
+gents_valid_build <case_head_dir> -o <clone_dir> -n 16    # 16 parallel worker processes
+gents_valid_build <case_head_dir> -o <clone_dir> \
+    --pattern "*.nc*" --max-copy-mib 0.5 --overwrite      # tune discovery/guard, rebuild
+gents_valid_build <case_head_dir> -o <clone_dir> --preserve-format   # keep netCDF3 (won't shrink)
+```
+
+Flags: `-p/--pattern` (discovery glob, default `*.nc*`); `-n/--num-processes` (default 1);
+`--include`/`--exclude` (fnmatch on absolute paths); `--max-copy-mib` (multi-dim fill
+threshold, default 0.5, `0` disables); `--overwrite` (else existing *valid* clones are
+skipped, corrupt ones rebuilt); `--preserve-format` (don't upgrade netCDF3→NETCDF4).
+Discovery uses `find_files` on the raw tree — unlike the pipeline, it does *not* filter to
+viable history files, so clones include files the pipeline is meant to ignore. Tests live
+in `gents/tests/test_case_builder.py`.
+
 ### YAML model configs (`gents/configs/*.yaml`)
 
 Required top-level keys (asserted by `cli.check_config`): `version`, `model`,

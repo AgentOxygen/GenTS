@@ -33,8 +33,15 @@
   literally; change it in both places or nowhere.
 - **All user-facing filters are `fnmatch` globs** applied to *absolute path strings*
   (or variable names for `var_glob`). Not regex, not `pathlib.match`.
-- **Only `GenTSDataStore` opens netCDF files.** Never instantiate `netCDF4.Dataset`
-  directly outside `datastore.py`.
+- **Only `GenTSDataStore` opens netCDF files** in the *pipeline*. Never instantiate
+  `netCDF4.Dataset` directly outside `datastore.py` — except in
+  `gents/validation/case_builder.py`, which deliberately uses `netCDF4.Dataset` directly
+  because cloning needs low-level `createVariable` control (filters, chunking, fill value)
+  that the thin datastore wrapper doesn't expose. Don't "fix" that to use `GenTSDataStore`.
+- **`is_var_secondary` matching is case-insensitive.** Variable-name, secondary-dimension,
+  and primary-dimension (`time`) comparisons all lower-case both sides. This is load-bearing
+  for MOM6-style output (`Time`/`Time_Bounds`); without it every field misclassifies as
+  secondary. Keep it case-insensitive if you touch the function.
 - **Scope guard.** GenTS reads data values only to copy them. Any feature that computes
   on, regrids, or renames data is out of scope per the developer guide.
 

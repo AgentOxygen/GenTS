@@ -18,10 +18,13 @@ verified against the source; when docs and code disagree, trust the code and fix
 | Understand the pipeline, modules, and key data structures | [architecture.md](architecture.md) |
 | Modify code without breaking invariants; known gotchas and stale spots | [conventions.md](conventions.md) |
 | Run tests/CLI/docs/benchmarks; common dev recipes | [workflows.md](workflows.md) |
+| Build tiny missing-value clones of a case dir for testing (`gents_valid_build`) | [concepts.md](concepts.md), [workflows.md](workflows.md) |
 
 ## Package identity
 
-- **PyPI name:** `GenTS`, import name `gents`, CLI entry point `run_gents` (→ `gents.cli:main`).
+- **PyPI name:** `GenTS`, import name `gents`. CLI entry points: `run_gents`
+  (→ `gents.cli:main`, the HF→TS pipeline) and `gents_valid_build`
+  (→ `gents.validation.case_builder:main`, the test-fixture clone tool).
 - **Python:** ≥ 3.10. **Dependencies (only these):** `numpy`, `netCDF4`, `cftime`, `pyyaml`.
   Minimal dependency stack is a stated design principle — do not add dependencies casually.
 - **Version:** derived from git tags via `setuptools-scm` (`gents.utils.get_version()` reads
@@ -34,7 +37,7 @@ verified against the source; when docs and code disagree, trust the code and fix
 ## Repository map
 
 ```
-gents/                  Package source (8 modules, ~3,200 lines)
+gents/                  Package source (8 core pipeline modules ~3,200 lines, + validation/)
   hfcollection.py       HFCollection: discover/filter/group/slice history files
   timeseries.py         TSCollection: build + execute time-series "orders"; file writing
   meta.py               netCDFMeta: cached per-file metadata; primary/secondary classification
@@ -43,6 +46,8 @@ gents/                  Package source (8 modules, ~3,200 lines)
   cli.py                argparse CLI + YAML-config-driven main()
   utils.py              logging setup, ProgressBar, version, collection info loggers
   configs/              Bundled YAML model configs (gents_example.yaml, gents_cesm3.yaml)
+  validation/           case_builder.py: gents_valid_build tool — mirror a case dir as
+                        tiny missing-value clones for testing (not part of the pipeline)
   tests/                pytest suite; test_cases.py generates synthetic netCDF fixtures
 docs/                   Sphinx docs (index/install/user/dev/api .rst)
 benchmarks/             ASV performance benchmarks

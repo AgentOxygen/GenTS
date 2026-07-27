@@ -53,6 +53,12 @@ bundled YAML config (`gents/configs/*.yaml`) merged with command-line flags.
 Dependency direction is one-way: `cli → (hfcollection, timeseries) → (meta, mhfdataset) → datastore`.
 `utils` is a leaf used by the upper layers. Keep it that way.
 
+`gents/validation/case_builder.py` (the `gents_valid_build` tool) sits *outside* this
+pipeline: it reuses `find_files` (discovery) and `is_var_secondary` (classification) but
+builds missing-value clones of a case directory rather than time series. See the
+"missing-value clone" concept in [concepts.md](concepts.md). It is the one module allowed
+to construct `netCDF4.Dataset` directly (it needs low-level `createVariable` control).
+
 ## Core data structures
 
 ### Group dictionary (`HFCollection.get_groups()`)
