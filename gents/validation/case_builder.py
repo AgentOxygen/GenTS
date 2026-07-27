@@ -58,17 +58,12 @@ def parse_arguments():
         help="Pattern to include (can be specified multiple times)."
     )
     parser.add_argument(
-        "--no-compress",
-        dest="compress",
+        "--preserve-format",
+        dest="upgrade_netcdf3",
         action="store_false",
-        help="Mirror the source's compression instead of forcing high "
-             "compression on the clones (clones will not be shrunk)."
-    )
-    parser.add_argument(
-        "--complevel",
-        type=int,
-        default=9,
-        help="zlib compression level (0-9) to use when compressing. (Default 9)"
+        help="Preserve the source file format exactly. netCDF3-model sources "
+             "(incl. CDF-5) are otherwise rewritten as NETCDF4 so their clones "
+             "can shrink; with this flag they keep their format and full size."
     )
     parser.add_argument(
         "--overwrite",
@@ -87,62 +82,41 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def _copy_variable_creation_kwargs(src_var, force_compression: bool, complevel: int) -> dict:
+def _copy_variable_creation_kwargs(src_var) -> dict:
     """
-    Collect the ``createVariable`` keyword arguments used to write a variable
-    into the clone.
+    Collect the ``createVariable`` keyword arguments that mirror a source
+    variable's on-disk layout — its compression / checksum filters, chunking,
+    endianness and fill value.
 
-    When ``force_compression`` is set, high ``zlib`` + ``shuffle`` compression
-    is applied to every dimensioned variable regardless of the source's own
-    settings, which is what shrinks the clone (the missing-value primaries
-    become constant arrays that compress to almost nothing). GenTS reads only
-    variable values, dtypes, dimensions and attributes and never inspects
-    on-disk layout, so overriding compression does not affect what the clones
-    validate. When compression is off (or unsupported by the file format) the
-    source's own filters and chunking are mirrored instead.
+    The clone applies no compression of its own: the size savings come from
+    leaving primary variables unwritten (see :func:`clone_netcdf_with_missing`),
+    not from compressing them. Mirroring the source exactly keeps the clone's
+    metadata and structure as faithful to the original as possible — a
+    compressed source stays compressed, an uncompressed source stays
+    uncompressed.
 
     :param src_var: Source netCDF4 variable to mirror.
     :type src_var: netCDF4._netCDF4.Variable
-    :param force_compression: Apply high zlib+shuffle compression instead of
-        mirroring the source's filters.
-    :type force_compression: bool
-    :param complevel: zlib compression level (0-9) to use when compressing.
-    :type complevel: int
     :returns: Keyword arguments to pass to ``Dataset.createVariable``.
     :rtype: dict
     """
     kwargs = {}
 
-    # zlib compression requires chunked storage, which netCDF4 cannot apply to
-    # scalar (dimensionless) variables, so only force it on dimensioned ones.
-    if force_compression and src_var.dimensions:
-        kwargs["zlib"] = True
-        kwargs["complevel"] = complevel
-        kwargs["shuffle"] = True
-        # Preserve explicit source chunking; otherwise let netCDF4 auto-chunk
-        # (forcing a contiguous layout is incompatible with compression).
-        try:
-            chunking = src_var.chunking()
-            if chunking != "contiguous":
-                kwargs["chunksizes"] = chunking
-        except Exception:
-            pass
-    else:
-        # Mirror the source's compression / checksum filters. ``filters()``
-        # returns None for variable types that cannot carry filters (e.g. VLEN).
-        filters = src_var.filters()
-        if filters:
-            for key in ("zlib", "complevel", "shuffle", "fletcher32"):
-                if key in filters:
-                    kwargs[key] = filters[key]
+    # Mirror the source's compression / checksum filters. ``filters()`` returns
+    # None for variable types that cannot carry filters (e.g. VLEN).
+    filters = src_var.filters()
+    if filters:
+        for key in ("zlib", "complevel", "shuffle", "fletcher32"):
+            if key in filters:
+                kwargs[key] = filters[key]
 
-        # Chunking is either the string "contiguous" or a list of chunk sizes.
-        try:
-            chunking = src_var.chunking()
-            if chunking != "contiguous":
-                kwargs["chunksizes"] = chunking
-        except Exception:
-            pass
+    # Chunking is either the string "contiguous" or a list of chunk sizes.
+    try:
+        chunking = src_var.chunking()
+        if chunking != "contiguous":
+            kwargs["chunksizes"] = chunking
+    except Exception:
+        pass
 
     try:
         kwargs["endian"] = src_var.endian()
@@ -159,9 +133,9 @@ def _copy_variable_creation_kwargs(src_var, force_compression: bool, complevel: 
     return kwargs
 
 
-def clone_netcdf_with_missing(src_path: str, dst_path: str, compress: bool = True,
-                              complevel: int = 9,
-                              max_copy_bytes: int = int(DEFAULT_MAX_COPY_MIB * 1024**2)):
+def clone_netcdf_with_missing(src_path: str, dst_path: str,
+                              max_copy_bytes: int = int(DEFAULT_MAX_COPY_MIB * 1024**2),
+                              upgrade_netcdf3: bool = True):
     """
     Create a structurally identical netCDF file with the primary (scientific)
     variables replaced by missing values so the clone is cheap to store.
@@ -169,13 +143,21 @@ def clone_netcdf_with_missing(src_path: str, dst_path: str, compress: bool = Tru
     Primary variables (multi-dimensional, time-varying fields, as classified by
     :func:`gents.meta.is_var_secondary`) are never written: they are created with
     a fill value (``NaN`` for floating point types, the source ``_FillValue`` or
-    the dtype minimum for integer types) and left empty. netCDF stores no data
-    chunks for an unwritten variable and returns the fill value on read, so the
-    primaries occupy essentially nothing on disk while still reading back at full
-    shape as missing data. A consequence is that a floating point primary always
-    carries ``_FillValue = NaN`` in the clone, even if the source used a
-    different fill (or none). Secondary variables (coordinates, time, bounds) are
-    copied verbatim so the clone remains a valid, self-describing history file.
+    the dtype minimum for integer types) and left empty. HDF5 (the netCDF4
+    backend) allocates no storage for an unwritten variable and returns the fill
+    value on read, so the primaries occupy essentially nothing on disk while
+    still reading back at full shape as missing data. A consequence is that a
+    floating point primary always carries ``_FillValue = NaN`` in the clone, even
+    if the source used a different fill (or none). Secondary variables
+    (coordinates, time, bounds) are copied verbatim so the clone remains a valid,
+    self-describing history file.
+
+    No compression is applied: the size savings come entirely from leaving the
+    primaries unwritten, not from compressing them. Each variable's compression
+    filters, chunking, endianness and fill value are mirrored from the source, so
+    the clone's metadata and structure stay as faithful to the original as
+    possible (a compressed source stays compressed; an uncompressed one does
+    not).
 
     **Size guard:** as a backstop against variables the classifier misses (for
     example a large field on an unrecognised record dimension), any *multi-
@@ -186,19 +168,15 @@ def clone_netcdf_with_missing(src_path: str, dst_path: str, compress: bool = Tru
     lat/lon); raise the threshold or pass ``0`` to disable the guard if that
     matters for a given case.
 
-    By default high ``zlib`` + ``shuffle`` compression is forced on every
-    dimensioned variable, regardless of the source's own settings. This is what
-    shrinks the clone: the constant missing-value primaries compress to almost
-    nothing. GenTS reads only variable values, dtypes, dimensions and attributes
-    and never inspects on-disk layout, so this does not affect what the clones
-    validate.
-
-    Compression requires an HDF5-backed netCDF4 format. If the source uses a
-    netCDF3-model format (classic, 64-bit offset, or CDF-5 / 64-bit data) the
-    clone is written as ``NETCDF4`` so it can still be compressed, since reducing
-    the data burden is the goal. The source file format is preserved only when it
-    already supports compression or when ``compress`` is ``False`` (in which case
-    the source's own filters are mirrored instead).
+    **File format:** the "unwritten variable costs nothing" behaviour relies on
+    HDF5's lazy allocation, which only the netCDF4 formats provide. A
+    netCDF3-model source (classic, 64-bit offset, or CDF-5 / 64-bit data) stores
+    every variable at full size regardless of whether it is written, so by
+    default such a source is written as ``NETCDF4`` so the clone can shrink.
+    ``NETCDF4`` (not ``NETCDF4_CLASSIC``) is used because CDF-5 permits extended
+    integer types the classic data model cannot hold. Set ``upgrade_netcdf3`` to
+    ``False`` to preserve the original format exactly, at the cost of the clone
+    not shrinking for netCDF3 sources.
 
     Preserves dimensions (including unlimited), global and per-variable
     attributes, endianness, fill values and groups.
@@ -208,35 +186,34 @@ def clone_netcdf_with_missing(src_path: str, dst_path: str, compress: bool = Tru
     :param dst_path: Path to write the missing-value clone to. Parent
         directories are created as needed.
     :type dst_path: str
-    :param compress: Force high compression on the clone. Defaults to ``True``.
-    :type compress: bool
-    :param complevel: zlib compression level (0-9) to use when compressing.
-        Defaults to ``9``.
-    :type complevel: int
     :param max_copy_bytes: Logical-size threshold, in bytes, above which a
         multi-dimensional variable is filled instead of copied verbatim. ``0``
         disables the guard. Defaults to ``DEFAULT_MAX_COPY_MIB`` MiB.
     :type max_copy_bytes: int
+    :param upgrade_netcdf3: Rewrite netCDF3-model sources as ``NETCDF4`` so they
+        can shrink. When ``False`` the source format is preserved exactly.
+        Defaults to ``True``.
+    :type upgrade_netcdf3: bool
     """
     Path(dst_path).parent.mkdir(parents=True, exist_ok=True)
 
     with Dataset(src_path, "r") as src:
         dst_format = src.file_format
-        # zlib is only available on the HDF5-backed netCDF4 formats. Upgrade
-        # netCDF3-model sources (classic, 64-bit offset, CDF-5 / 64-bit data) to
-        # NETCDF4 so the clone can still be compressed. NETCDF4 (not
-        # NETCDF4_CLASSIC) is used because CDF-5 permits extended integer types
-        # that the classic data model cannot hold.
-        if compress and not dst_format.startswith("NETCDF4"):
-            dst_format = "NETCDF4"
-        force_compression = compress and dst_format.startswith("NETCDF4")
+        if not dst_format.startswith("NETCDF4"):
+            if upgrade_netcdf3:
+                dst_format = "NETCDF4"
+            else:
+                logger.warning(
+                    "Preserving netCDF3 format for '%s'; unwritten variables "
+                    "still occupy full space, so this clone will not shrink.",
+                    src_path,
+                )
 
         with Dataset(dst_path, "w", format=dst_format) as dst:
-            _copy_group(src, dst, force_compression, complevel, max_copy_bytes)
+            _copy_group(src, dst, max_copy_bytes)
 
 
-def _copy_group(src_grp, dst_grp, force_compression: bool, complevel: int,
-                max_copy_bytes: int):
+def _copy_group(src_grp, dst_grp, max_copy_bytes: int):
     """
     Recursively copy a netCDF group's structure into ``dst_grp``, filling
     primary variables with missing values. See :func:`clone_netcdf_with_missing`.
@@ -258,7 +235,7 @@ def _copy_group(src_grp, dst_grp, force_compression: bool, complevel: int,
             if logical_bytes > max_copy_bytes:
                 secondary = False
 
-        kwargs = _copy_variable_creation_kwargs(src_var, force_compression, complevel)
+        kwargs = _copy_variable_creation_kwargs(src_var)
 
         # For primary fields the missing value is written implicitly via the
         # variable's fill value (see below), which overrides any source fill.
@@ -284,13 +261,12 @@ def _copy_group(src_grp, dst_grp, force_compression: bool, complevel: int,
         elif missing is None:
             # Char/compound dtype we cannot express as a fill value: copy it.
             dst_var[:] = src_var[:]
-        # Otherwise leave the primary field unwritten: HDF5 stores no data
-        # chunks and returns ``missing`` (the fill value) on read, which is what
+        # Otherwise leave the primary field unwritten: HDF5 allocates no storage
+        # for it and returns ``missing`` (the fill value) on read, which is what
         # keeps the clone small.
 
     for name, subgroup in src_grp.groups.items():
-        _copy_group(subgroup, dst_grp.createGroup(name),
-                    force_compression, complevel, max_copy_bytes)
+        _copy_group(subgroup, dst_grp.createGroup(name), max_copy_bytes)
 
 
 def _missing_value(src_var):
@@ -423,8 +399,7 @@ def main():
         for src_path, dst_path in clone_jobs:
             future = executor.submit(
                 clone_netcdf_with_missing,
-                str(src_path), str(dst_path), args.compress, args.complevel,
-                max_copy_bytes,
+                str(src_path), str(dst_path), max_copy_bytes, args.upgrade_netcdf3,
             )
             futures[future] = src_path
 

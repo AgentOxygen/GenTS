@@ -114,36 +114,33 @@ def _write_netcdf4_source(path, zlib=False, complevel=0):
         var[:] = np.ones((1, 8), dtype=np.float32)
 
 
-def test_forces_high_compression_by_default(tmp_path):
-    """An uncompressed source is written with high zlib+shuffle compression."""
+def test_uncompressed_source_stays_uncompressed(tmp_path):
+    """No compression is forced: an uncompressed source clones uncompressed."""
     src = str(tmp_path / "src.nc")
     dst = str(tmp_path / "dst.nc")
     _write_netcdf4_source(src, zlib=False)
 
-    clone_netcdf_with_missing(src, dst, complevel=9)
+    clone_netcdf_with_missing(src, dst)
 
     with Dataset(dst) as d:
         for name in ("FIELD", "time"):
-            filters = d.variables[name].filters()
-            assert filters["zlib"] is True
-            assert filters["complevel"] == 9
-            assert filters["shuffle"] is True
-        assert d.variables["FIELD"].chunking() == [1, 8]
+            assert d.variables[name].filters()["zlib"] is False
+        assert d.variables["FIELD"].chunking() == [1, 8]  # source chunking mirrored
         assert np.all(np.isnan(np.asarray(d.variables["FIELD"][:])))
 
 
-def test_no_compress_mirrors_source_filters(tmp_path):
-    """With compress=False the clone mirrors the source's own filter settings."""
+def test_source_filters_are_mirrored(tmp_path):
+    """A compressed source's own filter settings are mirrored exactly."""
     src = str(tmp_path / "src.nc")
     dst = str(tmp_path / "dst.nc")
     _write_netcdf4_source(src, zlib=True, complevel=4)
 
-    clone_netcdf_with_missing(src, dst, compress=False)
+    clone_netcdf_with_missing(src, dst)
 
     with Dataset(dst) as d:
         filters = d.variables["FIELD"].filters()
         assert filters["zlib"] is True
-        assert filters["complevel"] == 4  # mirrored, not overridden to 9
+        assert filters["complevel"] == 4  # mirrored, not overridden
 
 
 def _write_cdf5_source(path):
@@ -161,8 +158,8 @@ def _write_cdf5_source(path):
         big[:] = np.arange(4, dtype=np.int64)
 
 
-def test_cdf5_source_upgraded_to_netcdf4_and_compressed(tmp_path):
-    """A CDF-5 source is upgraded to NETCDF4 so its clone can be compressed."""
+def test_cdf5_source_upgraded_to_netcdf4(tmp_path):
+    """A CDF-5 source is upgraded to NETCDF4 so its clone can shrink (no compression)."""
     src = str(tmp_path / "src5.nc")
     dst = str(tmp_path / "dst5.nc")
     _write_cdf5_source(src)
@@ -171,20 +168,21 @@ def test_cdf5_source_upgraded_to_netcdf4_and_compressed(tmp_path):
 
     with Dataset(dst) as d:
         assert d.file_format == "NETCDF4"
-        for name in ("FIELD", "BIG", "time"):
-            assert d.variables[name].filters()["zlib"] is True
+        # No compression is forced; the upgrade is purely to get HDF5 lazy
+        # allocation of the unwritten primaries.
+        assert d.variables["FIELD"].filters()["zlib"] is False
         assert np.all(np.isnan(np.asarray(d.variables["FIELD"][:])))
         # int64 extended type survives the upgrade to NETCDF4.
         assert d.variables["BIG"].dtype == np.int64
 
 
-def test_no_compress_preserves_netcdf3_format(tmp_path):
-    """With compress=False a netCDF3-model source keeps its original format."""
+def test_preserve_format_keeps_netcdf3(tmp_path):
+    """With upgrade_netcdf3=False a netCDF3-model source keeps its original format."""
     src = str(tmp_path / "src5.nc")
     dst = str(tmp_path / "dst5.nc")
     _write_cdf5_source(src)
 
-    clone_netcdf_with_missing(src, dst, compress=False)
+    clone_netcdf_with_missing(src, dst, upgrade_netcdf3=False)
 
     with Dataset(dst) as d:
         assert d.file_format == "NETCDF3_64BIT_DATA"
@@ -199,9 +197,8 @@ def test_clone_is_much_smaller_than_source(tmp_path, src_zlib):
     itself compressed.
 
     The whole point of the tool is to shrink the on-disk data burden while
-    keeping structure. Because high compression is forced on the clone, even an
-    uncompressed source shrinks: the constant NaN-filled primaries compress away
-    almost entirely.
+    keeping structure. The primary field is left unwritten, so HDF5 allocates no
+    storage for it regardless of the source's compression.
     """
     src = str(tmp_path / "src_big.nc")
     dst = str(tmp_path / "dst_big.nc")
