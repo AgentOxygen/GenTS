@@ -44,37 +44,78 @@ def parse_arguments():
         default=[],
         help="Pattern to include (can be specified multiple times)."
     )
+    parser.add_argument(
+        "--no-compress",
+        dest="compress",
+        action="store_false",
+        help="Mirror the source's compression instead of forcing high "
+             "compression on the clones (clones will not be shrunk)."
+    )
+    parser.add_argument(
+        "--complevel",
+        type=int,
+        default=9,
+        help="zlib compression level (0-9) to use when compressing. (Default 9)"
+    )
     return parser.parse_args()
 
 
-def _copy_variable_creation_kwargs(src_var: "Dataset.variables") -> dict:
+def _copy_variable_creation_kwargs(src_var, force_compression: bool, complevel: int) -> dict:
     """
-    Collect the ``createVariable`` keyword arguments needed to reproduce a
-    variable's on-disk layout (compression, checksumming, chunking, endianness
-    and fill value).
+    Collect the ``createVariable`` keyword arguments used to write a variable
+    into the clone.
+
+    When ``force_compression`` is set, high ``zlib`` + ``shuffle`` compression
+    is applied to every dimensioned variable regardless of the source's own
+    settings, which is what shrinks the clone (the missing-value primaries
+    become constant arrays that compress to almost nothing). GenTS reads only
+    variable values, dtypes, dimensions and attributes and never inspects
+    on-disk layout, so overriding compression does not affect what the clones
+    validate. When compression is off (or unsupported by the file format) the
+    source's own filters and chunking are mirrored instead.
 
     :param src_var: Source netCDF4 variable to mirror.
     :type src_var: netCDF4._netCDF4.Variable
+    :param force_compression: Apply high zlib+shuffle compression instead of
+        mirroring the source's filters.
+    :type force_compression: bool
+    :param complevel: zlib compression level (0-9) to use when compressing.
+    :type complevel: int
     :returns: Keyword arguments to pass to ``Dataset.createVariable``.
     :rtype: dict
     """
     kwargs = {}
 
-    # Compression / checksum filters. ``filters()`` returns None for variable
-    # types that cannot carry filters (e.g. VLEN), so guard against that.
-    filters = src_var.filters()
-    if filters:
-        for key in ("zlib", "complevel", "shuffle", "fletcher32"):
-            if key in filters:
-                kwargs[key] = filters[key]
+    # zlib compression requires chunked storage, which netCDF4 cannot apply to
+    # scalar (dimensionless) variables, so only force it on dimensioned ones.
+    if force_compression and src_var.dimensions:
+        kwargs["zlib"] = True
+        kwargs["complevel"] = complevel
+        kwargs["shuffle"] = True
+        # Preserve explicit source chunking; otherwise let netCDF4 auto-chunk
+        # (forcing a contiguous layout is incompatible with compression).
+        try:
+            chunking = src_var.chunking()
+            if chunking != "contiguous":
+                kwargs["chunksizes"] = chunking
+        except Exception:
+            pass
+    else:
+        # Mirror the source's compression / checksum filters. ``filters()``
+        # returns None for variable types that cannot carry filters (e.g. VLEN).
+        filters = src_var.filters()
+        if filters:
+            for key in ("zlib", "complevel", "shuffle", "fletcher32"):
+                if key in filters:
+                    kwargs[key] = filters[key]
 
-    # Chunking is either the string "contiguous" or a list of chunk sizes.
-    try:
-        chunking = src_var.chunking()
-        if chunking != "contiguous":
-            kwargs["chunksizes"] = chunking
-    except Exception:
-        pass
+        # Chunking is either the string "contiguous" or a list of chunk sizes.
+        try:
+            chunking = src_var.chunking()
+            if chunking != "contiguous":
+                kwargs["chunksizes"] = chunking
+        except Exception:
+            pass
 
     try:
         kwargs["endian"] = src_var.endian()
@@ -91,7 +132,8 @@ def _copy_variable_creation_kwargs(src_var: "Dataset.variables") -> dict:
     return kwargs
 
 
-def clone_netcdf_with_missing(src_path: str, dst_path: str):
+def clone_netcdf_with_missing(src_path: str, dst_path: str, compress: bool = True,
+                              complevel: int = 9):
     """
     Create a structurally identical netCDF file with the primary (scientific)
     variables replaced by missing values so the clone is cheap to store.
@@ -99,27 +141,41 @@ def clone_netcdf_with_missing(src_path: str, dst_path: str):
     Primary variables (multi-dimensional, time-varying fields, as classified by
     :func:`gents.meta.is_var_secondary`) are filled with ``NaN`` for floating
     point types, the integer fill value for integer types, and empty strings for
-    character types. Because these arrays become constant, they compress to a
-    fraction of their original size whenever the source variable uses
-    compression. Secondary variables (coordinates, time, bounds) are copied
+    character types. Secondary variables (coordinates, time, bounds) are copied
     verbatim so the clone remains a valid, self-describing history file.
 
+    By default high ``zlib`` + ``shuffle`` compression is forced on every
+    dimensioned variable, regardless of the source's own settings. This is what
+    shrinks the clone: the constant missing-value primaries compress to almost
+    nothing. GenTS reads only variable values, dtypes, dimensions and attributes
+    and never inspects on-disk layout, so this does not affect what the clones
+    validate. Compression is skipped for netCDF3 file formats, which do not
+    support it; there the source's own filters are mirrored instead and the
+    original file format is always preserved.
+
     Preserves dimensions (including unlimited), global and per-variable
-    attributes, compression, chunking, endianness, fill values and groups.
+    attributes, endianness, fill values, groups and the file format.
 
     :param src_path: Path to the source netCDF file to clone.
     :type src_path: str
     :param dst_path: Path to write the missing-value clone to. Parent
         directories are created as needed.
     :type dst_path: str
+    :param compress: Force high compression on the clone. Defaults to ``True``.
+    :type compress: bool
+    :param complevel: zlib compression level (0-9) to use when compressing.
+        Defaults to ``9``.
+    :type complevel: int
     """
     Path(dst_path).parent.mkdir(parents=True, exist_ok=True)
 
     with Dataset(src_path, "r") as src, Dataset(dst_path, "w", format=src.file_format) as dst:
-        _copy_group(src, dst)
+        # zlib is only available on the HDF5-backed netCDF4 formats.
+        force_compression = compress and src.file_format.startswith("NETCDF4")
+        _copy_group(src, dst, force_compression, complevel)
 
 
-def _copy_group(src_grp, dst_grp):
+def _copy_group(src_grp, dst_grp, force_compression: bool, complevel: int):
     """
     Recursively copy a netCDF group's structure into ``dst_grp``, filling
     primary variables with missing values. See :func:`clone_netcdf_with_missing`.
@@ -134,7 +190,7 @@ def _copy_group(src_grp, dst_grp):
             name,
             src_var.dtype,
             src_var.dimensions,
-            **_copy_variable_creation_kwargs(src_var),
+            **_copy_variable_creation_kwargs(src_var, force_compression, complevel),
         )
         dst_var.setncatts(
             {attr: src_var.getncattr(attr)
@@ -152,7 +208,7 @@ def _copy_group(src_grp, dst_grp):
             _fill_missing(src_var, dst_var)
 
     for name, subgroup in src_grp.groups.items():
-        _copy_group(subgroup, dst_grp.createGroup(name))
+        _copy_group(subgroup, dst_grp.createGroup(name), force_compression, complevel)
 
 
 def _fill_missing(src_var, dst_var):
@@ -212,7 +268,10 @@ def main():
     prog_bar = ProgressBar(total=len(src_paths), label="Creating NaN-Filled Clone")
     for src_path in src_paths:
         dst_path = out_dir / src_path.relative_to(head_dir)
-        clone_netcdf_with_missing(str(src_path), str(dst_path))
+        clone_netcdf_with_missing(
+            str(src_path), str(dst_path),
+            compress=args.compress, complevel=args.complevel,
+        )
         prog_bar.step()
 
     print("GenTS done!")

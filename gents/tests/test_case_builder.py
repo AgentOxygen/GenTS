@@ -1,6 +1,7 @@
 from gents.tests.test_cases import generate_history_file
 from gents.validation.case_builder import clone_netcdf_with_missing
 from netCDF4 import Dataset
+from os.path import getsize
 import numpy as np
 import pytest
 
@@ -93,11 +94,9 @@ def test_integer_primary_filled_with_fill_value(tmp_path):
         assert np.all(np.asarray(counts[:]) == fill)
 
 
-def test_compression_and_chunking_preserved(tmp_path):
-    """Compression settings and chunk sizes survive the clone."""
-    src = str(tmp_path / "src_zip.nc")
-    dst = str(tmp_path / "dst_zip.nc")
-    with Dataset(src, "w", format="NETCDF4") as ds:
+def _write_netcdf4_source(path, zlib=False, complevel=0):
+    """Write a small NETCDF4 file with one primary field, optionally compressed."""
+    with Dataset(path, "w", format="NETCDF4") as ds:
         ds.createDimension("time", None)
         ds.createDimension("x", 8)
         tvar = ds.createVariable("time", np.double, ("time",))
@@ -105,20 +104,101 @@ def test_compression_and_chunking_preserved(tmp_path):
         tvar.setncatts({"units": "days since 1850-01-01", "calendar": "360_day"})
         var = ds.createVariable(
             "FIELD", np.float32, ("time", "x"),
-            zlib=True, complevel=4, shuffle=True, chunksizes=(1, 8),
+            zlib=zlib, complevel=complevel, chunksizes=(1, 8),
         )
         var[:] = np.ones((1, 8), dtype=np.float32)
 
-    clone_netcdf_with_missing(src, dst)
+
+def test_forces_high_compression_by_default(tmp_path):
+    """An uncompressed source is written with high zlib+shuffle compression."""
+    src = str(tmp_path / "src.nc")
+    dst = str(tmp_path / "dst.nc")
+    _write_netcdf4_source(src, zlib=False)
+
+    clone_netcdf_with_missing(src, dst, complevel=9)
 
     with Dataset(dst) as d:
-        field = d.variables["FIELD"]
-        filters = field.filters()
+        for name in ("FIELD", "time"):
+            filters = d.variables[name].filters()
+            assert filters["zlib"] is True
+            assert filters["complevel"] == 9
+            assert filters["shuffle"] is True
+        assert d.variables["FIELD"].chunking() == [1, 8]
+        assert np.all(np.isnan(np.asarray(d.variables["FIELD"][:])))
+
+
+def test_no_compress_mirrors_source_filters(tmp_path):
+    """With compress=False the clone mirrors the source's own filter settings."""
+    src = str(tmp_path / "src.nc")
+    dst = str(tmp_path / "dst.nc")
+    _write_netcdf4_source(src, zlib=True, complevel=4)
+
+    clone_netcdf_with_missing(src, dst, compress=False)
+
+    with Dataset(dst) as d:
+        filters = d.variables["FIELD"].filters()
         assert filters["zlib"] is True
-        assert filters["complevel"] == 4
-        assert filters["shuffle"] is True
-        assert field.chunking() == [1, 8]
-        assert np.all(np.isnan(np.asarray(field[:])))
+        assert filters["complevel"] == 4  # mirrored, not overridden to 9
+
+
+def test_netcdf3_source_is_not_compressed(tmp_path):
+    """netCDF3 formats do not support zlib, so the clone stays uncompressed."""
+    src = str(tmp_path / "src3.nc")
+    dst = str(tmp_path / "dst3.nc")
+    with Dataset(src, "w", format="NETCDF3_64BIT_OFFSET") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("x", 4)
+        tvar = ds.createVariable("time", np.double, ("time",))
+        tvar[:] = [15.0]
+        tvar.setncatts({"units": "days since 1850-01-01", "calendar": "360_day"})
+        var = ds.createVariable("FIELD", np.float32, ("time", "x"))
+        var[:] = np.ones((1, 4), dtype=np.float32)
+
+    clone_netcdf_with_missing(src, dst)  # must not raise
+
+    with Dataset(dst) as d:
+        assert d.file_format.startswith("NETCDF3")
+        # netCDF3 variables carry no filters at all.
+        assert d.variables["FIELD"].filters() is None
+        assert np.all(np.isnan(np.asarray(d.variables["FIELD"][:])))
+
+
+@pytest.mark.parametrize("src_zlib", [False, True], ids=["uncompressed", "compressed"])
+def test_clone_is_much_smaller_than_source(tmp_path, src_zlib):
+    """
+    The clone is a fraction of the source size whether or not the source is
+    itself compressed.
+
+    The whole point of the tool is to shrink the on-disk data burden while
+    keeping structure. Because high compression is forced on the clone, even an
+    uncompressed source shrinks: the constant NaN-filled primaries compress away
+    almost entirely.
+    """
+    src = str(tmp_path / "src_big.nc")
+    dst = str(tmp_path / "dst_big.nc")
+
+    # Random data resists compression, so the source stays large regardless.
+    shape = (40, 90, 90)
+    with Dataset(src, "w", format="NETCDF4") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("lat", shape[1])
+        ds.createDimension("lon", shape[2])
+        tvar = ds.createVariable("time", np.double, ("time",))
+        tvar[:] = np.arange(shape[0], dtype=np.double)
+        tvar.setncatts({"units": "days since 1850-01-01", "calendar": "360_day"})
+        var = ds.createVariable(
+            "FIELD", np.float32, ("time", "lat", "lon"),
+            zlib=src_zlib, complevel=4 if src_zlib else 0,
+        )
+        var[:] = np.random.random(shape).astype(np.float32)
+
+    clone_netcdf_with_missing(src, dst)
+
+    src_size = getsize(src)
+    dst_size = getsize(dst)
+    assert dst_size < src_size / 10, (
+        f"clone ({dst_size} B) is not much smaller than source ({src_size} B)"
+    )
 
 
 def test_empty_variable_is_skipped(tmp_path):
