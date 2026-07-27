@@ -11,6 +11,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Multi-dimensional variables whose logical (uncompressed) size exceeds this are
+# never copied verbatim, even if classified as secondary. See the size-guard
+# note in ``clone_netcdf_with_missing``.
+DEFAULT_MAX_COPY_MIB = 1.0
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
@@ -70,6 +75,14 @@ def parse_arguments():
         action="store_true",
         help="Overwrite existing clones. By default an existing, valid clone is "
              "left in place (corrupt ones are deleted and rebuilt)."
+    )
+    parser.add_argument(
+        "--max-copy-mib",
+        type=float,
+        default=DEFAULT_MAX_COPY_MIB,
+        help="Multi-dimensional variables larger than this (in MiB) are filled "
+             "instead of copied verbatim, even if classified as secondary. "
+             f"0 disables the guard. (Default {DEFAULT_MAX_COPY_MIB})"
     )
     return parser.parse_args()
 
@@ -147,7 +160,8 @@ def _copy_variable_creation_kwargs(src_var, force_compression: bool, complevel: 
 
 
 def clone_netcdf_with_missing(src_path: str, dst_path: str, compress: bool = True,
-                              complevel: int = 9):
+                              complevel: int = 9,
+                              max_copy_bytes: int = int(DEFAULT_MAX_COPY_MIB * 1024**2)):
     """
     Create a structurally identical netCDF file with the primary (scientific)
     variables replaced by missing values so the clone is cheap to store.
@@ -162,6 +176,15 @@ def clone_netcdf_with_missing(src_path: str, dst_path: str, compress: bool = Tru
     carries ``_FillValue = NaN`` in the clone, even if the source used a
     different fill (or none). Secondary variables (coordinates, time, bounds) are
     copied verbatim so the clone remains a valid, self-describing history file.
+
+    **Size guard:** as a backstop against variables the classifier misses (for
+    example a large field on an unrecognised record dimension), any *multi-
+    dimensional* variable whose logical size exceeds ``max_copy_bytes`` is filled
+    rather than copied, even if classified secondary. One-dimensional variables
+    (coordinates) are always copied verbatim regardless of size. Note this can
+    fill large multi-dimensional coordinate variables (e.g. 2-D curvilinear
+    lat/lon); raise the threshold or pass ``0`` to disable the guard if that
+    matters for a given case.
 
     By default high ``zlib`` + ``shuffle`` compression is forced on every
     dimensioned variable, regardless of the source's own settings. This is what
@@ -190,6 +213,10 @@ def clone_netcdf_with_missing(src_path: str, dst_path: str, compress: bool = Tru
     :param complevel: zlib compression level (0-9) to use when compressing.
         Defaults to ``9``.
     :type complevel: int
+    :param max_copy_bytes: Logical-size threshold, in bytes, above which a
+        multi-dimensional variable is filled instead of copied verbatim. ``0``
+        disables the guard. Defaults to ``DEFAULT_MAX_COPY_MIB`` MiB.
+    :type max_copy_bytes: int
     """
     Path(dst_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -205,10 +232,11 @@ def clone_netcdf_with_missing(src_path: str, dst_path: str, compress: bool = Tru
         force_compression = compress and dst_format.startswith("NETCDF4")
 
         with Dataset(dst_path, "w", format=dst_format) as dst:
-            _copy_group(src, dst, force_compression, complevel)
+            _copy_group(src, dst, force_compression, complevel, max_copy_bytes)
 
 
-def _copy_group(src_grp, dst_grp, force_compression: bool, complevel: int):
+def _copy_group(src_grp, dst_grp, force_compression: bool, complevel: int,
+                max_copy_bytes: int):
     """
     Recursively copy a netCDF group's structure into ``dst_grp``, filling
     primary variables with missing values. See :func:`clone_netcdf_with_missing`.
@@ -220,6 +248,15 @@ def _copy_group(src_grp, dst_grp, force_compression: bool, complevel: int):
 
     for name, src_var in src_grp.variables.items():
         secondary = is_var_secondary(src_var)
+
+        # Size guard: never copy a large multi-dimensional field verbatim, even
+        # if the classifier calls it secondary (e.g. an unrecognised record-
+        # dimension name). Such a field is filled like a primary instead.
+        if secondary and max_copy_bytes and len(src_var.dimensions) > 1:
+            itemsize = getattr(src_var.dtype, "itemsize", 0)
+            logical_bytes = int(np.prod(src_var.shape, dtype=np.int64)) * itemsize
+            if logical_bytes > max_copy_bytes:
+                secondary = False
 
         kwargs = _copy_variable_creation_kwargs(src_var, force_compression, complevel)
 
@@ -252,7 +289,8 @@ def _copy_group(src_grp, dst_grp, force_compression: bool, complevel: int):
         # keeps the clone small.
 
     for name, subgroup in src_grp.groups.items():
-        _copy_group(subgroup, dst_grp.createGroup(name), force_compression, complevel)
+        _copy_group(subgroup, dst_grp.createGroup(name),
+                    force_compression, complevel, max_copy_bytes)
 
 
 def _missing_value(src_var):
@@ -378,6 +416,7 @@ def main():
     for parent in {dst_path.parent for _, dst_path in clone_jobs}:
         parent.mkdir(parents=True, exist_ok=True)
 
+    max_copy_bytes = int(max(0.0, args.max_copy_mib) * 1024**2)
     prog_bar = ProgressBar(total=len(clone_jobs), label="Creating NaN-Filled Clone")
     with ProcessPoolExecutor(max_workers=args.num_processes) as executor:
         futures = {}
@@ -385,6 +424,7 @@ def main():
             future = executor.submit(
                 clone_netcdf_with_missing,
                 str(src_path), str(dst_path), args.compress, args.complevel,
+                max_copy_bytes,
             )
             futures[future] = src_path
 

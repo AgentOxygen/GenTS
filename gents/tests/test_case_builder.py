@@ -289,6 +289,57 @@ def test_float_primary_gets_nan_fillvalue(tmp_path):
         assert np.all(np.isnan(np.asarray(var[:])))
 
 
+def _write_guard_source(path):
+    """Write a source with a large non-time 2-D field and a large 1-D coord."""
+    with Dataset(str(path), "w", format="NETCDF4") as ds:
+        ds.createDimension("a", 400)
+        ds.createDimension("b", 400)
+        ds.createDimension("n", 200_000)
+        # 2-D, no time dim -> is_var_secondary() calls it secondary; 400*400*8
+        # = 1.28 MiB exceeds the 1 MiB default guard threshold.
+        ds.createVariable("BIG2D", np.float64, ("a", "b"))[:] = np.ones((400, 400))
+        # 1-D coordinate, 1.6 MiB -> above threshold but exempt (guard skips 1-D).
+        ds.createVariable("COORD", np.float64, ("n",))[:] = np.arange(200_000)
+
+
+def test_size_guard_fills_large_non_time_field(tmp_path):
+    """A large multi-dim field with no time dim is filled by the size guard."""
+    src = tmp_path / "src.nc"
+    dst = tmp_path / "dst.nc"
+    _write_guard_source(src)
+
+    clone_netcdf_with_missing(str(src), str(dst))  # default 1 MiB guard
+
+    with Dataset(str(dst)) as d:
+        v = d.variables["BIG2D"]
+        v.set_auto_mask(False)
+        assert np.all(np.isnan(np.asarray(v[:])))
+
+
+def test_size_guard_exempts_1d_coordinate(tmp_path):
+    """A large 1-D coordinate is copied verbatim regardless of the guard."""
+    src = tmp_path / "src.nc"
+    dst = tmp_path / "dst.nc"
+    _write_guard_source(src)
+
+    clone_netcdf_with_missing(str(src), str(dst))
+
+    with Dataset(str(dst)) as d:
+        assert np.array_equal(np.asarray(d.variables["COORD"][:]), np.arange(200_000))
+
+
+def test_size_guard_disabled_copies_verbatim(tmp_path):
+    """With the guard disabled, the large non-time field is copied verbatim."""
+    src = tmp_path / "src.nc"
+    dst = tmp_path / "dst.nc"
+    _write_guard_source(src)
+
+    clone_netcdf_with_missing(str(src), str(dst), max_copy_bytes=0)
+
+    with Dataset(str(dst)) as d:
+        assert np.array_equal(np.asarray(d.variables["BIG2D"][:]), np.ones((400, 400)))
+
+
 def _make_valid_netcdf(path):
     """Write a minimal valid netCDF file at ``path``."""
     with Dataset(str(path), "w", format="NETCDF4") as ds:
