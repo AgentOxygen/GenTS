@@ -1,6 +1,7 @@
 from gents.hfcollection import find_files
 from gents.meta import is_var_secondary
 from gents.utils import enable_logging, ProgressBar
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from netCDF4 import Dataset
 from fnmatch import fnmatch
@@ -31,6 +32,13 @@ def parse_arguments():
         default="*.nc*",
         help="Glob matched against file names to discover files to clone. "
              "(Default '*.nc*', matching GenTS's own discovery glob.)"
+    )
+    parser.add_argument(
+        "-n", "--num-processes",
+        type=int,
+        default=1,
+        help="Number of worker processes used to clone files in parallel. "
+             "(Default 1)"
     )
     parser.add_argument(
         "--exclude",
@@ -279,13 +287,33 @@ def main():
     logger.info("Found %d file(s) under %s to mirror.", len(src_paths), head_dir)
 
     out_dir = Path(args.outputdir)
-    prog_bar = ProgressBar(total=len(src_paths), label="Creating NaN-Filled Clone")
-    for src_path in src_paths:
-        dst_path = out_dir / src_path.relative_to(head_dir)
-        clone_netcdf_with_missing(
-            str(src_path), str(dst_path),
-            compress=args.compress, complevel=args.complevel,
-        )
-        prog_bar.step()
+    clone_jobs = [
+        (src_path, out_dir / src_path.relative_to(head_dir))
+        for src_path in src_paths
+    ]
+
+    # Create the mirrored directory tree serially up front so the parallel
+    # workers never race to create the same (possibly shared) parent directory.
+    for parent in {dst_path.parent for _, dst_path in clone_jobs}:
+        parent.mkdir(parents=True, exist_ok=True)
+
+    prog_bar = ProgressBar(total=len(clone_jobs), label="Creating NaN-Filled Clone")
+    with ProcessPoolExecutor(max_workers=args.num_processes) as executor:
+        futures = {}
+        for src_path, dst_path in clone_jobs:
+            future = executor.submit(
+                clone_netcdf_with_missing,
+                str(src_path), str(dst_path), args.compress, args.complevel,
+            )
+            futures[future] = src_path
+
+        for future in as_completed(futures):
+            src_path = futures[future]
+            try:
+                future.result()
+            except Exception as exc:
+                logger.warning(f"Failed to clone {src_path}: {exc}", exc_info=True)
+            finally:
+                prog_bar.step()
 
     print("GenTS done!")
