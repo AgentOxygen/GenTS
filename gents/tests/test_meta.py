@@ -121,6 +121,24 @@ def test_netcdfmeta_get_cftime_bounds_none(no_bounds_meta):
     assert meta.get_cftime_bounds() is None
 
 
+def test_is_var_secondary_case_insensitive(tmp_path):
+    """Capitalised time dim / bounds names are classified like their lowercase forms."""
+    path = str(tmp_path / "mom.nc")
+    with GenTSDataStore(path, "w", format="NETCDF4") as ds:
+        ds.createDimension("Time", None)
+        ds.createDimension("Layer", 3)
+        ds.createDimension("lath", 4)
+        ds.createDimension("lonh", 5)
+        ds.createDimension("nbnd", 2)
+        ds.createVariable("Temp", np.double, ("Time", "Layer", "lath", "lonh"))
+        ds.createVariable("lath", np.double, ("lath",))
+        ds.createVariable("Time_Bounds", np.double, ("Time", "nbnd"))
+    with GenTSDataStore(path, "r") as ds:
+        assert is_var_secondary(ds["Temp"]) is False        # primary despite 'Time'
+        assert is_var_secondary(ds["lath"]) is True          # 1-D coordinate
+        assert is_var_secondary(ds["Time_Bounds"]) is True   # bounds name, capitalised
+
+
 def test_netcdfmeta_get_variables(simple_meta):
     """get_variables() lists all variable names including time, bounds, and primary fields."""
     meta, _ = simple_meta

@@ -33,6 +33,10 @@ def is_var_secondary(variable,
     4. Otherwise the variable is primary (has a ``time`` dimension and more
        than one dimension total).
 
+    All name and dimension comparisons are case-insensitive, so a bounds
+    variable named ``Time_Bounds`` or a record dimension named ``Time`` / ``TIME``
+    (e.g. MOM6 output) is recognised the same as its lowercase form.
+
     :param variable: netCDF4 variable object to classify.
     :type variable: netCDF4._netCDF4.Variable
     :param secondary_vars: Variable names that are unconditionally secondary.
@@ -50,19 +54,18 @@ def is_var_secondary(variable,
     :returns: ``True`` if the variable is secondary, ``False`` if primary.
     :rtype: bool
     """
-    if variable.name in secondary_vars:
+    if variable.name.lower() in {var.lower() for var in secondary_vars}:
         return True
-        
-    dims = np.unique(variable.dimensions)
 
-    for tag in secondary_dims:
-        if tag in dims:
-            return True
+    dims = np.unique(variable.dimensions)
+    lowered_dims = {str(dim).lower() for dim in dims}
+
+    if any(tag.lower() in lowered_dims for tag in secondary_dims):
+        return True
 
     if len(dims) > max_num_dims:
-        for tag in primary_dims:
-            if tag in dims:
-                return False
+        if any(tag.lower() in lowered_dims for tag in primary_dims):
+            return False
 
     return True
 
