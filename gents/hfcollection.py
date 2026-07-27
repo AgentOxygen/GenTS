@@ -229,6 +229,55 @@ def get_year_bounds(hf_to_meta_map):
     return min_year, max_year
 
 
+def get_group_timestep_delta(metas):
+    """
+    Computes the duration of a single time step for a group of history files.
+
+    The step duration is defined, as in the original implementation, as the gap
+    between the two latest time values across the whole group (the temporal
+    resolution at the end of the record).  When spatially fragmented tiles share
+    every time step the two latest values are identical and the delta is zero;
+    this property is preserved.
+
+    The computation is done without an object-dtype sort over every time value in
+    the group.  Within each file the raw float times are monotonic with the CFTime
+    values, so ``numpy.argpartition`` selects that file's two latest steps in
+    linear time using fast float comparisons.  The two globally-latest steps are
+    guaranteed to lie among the per-file pairs, so only that small pooled set
+    (at most two CFTimes per file) is compared as CFTime objects — which keeps
+    files with differing ``units``/``calendar`` correctly ordered while avoiding
+    a full sort that scales with the total number of time steps.
+
+    :param metas: Metadata objects for the history files in one group.
+    :type metas: list[gents.meta.netCDFMeta]
+    :returns: Duration of one time step as a ``cftime``/``datetime`` timedelta.
+    :rtype: datetime.timedelta
+    :raises ValueError: If the group contains fewer than two time steps in total.
+    """
+    latest_candidates = []
+    total_steps = 0
+    for meta in metas:
+        # Time coordinates are never masked; drop any (unused) netCDF mask so the
+        # partition routines operate on plain arrays without warnings.
+        cftimes = np.ma.getdata(np.atleast_1d(meta.get_cftimes()))
+        float_times = np.ma.getdata(np.atleast_1d(meta.get_float_times()))
+        total_steps += cftimes.shape[0]
+
+        if cftimes.shape[0] <= 2:
+            latest_candidates.append(cftimes)
+        else:
+            latest_two = np.argpartition(float_times, -2)[-2:]
+            latest_candidates.append(cftimes[latest_two])
+
+    if total_steps < 2:
+        raise ValueError(f"Expected time array of size 2 or greater, got {total_steps}.")
+
+    pooled = np.concatenate(latest_candidates)
+    latest_pair = np.partition(pooled, pooled.shape[0] - 2)[-2:]
+    latest_pair.sort()
+    return latest_pair[1] - latest_pair[0]
+
+
 def generate_output_template(hf_head_dir, group_path_id, output_head_dir=None, directory_swaps={"hist": "tseries"}, filename_delimiter=".", cutoff_index=None):
     """
     Constructs a time-series output path template from a history file group path.
@@ -730,20 +779,14 @@ class HFCollection:
 
         if self.__hf_to_timestep_delta_map is None:
             self.__hf_to_timestep_delta_map = {}
-            for group in self.get_groups():
-                times = []
-                for path in self.get_groups()[group]:
-                    cftimes = self.__hf_to_meta_map[path].get_cftimes()
-                    if isinstance(cftimes, (list, np.ndarray)):
-                        for ts in cftimes:
-                            times.append(ts)
-                    else:
-                        times.append(cftimes)
-                times = np.sort(times)
-                if len(times) < 2:
-                    raise ValueError(f"Expected time array of size 2 or greater, got {len(times)} for group with paths: {self.get_groups()[group]}")
-                for path in self.get_groups()[group]:
-                    self.__hf_to_timestep_delta_map[path] = times[-1] - times[-2]
+            for group, group_paths in self.get_groups().items():
+                metas = [self.__hf_to_meta_map[path] for path in group_paths]
+                try:
+                    delta = get_group_timestep_delta(metas)
+                except ValueError as exc:
+                    raise ValueError(f"{exc} Group with paths: {group_paths}") from exc
+                for path in group_paths:
+                    self.__hf_to_timestep_delta_map[path] = delta
 
     def check_validity(self):
         """

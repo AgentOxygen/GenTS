@@ -396,6 +396,60 @@ def test_spatially_fragmented_handling(spatial_fragment_case):
     assert len(hf_collection.get_groups(check_fragmented=True)) == 1
 
 
+def _reference_timestep_delta_map(hf_collection):
+    """Original (pre-optimization) timestep-delta computation, kept as a
+    behavioral oracle: for each group, sort every cftime value in the group and
+    take the gap between the two latest steps."""
+    groups = hf_collection.get_groups()
+    reference = {}
+    for group in groups:
+        times = []
+        for path in groups[group]:
+            cftimes = hf_collection[path].get_cftimes()
+            if isinstance(cftimes, (list, np.ndarray)):
+                for ts in cftimes:
+                    times.append(ts)
+            else:
+                times.append(cftimes)
+        times = np.sort(times)
+        for path in groups[group]:
+            reference[path] = times[-1] - times[-2]
+    return reference
+
+
+def test_get_timestep_delta_matches_reference(simple_case, multistep_large_case,
+                                              spatial_fragment_case, mixed_timestep_case):
+    """The optimized timestep-delta computation reproduces the original full-sort
+    result exactly across single-step, multi-step, spatially-fragmented (duplicate
+    timesteps), and mixed-frequency groups."""
+    from datetime import timedelta
+
+    for case in (simple_case, multistep_large_case, spatial_fragment_case, mixed_timestep_case):
+        input_head_dir, _ = case
+        hf_collection = HFCollection(input_head_dir)
+        hf_collection.pull_metadata()
+
+        reference = _reference_timestep_delta_map(hf_collection)
+        assert len(reference) > 0
+        for path in reference:
+            assert hf_collection.get_timestep_delta(path) == reference[path]
+
+    # Concrete anchor: 49 consecutive monthly (30-day) files -> 30-day step.
+    input_head_dir, _ = simple_case
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection.pull_metadata()
+    for path in hf_collection:
+        assert hf_collection.get_timestep_delta(path) == timedelta(days=30)
+
+    # Spatially fragmented tiles share every timestep, so the two latest values
+    # are identical -> a zero-length step (a property the optimization preserves).
+    input_head_dir, _ = spatial_fragment_case
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection.pull_metadata()
+    for path in hf_collection:
+        assert hf_collection.get_timestep_delta(path) == timedelta(0)
+
+
 def test_no_history_files():
     """No history files found should raise an error."""
     with pytest.raises(FileNotFoundError) as exc:
