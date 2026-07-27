@@ -245,6 +245,50 @@ def test_empty_variable_is_skipped(tmp_path):
         assert d.variables["EMPTY"].size == 0
 
 
+def _clone_size_with_levels(tmp_path, nlev):
+    """Clone a source whose primary field has ``nlev`` levels; return clone bytes."""
+    src = str(tmp_path / f"src_{nlev}.nc")
+    dst = str(tmp_path / f"dst_{nlev}.nc")
+    with Dataset(src, "w", format="NETCDF4") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("lev", nlev)
+        ds.createDimension("ncol", 5000)
+        tvar = ds.createVariable("time", np.double, ("time",))
+        tvar[:] = [0.0]
+        tvar.setncatts({"units": "days since 1850-01-01", "calendar": "360_day"})
+        var = ds.createVariable("FIELD", np.float64, ("time", "lev", "ncol"))
+        var[:] = np.random.random((1, nlev, 5000))
+    clone_netcdf_with_missing(src, dst)
+    return getsize(dst)
+
+
+def test_primary_data_is_not_materialized(tmp_path):
+    """
+    Growing a primary field 90x barely changes the clone size, proving the
+    missing values are stored via the fill value rather than written to disk.
+    """
+    small = _clone_size_with_levels(tmp_path, 1)
+    large = _clone_size_with_levels(tmp_path, 90)
+    # A materialized 90-level field would dwarf a 1-level one; unwritten it must
+    # not. Allow generous slack for metadata/chunk-index differences.
+    assert large < small * 2, f"clone grew with primary size: {small} -> {large}"
+
+
+def test_float_primary_gets_nan_fillvalue(tmp_path):
+    """A float primary without a source _FillValue reads back as NaN in the clone."""
+    src = str(tmp_path / "src.nc")
+    dst = str(tmp_path / "dst.nc")
+    generate_history_file(src, [15.0], [[0.0, 30.0]])  # VAR* have no _FillValue
+
+    clone_netcdf_with_missing(src, dst)
+
+    with Dataset(dst) as d:
+        var = d.variables["VAR0"]
+        assert np.isnan(var._FillValue)
+        var.set_auto_mask(False)
+        assert np.all(np.isnan(np.asarray(var[:])))
+
+
 def _make_valid_netcdf(path):
     """Write a minimal valid netCDF file at ``path``."""
     with Dataset(str(path), "w", format="NETCDF4") as ds:

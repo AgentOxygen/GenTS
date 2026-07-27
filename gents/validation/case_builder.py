@@ -153,10 +153,15 @@ def clone_netcdf_with_missing(src_path: str, dst_path: str, compress: bool = Tru
     variables replaced by missing values so the clone is cheap to store.
 
     Primary variables (multi-dimensional, time-varying fields, as classified by
-    :func:`gents.meta.is_var_secondary`) are filled with ``NaN`` for floating
-    point types, the integer fill value for integer types, and empty strings for
-    character types. Secondary variables (coordinates, time, bounds) are copied
-    verbatim so the clone remains a valid, self-describing history file.
+    :func:`gents.meta.is_var_secondary`) are never written: they are created with
+    a fill value (``NaN`` for floating point types, the source ``_FillValue`` or
+    the dtype minimum for integer types) and left empty. netCDF stores no data
+    chunks for an unwritten variable and returns the fill value on read, so the
+    primaries occupy essentially nothing on disk while still reading back at full
+    shape as missing data. A consequence is that a floating point primary always
+    carries ``_FillValue = NaN`` in the clone, even if the source used a
+    different fill (or none). Secondary variables (coordinates, time, bounds) are
+    copied verbatim so the clone remains a valid, self-describing history file.
 
     By default high ``zlib`` + ``shuffle`` compression is forced on every
     dimensioned variable, regardless of the source's own settings. This is what
@@ -214,11 +219,18 @@ def _copy_group(src_grp, dst_grp, force_compression: bool, complevel: int):
         dst_grp.createDimension(name, None if dim.isunlimited() else len(dim))
 
     for name, src_var in src_grp.variables.items():
+        secondary = is_var_secondary(src_var)
+
+        kwargs = _copy_variable_creation_kwargs(src_var, force_compression, complevel)
+
+        # For primary fields the missing value is written implicitly via the
+        # variable's fill value (see below), which overrides any source fill.
+        missing = None if secondary else _missing_value(src_var)
+        if missing is not None:
+            kwargs["fill_value"] = missing
+
         dst_var = dst_grp.createVariable(
-            name,
-            src_var.dtype,
-            src_var.dimensions,
-            **_copy_variable_creation_kwargs(src_var, force_compression, complevel),
+            name, src_var.dtype, src_var.dimensions, **kwargs,
         )
         dst_var.setncatts(
             {attr: src_var.getncattr(attr)
@@ -228,34 +240,42 @@ def _copy_group(src_grp, dst_grp, force_compression: bool, complevel: int):
         if src_var.size == 0:
             continue
 
-        # Secondary variables (coordinates, time, bounds) are copied unchanged
-        # so the clone stays self-describing; primary fields become missing.
-        if is_var_secondary(src_var):
+        if secondary:
+            # Coordinates, time and bounds are copied unchanged so the clone
+            # stays self-describing.
             dst_var[:] = src_var[:]
-        else:
-            _fill_missing(src_var, dst_var)
+        elif missing is None:
+            # Char/compound dtype we cannot express as a fill value: copy it.
+            dst_var[:] = src_var[:]
+        # Otherwise leave the primary field unwritten: HDF5 stores no data
+        # chunks and returns ``missing`` (the fill value) on read, which is what
+        # keeps the clone small.
 
     for name, subgroup in src_grp.groups.items():
         _copy_group(subgroup, dst_grp.createGroup(name), force_compression, complevel)
 
 
-def _fill_missing(src_var, dst_var):
+def _missing_value(src_var):
     """
-    Write missing values over the whole extent of ``dst_var``, matching the
-    dtype of ``src_var``.
+    Return the value an unwritten primary variable should read back as, or
+    ``None`` if the dtype cannot be represented by a fill value (in which case
+    the variable is copied verbatim instead).
+
+    Floating point fields read back as ``NaN``; integer fields read back as the
+    source ``_FillValue`` if present, otherwise the smallest value of the dtype.
+
+    :param src_var: Source netCDF4 variable being cloned.
+    :type src_var: netCDF4._netCDF4.Variable
+    :returns: The fill value for the clone, or ``None`` for unsupported dtypes.
     """
     if np.issubdtype(src_var.dtype, np.floating):
-        dst_var[:] = np.full(src_var.shape, np.nan, dtype=src_var.dtype)
-    elif np.issubdtype(src_var.dtype, np.integer):
+        return src_var.dtype.type(np.nan)
+    if np.issubdtype(src_var.dtype, np.integer):
         fill = getattr(src_var, "_FillValue", None)
         if fill is None:
             fill = np.iinfo(src_var.dtype).min
-        dst_var[:] = np.full(src_var.shape, fill, dtype=src_var.dtype)
-    elif src_var.dtype.kind in ("S", "U"):
-        dst_var[:] = ""
-    else:
-        # Unknown/compound dtype: fall back to copying the real values.
-        dst_var[:] = src_var[:]
+        return src_var.dtype.type(fill)
+    return None
 
 
 def _passes_filters(path: str, include: list, exclude: list) -> bool:
