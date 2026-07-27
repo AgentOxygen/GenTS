@@ -13,8 +13,10 @@ logger = logging.getLogger(__name__)
 
 # Multi-dimensional variables whose logical (uncompressed) size exceeds this are
 # never copied verbatim, even if classified as secondary. See the size-guard
-# note in ``clone_netcdf_with_missing``.
-DEFAULT_MAX_COPY_MIB = 1.0
+# note in ``clone_netcdf_with_missing``. Kept below 1 MiB so that ~1 MiB static
+# grid-geometry arrays (e.g. CICE's per-grid TLON/TLAT/tarea/tmask sets) are
+# filled rather than copied.
+DEFAULT_MAX_COPY_MIB = 0.5
 
 
 def parse_arguments():

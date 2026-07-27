@@ -293,7 +293,7 @@ def _write_guard_source(path):
         ds.createDimension("b", 400)
         ds.createDimension("n", 200_000)
         # 2-D, no time dim -> is_var_secondary() calls it secondary; 400*400*8
-        # = 1.28 MiB exceeds the 1 MiB default guard threshold.
+        # = 1.28 MiB exceeds the default guard threshold.
         ds.createVariable("BIG2D", np.float64, ("a", "b"))[:] = np.ones((400, 400))
         # 1-D coordinate, 1.6 MiB -> above threshold but exempt (guard skips 1-D).
         ds.createVariable("COORD", np.float64, ("n",))[:] = np.arange(200_000)
@@ -309,6 +309,24 @@ def test_size_guard_fills_large_non_time_field(tmp_path):
 
     with Dataset(str(dst)) as d:
         v = d.variables["BIG2D"]
+        v.set_auto_mask(False)
+        assert np.all(np.isnan(np.asarray(v[:])))
+
+
+def test_size_guard_fills_cice_grid_sized_field(tmp_path):
+    """A ~1012 KiB 2-D grid array (CICE geometry) is filled by the default guard."""
+    src = tmp_path / "src.nc"
+    dst = tmp_path / "dst.nc"
+    with Dataset(str(src), "w", format="NETCDF4") as ds:
+        ds.createDimension("nj", 480)
+        ds.createDimension("ni", 540)
+        # 480*540*4 = 1012.5 KiB: under 1 MiB (old default missed it), over 0.5.
+        ds.createVariable("TLON", np.float32, ("nj", "ni"))[:] = np.ones((480, 540))
+
+    clone_netcdf_with_missing(str(src), str(dst))  # default 0.5 MiB guard
+
+    with Dataset(str(dst)) as d:
+        v = d.variables["TLON"]
         v.set_auto_mask(False)
         assert np.all(np.isnan(np.asarray(v[:])))
 
