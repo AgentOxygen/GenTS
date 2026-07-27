@@ -1,7 +1,12 @@
 from gents.tests.test_cases import generate_history_file
-from gents.validation.case_builder import clone_netcdf_with_missing
+from gents.validation.case_builder import (
+    clone_netcdf_with_missing,
+    _is_valid_netcdf,
+    _resolve_clone_jobs,
+)
 from netCDF4 import Dataset
 from os.path import getsize
+from pathlib import Path
 import numpy as np
 import pytest
 
@@ -238,3 +243,67 @@ def test_empty_variable_is_skipped(tmp_path):
 
     with Dataset(dst) as d:
         assert d.variables["EMPTY"].size == 0
+
+
+def _make_valid_netcdf(path):
+    """Write a minimal valid netCDF file at ``path``."""
+    with Dataset(str(path), "w", format="NETCDF4") as ds:
+        ds.createDimension("x", 2)
+        ds.createVariable("V", np.float32, ("x",))[:] = [1.0, 2.0]
+
+
+def test_is_valid_netcdf(tmp_path):
+    """_is_valid_netcdf distinguishes readable files from corrupt/missing ones."""
+    good = tmp_path / "good.nc"
+    _make_valid_netcdf(good)
+    assert _is_valid_netcdf(good) is True
+
+    corrupt = tmp_path / "corrupt.nc"
+    corrupt.write_bytes(b"not a netcdf file")
+    assert _is_valid_netcdf(corrupt) is False
+
+    assert _is_valid_netcdf(tmp_path / "missing.nc") is False
+
+
+def test_resolve_clone_jobs_skips_existing_valid(tmp_path):
+    """An existing valid clone is dropped from the job list and left untouched."""
+    src = tmp_path / "src.nc"
+    dst = tmp_path / "dst.nc"
+    _make_valid_netcdf(dst)  # pretend a prior run already produced it
+
+    pending = _resolve_clone_jobs([(src, dst)], overwrite=False)
+
+    assert pending == []
+    assert dst.exists()  # not deleted
+
+
+def test_resolve_clone_jobs_rebuilds_corrupt(tmp_path):
+    """An existing corrupt clone is deleted and its job retained for rebuild."""
+    src = tmp_path / "src.nc"
+    dst = tmp_path / "dst.nc"
+    dst.write_bytes(b"garbage")
+
+    pending = _resolve_clone_jobs([(src, dst)], overwrite=False)
+
+    assert pending == [(src, dst)]
+    assert not dst.exists()  # corrupt file removed
+
+
+def test_resolve_clone_jobs_overwrite_deletes_valid(tmp_path):
+    """With overwrite, even a valid existing clone is deleted and rebuilt."""
+    src = tmp_path / "src.nc"
+    dst = tmp_path / "dst.nc"
+    _make_valid_netcdf(dst)
+
+    pending = _resolve_clone_jobs([(src, dst)], overwrite=True)
+
+    assert pending == [(src, dst)]
+    assert not dst.exists()
+
+
+def test_resolve_clone_jobs_keeps_missing(tmp_path):
+    """A job whose destination does not yet exist is always kept."""
+    src = tmp_path / "src.nc"
+    dst = tmp_path / "dst.nc"
+
+    assert _resolve_clone_jobs([(src, dst)], overwrite=False) == [(src, dst)]

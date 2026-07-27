@@ -65,6 +65,12 @@ def parse_arguments():
         default=9,
         help="zlib compression level (0-9) to use when compressing. (Default 9)"
     )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing clones. By default an existing, valid clone is "
+             "left in place (corrupt ones are deleted and rebuilt)."
+    )
     return parser.parse_args()
 
 
@@ -269,6 +275,53 @@ def _passes_filters(path: str, include: list, exclude: list) -> bool:
     return True
 
 
+def _is_valid_netcdf(path: Path) -> bool:
+    """
+    Report whether ``path`` is a readable (non-corrupt) netCDF file.
+
+    :param path: Path to test.
+    :type path: pathlib.Path
+    :returns: ``True`` if the file opens as a netCDF dataset.
+    :rtype: bool
+    """
+    try:
+        with Dataset(str(path), "r"):
+            return True
+    except Exception:
+        return False
+
+
+def _resolve_clone_jobs(clone_jobs: list, overwrite: bool) -> list:
+    """
+    Decide which clone jobs to run given any pre-existing destination files.
+
+    With ``overwrite`` set, every existing destination is deleted and all jobs
+    are kept. Otherwise an existing *valid* clone is left in place and its job
+    dropped, while a *corrupt* existing clone is deleted and its job retained so
+    it is rebuilt.
+
+    :param clone_jobs: List of ``(src_path, dst_path)`` tuples.
+    :type clone_jobs: list
+    :param overwrite: Overwrite existing clones unconditionally.
+    :type overwrite: bool
+    :returns: The subset of ``clone_jobs`` that still needs to be built.
+    :rtype: list
+    """
+    pending = []
+    skipped = 0
+    for src_path, dst_path in clone_jobs:
+        if dst_path.exists():
+            if not overwrite and _is_valid_netcdf(dst_path):
+                skipped += 1
+                continue
+            dst_path.unlink()
+        pending.append((src_path, dst_path))
+
+    if skipped:
+        logger.info("Skipping %d existing valid clone(s).", skipped)
+    return pending
+
+
 def main():
     enable_logging(verbose=True)
     args = parse_arguments()
@@ -291,6 +344,14 @@ def main():
         (src_path, out_dir / src_path.relative_to(head_dir))
         for src_path in src_paths
     ]
+
+    # Drop jobs whose valid clone already exists (and rebuild corrupt ones)
+    # before creating directories or spawning workers.
+    clone_jobs = _resolve_clone_jobs(clone_jobs, args.overwrite)
+    if not clone_jobs:
+        logger.info("Nothing to clone; all destinations already valid.")
+        print("GenTS done!")
+        return
 
     # Create the mirrored directory tree serially up front so the parallel
     # workers never race to create the same (possibly shared) parent directory.
