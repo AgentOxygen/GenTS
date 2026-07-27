@@ -41,3 +41,31 @@ class SimpleSuite:
             global_attrs = agg_hf_ds.get_global_attrs()
             data_vals = agg_hf_ds.get_var_vals("VAR0")
             assert data_vals is not None
+
+
+LARGE_GROUP_NUM_HIST_FILES = 40
+LARGE_GROUP_NUM_TIMESTEPS = 2000
+
+
+class LargeGroupSuite:
+    """Stresses the per-group timestep-delta computation in ``pull_metadata`` with
+    a single group holding many multi-step history files (a large collection of
+    total time steps)."""
+
+    def setup(self):
+        self.hf_head_dir = "hf_large/"
+        makedirs(self.hf_head_dir, exist_ok=True)
+
+        self.hf_paths = [f"{self.hf_head_dir}/benchmark.hf.{str(index).zfill(5)}.nc"
+                         for index in range(LARGE_GROUP_NUM_HIST_FILES)]
+
+        step = 0
+        for path in self.hf_paths:
+            times = [(step + i) * 30 for i in range(LARGE_GROUP_NUM_TIMESTEPS)]
+            bounds = [[(step + i) * 30, (step + i + 1) * 30] for i in range(LARGE_GROUP_NUM_TIMESTEPS)]
+            generate_history_file(path, times, bounds)
+            step += LARGE_GROUP_NUM_TIMESTEPS
+
+    def time_hfcollection_pull(self):
+        hfc = HFCollection(self.hf_head_dir)
+        hfc.pull_metadata()
