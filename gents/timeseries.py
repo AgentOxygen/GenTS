@@ -81,6 +81,31 @@ def check_timeseries_conform(ts_path: str):
     return True
 
 
+def _is_missing(arr, fill_value):
+    """
+    Reports whether every element of ``arr`` equals ``fill_value``.
+
+    Used to skip writing all-missing data: a variable slice that is entirely the
+    fill value need not be written at all, since the output variable is created
+    with that fill value and netCDF returns it on read for any unwritten region.
+    This keeps time series generated from missing-value clones (see
+    :mod:`gents.validation.case_builder`) as small as their inputs. NaN fill
+    values are compared with :func:`numpy.isnan` because ``NaN != NaN``.
+
+    :param arr: Array of values about to be written.
+    :type arr: numpy.ndarray
+    :param fill_value: The variable's fill value, or ``None`` if it has none.
+    :returns: ``True`` if ``arr`` is entirely ``fill_value`` (and thus need not
+        be written); ``False`` if ``fill_value`` is ``None`` or any value differs.
+    :rtype: bool
+    """
+    if fill_value is None:
+        return False
+    if isinstance(fill_value, (float, np.floating)) and np.isnan(fill_value):
+        return bool(np.all(np.isnan(arr)))
+    return bool(np.all(arr == fill_value))
+
+
 def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_data, overwrite=False, complevel=0, compression=None, ts_start_index=None, ts_end_index=None, append_attrs=None):
     """
     Writes a single time-series netCDF file for one primary variable.
@@ -97,6 +122,13 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
     to keep each chunk near 4 MiB.  Secondary variables are written with their
     full shape as chunk sizes.  The global attributes are stamped with a
     ``gents_version`` entry on completion.
+
+    Each output variable is created with the source's ``_FillValue`` (if any), and
+    any data slice that is entirely that fill value is left unwritten: netCDF
+    stores nothing for it and returns the fill value on read. This keeps time
+    series generated from missing-value clones (see
+    :mod:`gents.validation.case_builder`) as small as their inputs, while being a
+    no-op for ordinary data.
 
     :param agg_hf_ds: Open :class:`~gents.mhfdataset.MHFDataset` providing
         aggregated data for the history file group.
@@ -166,26 +198,40 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
                 time_chunk_size = max(1, 4*(1024**2) // (np.prod(var_shape[1:]) * var_dtype.itemsize))
                 chunksizes = [time_chunk_size] + var_shape[1:]
 
+            # Route _FillValue through creation so unwritten regions read back as
+            # it, then omit it from the copied attributes (it cannot be set twice).
+            primary_attrs = agg_hf_ds.get_var_attrs(primary_var)
+            primary_fill = primary_attrs.get("_FillValue", None)
+
             var_data = ts_ds.createVariable(primary_var,
                                             var_dtype,
                                             var_dims,
                                             complevel=complevel,
                                             compression=compression,
-                                            chunksizes=chunksizes)
+                                            chunksizes=chunksizes,
+                                            fill_value=primary_fill)
             var_data.set_auto_mask(False)
             var_data.set_auto_scale(False)
             var_data.set_always_mask(False)
-            
-            ts_ds[primary_var].setncatts(agg_hf_ds.get_var_attrs(primary_var))
+
+            ts_ds[primary_var].setncatts(
+                {key: val for key, val in primary_attrs.items() if key != "_FillValue"}
+            )
 
             if len(var_shape) > 0 and "time" in var_dims:
                 for i in range(0, var_shape[0], chunksizes[0]):
                     end = min(i + chunksizes[0], var_shape[0])
-                    var_data[i:end] = agg_hf_ds.get_var_vals(
+                    chunk = agg_hf_ds.get_var_vals(
                         primary_var, time_index_start=ts_start_index+i, time_index_end=ts_start_index+end
                     )
+                    # Leave all-missing chunks unwritten; netCDF stores nothing and
+                    # returns the fill value on read.
+                    if not _is_missing(chunk, primary_fill):
+                        var_data[i:end] = chunk
             else:
-                var_data[:] = agg_hf_ds.get_var_vals(primary_var)[ts_start_index:ts_end_index]
+                chunk = agg_hf_ds.get_var_vals(primary_var)[ts_start_index:ts_end_index]
+                if not _is_missing(chunk, primary_fill):
+                    var_data[:] = chunk
 
         for secondary_var in secondary_vars_data:
             var_shape = agg_hf_ds.get_var_data_shape(secondary_var)
@@ -203,22 +249,32 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
                     else:
                         ts_ds.createDimension(dim, var_shape[index])
             
+            svar_attrs = agg_hf_ds.get_var_attrs(secondary_var)
+            svar_fill = svar_attrs.get("_FillValue", None)
+
             svar_data = ts_ds.createVariable(secondary_var,
                                             agg_hf_ds.get_var_dtype(secondary_var),
                                             var_dims,
                                             complevel=complevel,
                                             compression=compression,
-                                            chunksizes=var_shape)
-            
+                                            chunksizes=var_shape,
+                                            fill_value=svar_fill)
+
             svar_data.set_auto_mask(False)
             svar_data.set_auto_scale(False)
             svar_data.set_always_mask(False)
 
-            ts_ds[secondary_var].setncatts(agg_hf_ds.get_var_attrs(secondary_var))
+            ts_ds[secondary_var].setncatts(
+                {key: val for key, val in svar_attrs.items() if key != "_FillValue"}
+            )
             if "time" in var_dims:
-                svar_data[:] = secondary_vars_data[secondary_var][ts_start_index:ts_end_index]
+                svar_vals = secondary_vars_data[secondary_var][ts_start_index:ts_end_index]
             else:
-                svar_data[:] = secondary_vars_data[secondary_var]
+                svar_vals = secondary_vars_data[secondary_var]
+            # Leave all-missing secondary fields (e.g. filled grid geometry from a
+            # clone) unwritten so they too stay chunkless in the output.
+            if not _is_missing(svar_vals, svar_fill):
+                svar_data[:] = svar_vals
         
         if append_attrs is None:
             append_attrs = {}
