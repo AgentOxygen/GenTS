@@ -1,5 +1,5 @@
 from gents.tests.test_cases import generate_history_file
-from gents.validation.case_builder import (
+from gents.conformity.case_builder import (
     clone_netcdf_with_missing,
     _is_valid_netcdf,
     _resolve_clone_jobs,

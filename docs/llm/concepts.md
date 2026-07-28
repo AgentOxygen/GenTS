@@ -75,10 +75,16 @@
 - **Conforming chunking:** Output chunking convention checked by
   `check_timeseries_conform`: `time` stored contiguously; large variables chunked along
   time so each chunk is ≈ 4 MiB (CMOR-friendly). Files < 4 MiB are stored contiguously.
+- **Skip-empty writes:** `write_timeseries_file` creates each output variable with the
+  source's `_FillValue` and leaves any data slice that is *entirely* that fill value
+  unwritten (netCDF stores nothing and returns the fill on read). A no-op for real data;
+  it propagates the missing-value-clone trick through TS generation so time series built
+  from clones stay as small as their inputs. Only engages when a `_FillValue` is present
+  (NaN is compared with `isnan`, since `NaN != NaN`).
 - **Dry run:** CLI `--dryrun` — full metadata read and order construction, but no writes;
   prints how many TS files would be generated.
-- **Missing-value clone (validation case builder):** A structurally identical copy of a
-  history file produced by `gents.validation.case_builder` (`gents_valid_build`) in which
+- **Missing-value clone (conformity case builder):** A structurally identical copy of a
+  history file produced by `gents.conformity.case_builder` (`gents_conform_build`) in which
   the primary/large fields hold no real data, so a multi-GB case directory mirrors down to
   KB for cheap end-to-end testing. Primary variables (per `is_var_secondary`) are
   *created but never written* — HDF5's lazy allocation stores nothing and returns the
@@ -91,4 +97,5 @@
   needs an HDF5 backend, netCDF3/CDF-5 sources are rewritten as `NETCDF4` unless
   `--preserve-format` is set. The clones deliberately mirror the *raw* case tree
   (discovered via `find_files`, not an `HFCollection`) so they also exercise files GenTS's
-  filters are meant to ignore.
+  filters are meant to ignore. Running GenTS on the clones also stays cheap: the pipeline's
+  **skip-empty writes** (above) keep the generated time series chunkless too.

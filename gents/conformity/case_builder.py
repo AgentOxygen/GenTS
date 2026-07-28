@@ -21,7 +21,7 @@ DEFAULT_MAX_COPY_MIB = 0.5
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
-        description="GenTS Validation Case Builder Tool"
+        description="GenTS Conformity Case Builder Tool"
     )
     parser.add_argument(
         "hf_head_dir",

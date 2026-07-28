@@ -2,7 +2,7 @@ from gents.utils import get_version
 from gents.hfcollection import HFCollection
 from gents.timeseries import TSCollection
 from gents.tests.test_cases import *
-from gents.validation.case_builder import clone_netcdf_with_missing
+from gents.conformity.case_builder import clone_netcdf_with_missing
 from gents.datastore import GenTSDataStore
 from os import listdir, makedirs, rename
 from os.path import getsize

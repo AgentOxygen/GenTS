@@ -28,6 +28,13 @@
 - **4 MiB chunking rule.** `write_timeseries_file` and `check_timeseries_conform`
   implement the same convention (contiguous below 4 MiB, ~4 MiB time-chunks above).
   Change them together or `test_conform_check`-style tests will catch you.
+- **Fill value at creation + skip-empty writes.** `write_timeseries_file` passes the
+  source `_FillValue` to `createVariable` (and omits it from the `setncatts` copy — it
+  can't be set twice) and skips writing any slice that is entirely the fill value, via
+  the `_is_missing` helper. This is what keeps time series built from missing-value
+  clones small; it is a no-op when no `_FillValue` is present, so real data is never
+  dropped. Keep the create-time fill + skip together if you touch this — they're one
+  mechanism.
 - **`[sorting_pivot]` group-key suffix** is the string protocol between
   `HFCollection.slice_groups` and `TSCollection.update_ts_orders`. Both sides parse it
   literally; change it in both places or nowhere.
@@ -35,7 +42,7 @@
   (or variable names for `var_glob`). Not regex, not `pathlib.match`.
 - **Only `GenTSDataStore` opens netCDF files** in the *pipeline*. Never instantiate
   `netCDF4.Dataset` directly outside `datastore.py` — except in
-  `gents/validation/case_builder.py`, which deliberately uses `netCDF4.Dataset` directly
+  `gents/conformity/case_builder.py`, which deliberately uses `netCDF4.Dataset` directly
   because cloning needs low-level `createVariable` control (filters, chunking, fill value)
   that the thin datastore wrapper doesn't expose. Don't "fix" that to use `GenTSDataStore`.
 - **`is_var_secondary` matching is case-insensitive.** Variable-name, secondary-dimension,

@@ -89,7 +89,7 @@ def _is_missing(arr, fill_value):
     fill value need not be written at all, since the output variable is created
     with that fill value and netCDF returns it on read for any unwritten region.
     This keeps time series generated from missing-value clones (see
-    :mod:`gents.validation.case_builder`) as small as their inputs. NaN fill
+    :mod:`gents.conformity.case_builder`) as small as their inputs. NaN fill
     values are compared with :func:`numpy.isnan` because ``NaN != NaN``.
 
     :param arr: Array of values about to be written.
@@ -127,7 +127,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
     any data slice that is entirely that fill value is left unwritten: netCDF
     stores nothing for it and returns the fill value on read. This keeps time
     series generated from missing-value clones (see
-    :mod:`gents.validation.case_builder`) as small as their inputs, while being a
+    :mod:`gents.conformity.case_builder`) as small as their inputs, while being a
     no-op for ordinary data.
 
     :param agg_hf_ds: Open :class:`~gents.mhfdataset.MHFDataset` providing

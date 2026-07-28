@@ -46,14 +46,14 @@ bundled YAML config (`gents/configs/*.yaml`) merged with command-line flags.
 | `meta.py` | `netCDFMeta` (cached header metadata), `is_var_secondary` (primary/secondary rules), `get_meta_from_path` (picklable factory), `get_attributes`, `get_time_variables_names` | datastore |
 | `hfcollection.py` | `HFCollection` + module-level helpers for discovery, grouping, year math, fragmentation merging | meta, utils |
 | `mhfdataset.py` | `MHFDataset` — presents a file group as one virtual dataset; time→file mapping; tile reassembly | datastore, meta |
-| `timeseries.py` | `TSCollection`, order construction/execution, `write_timeseries_file` (chunking + integrity stamp), `check_timeseries_integrity`, `check_timeseries_conform`, `get_timestamp_format` | mhfdataset, datastore, meta, utils |
+| `timeseries.py` | `TSCollection`, order construction/execution, `write_timeseries_file` (chunking + integrity stamp + create-time fill value & skip-empty writes via `_is_missing`), `check_timeseries_integrity`, `check_timeseries_conform`, `get_timestamp_format` | mhfdataset, datastore, meta, utils |
 | `cli.py` | argparse, YAML config loading/merging, `main()` | hfcollection, timeseries, utils |
 | `utils.py` | `enable_logging`, `ProgressBar`, `get_version`, `log_hfcollection_info`, `log_tscollection_info`, `LOG_LEVEL_IO_WARNING = 5` | — |
 
 Dependency direction is one-way: `cli → (hfcollection, timeseries) → (meta, mhfdataset) → datastore`.
 `utils` is a leaf used by the upper layers. Keep it that way.
 
-`gents/validation/case_builder.py` (the `gents_valid_build` tool) sits *outside* this
+`gents/conformity/case_builder.py` (the `gents_conform_build` tool) sits *outside* this
 pipeline: it reuses `find_files` (discovery) and `is_var_secondary` (classification) but
 builds missing-value clones of a case directory rather than time series. See the
 "missing-value clone" concept in [concepts.md](concepts.md). It is the one module allowed

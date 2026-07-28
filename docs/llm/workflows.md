@@ -75,17 +75,17 @@ batches; with `--append`, they are added on top. `--compression` requires `--lev
 the input dir (path swaps like `/hist/` → `/proc/tseries/` come from the YAML config).
 Don't run on HPC login nodes — this spawns many I/O-heavy processes.
 
-### Building test-fixture clones (`gents_valid_build`)
+### Building test-fixture clones (`gents_conform_build`)
 
 Mirror a real (possibly multi-GB) case directory into tiny missing-value clones for
 end-to-end testing — see the "missing-value clone" concept in [concepts.md](concepts.md).
 
 ```bash
-gents_valid_build <case_head_dir> -o <clone_dir>          # mirror, default settings
-gents_valid_build <case_head_dir> -o <clone_dir> -n 16    # 16 parallel worker processes
-gents_valid_build <case_head_dir> -o <clone_dir> \
+gents_conform_build <case_head_dir> -o <clone_dir>          # mirror, default settings
+gents_conform_build <case_head_dir> -o <clone_dir> -n 16    # 16 parallel worker processes
+gents_conform_build <case_head_dir> -o <clone_dir> \
     --pattern "*.nc*" --max-copy-mib 0.5 --overwrite      # tune discovery/guard, rebuild
-gents_valid_build <case_head_dir> -o <clone_dir> --preserve-format   # keep netCDF3 (won't shrink)
+gents_conform_build <case_head_dir> -o <clone_dir> --preserve-format   # keep netCDF3 (won't shrink)
 ```
 
 Flags: `-p/--pattern` (discovery glob, default `*.nc*`); `-n/--num-processes` (default 1);
