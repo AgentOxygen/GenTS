@@ -109,7 +109,12 @@
   (discovered via `find_files`, not an `HFCollection`) so they also exercise files GenTS's
   filters are meant to ignore. Running GenTS over the clones stays cheap only with
   **`--no-data`** (above): skip-empty alone keeps the output small but still pays to read
-  the fill data.
+  the fill data. The invocation that built a clone is recorded in a `cmd.txt` at the top of
+  the clone directory (`CLONE_COMMAND_FILENAME`), the clone-tree equivalent of the
+  `gents_command` attribute `run_gents` stamps into each output file. Lines are appended,
+  one per invocation that actually cloned files, because a clone is often built up over
+  several runs; arguments are `shlex.join`-quoted so a line can be pasted back into a shell
+  without its globs expanding.
 - **Conformity testing:** End-to-end verification that GenTS handled a *specific model's*
   case the way that model's users need. Distinct from unit testing, and deliberately kept
   in a separate tree (`gents/conformity/`, run by `gents_conform`, not `pytest`). Unit

@@ -1,6 +1,6 @@
 from gents.hfcollection import find_files
 from gents.meta import is_var_secondary
-from gents.utils import enable_logging, ProgressBar
+from gents.utils import enable_logging, ProgressBar, get_time_stamp, get_version
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from netCDF4 import Dataset
@@ -8,8 +8,15 @@ from fnmatch import fnmatch
 import numpy as np
 import argparse
 import logging
+import shlex
+import socket
+import sys
 
 logger = logging.getLogger(__name__)
+
+# Name of the file recording how a clone directory was built, written at the top
+# of the clone. Matches the convention already used by existing clone bundles.
+CLONE_COMMAND_FILENAME = "cmd.txt"
 
 # Multi-dimensional variables whose logical (uncompressed) size exceeds this are
 # never copied verbatim, even if classified as secondary. See the size-guard
@@ -358,6 +365,63 @@ def _resolve_clone_jobs(clone_jobs: list, overwrite: bool) -> list:
     return pending
 
 
+def record_clone_command(out_dir: Path):
+    """
+    Append the current invocation to the clone directory's command log.
+
+    ``run_gents`` records the command that produced each time series in that
+    file's ``gents_command`` attribute. A clone directory has no equivalent place
+    to put that, so the command is written to a plain text file at the top of the
+    clone instead, preserving how the clone was generated and making it
+    reproducible from a real case later.
+
+    Each invocation contributes two lines: a comment carrying the date, host and
+    GenTS version, followed by the command itself::
+
+        # 2026-07-30 14:55 | host: derecho01 | GenTS 1.1.3
+        gents_conform_build /glade/.../my_case -o . -n 126 --include '*.0001-*.nc'
+
+    The provenance goes on its own ``#`` comment line rather than onto the command
+    line so the command stays directly pasteable and the whole file remains valid
+    shell. The host is worth recording because a clone's source path is usually
+    specific to the machine it was built on, and the GenTS version because
+    ``is_var_secondary`` decides which variables get emptied — a clone built by a
+    different version may have classified them differently.
+
+    Entries are appended rather than overwritten because a clone is often built
+    over several runs: existing valid clones are skipped by default, so resuming
+    an interrupted build, or extending a clone with more history files, is
+    normal. Overwriting would discard the command that produced the files already
+    present and misreport how the directory was made. A clone built in one go
+    therefore holds exactly one entry.
+
+    Arguments are quoted with :func:`shlex.join` so a recorded command can be
+    pasted back into a shell unchanged. Without it, glob patterns passed to
+    ``--include``/``--exclude`` would be recorded bare (the shell having already
+    stripped their quotes) and would expand against the working directory if the
+    line were re-run.
+
+    :param out_dir: Head directory of the clone being written.
+    :type out_dir: pathlib.Path
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # sys.argv[0] is the full path to the installed entry point; only its name is
+    # meaningful to someone reading or re-running the recorded line.
+    argv = [Path(sys.argv[0]).name] + sys.argv[1:]
+
+    provenance = (
+        f"# {get_time_stamp()} | host: {socket.gethostname()} | GenTS {get_version()}"
+    )
+
+    command_path = out_dir / CLONE_COMMAND_FILENAME
+    with open(command_path, "a") as command_file:
+        command_file.write(provenance + "\n")
+        command_file.write(shlex.join(argv) + "\n")
+
+    logger.info(f"Recorded clone command in '{command_path}'.")
+
+
 def main():
     enable_logging(verbose=True)
     args = parse_arguments()
@@ -388,6 +452,11 @@ def main():
         logger.info("Nothing to clone; all destinations already valid.")
         print("GenTS done!")
         return
+
+    # Recorded only once there is work to do: a run that cloned nothing left the
+    # directory's contents unchanged, so adding a line would wrongly suggest it
+    # contributed files.
+    record_clone_command(out_dir)
 
     # Create the mirrored directory tree serially up front so the parallel
     # workers never race to create the same (possibly shared) parent directory.

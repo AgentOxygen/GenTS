@@ -45,6 +45,8 @@ gents_conform_build /glade/derecho/scratch/me/my_case -o ./my_case_clone -n 16
 
 The clone keeps every dimension, attribute, coordinate and variable of the original, just without the actual data values. Conformity is about checking the structure, naming, and metadata, not scientific accuracy (GenTS never modifies data values, it only slices and transforms them).
 
+The command that built the clone is recorded in a `cmd.txt` at the top of the clone directory, so a cloned case always carries the recipe for rebuilding it.
+
 ### 2. Generate time series
 
 Run GenTS over the clone with `--no-data`. This builds the full output structure without reading or writing any primary data:

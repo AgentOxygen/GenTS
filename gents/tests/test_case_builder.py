@@ -1,6 +1,8 @@
 from gents.tests.test_cases import generate_history_file
 from gents.conformity.case_builder import (
     clone_netcdf_with_missing,
+    record_clone_command,
+    CLONE_COMMAND_FILENAME,
     _is_valid_netcdf,
     _resolve_clone_jobs,
 )
@@ -417,3 +419,98 @@ def test_resolve_clone_jobs_keeps_missing(tmp_path):
     dst = tmp_path / "dst.nc"
 
     assert _resolve_clone_jobs([(src, dst)], overwrite=False) == [(src, dst)]
+
+
+def _recorded_entries(out_dir):
+    """Return the command file split into (provenance_comment, command) pairs."""
+    lines = (out_dir / CLONE_COMMAND_FILENAME).read_text().splitlines()
+    return list(zip(lines[::2], lines[1::2]))
+
+
+def test_records_clone_command(tmp_path, monkeypatch):
+    """The invocation is written to the command file at the top of the clone."""
+    monkeypatch.setattr(
+        "sys.argv", ["gents_conform_build", "/case", "-o", str(tmp_path)]
+    )
+
+    record_clone_command(tmp_path)
+
+    (provenance, command), = _recorded_entries(tmp_path)
+    assert command == f"gents_conform_build /case -o {tmp_path}"
+    assert provenance.startswith("#")
+
+
+def test_records_clone_command_provenance(tmp_path, monkeypatch):
+    """Each entry is preceded by a comment carrying date, host and GenTS version."""
+    monkeypatch.setattr("sys.argv", ["gents_conform_build", "/case"])
+    monkeypatch.setattr("socket.gethostname", lambda: "testhost01")
+    monkeypatch.setattr(
+        "gents.conformity.case_builder.get_time_stamp", lambda: "2026-07-30 14:55"
+    )
+    monkeypatch.setattr(
+        "gents.conformity.case_builder.get_version", lambda: "9.9.9"
+    )
+
+    record_clone_command(tmp_path)
+
+    (provenance, _), = _recorded_entries(tmp_path)
+    assert provenance == "# 2026-07-30 14:55 | host: testhost01 | GenTS 9.9.9"
+
+
+def test_records_clone_command_creates_directory(tmp_path, monkeypatch):
+    """The clone directory is created if it does not exist yet."""
+    out_dir = tmp_path / "not_yet_there"
+    monkeypatch.setattr("sys.argv", ["gents_conform_build", "/case"])
+
+    record_clone_command(out_dir)
+
+    assert (out_dir / CLONE_COMMAND_FILENAME).is_file()
+
+
+def test_records_clone_command_quotes_globs(tmp_path, monkeypatch):
+    """Glob arguments are re-quoted so the recorded line can be pasted back into a shell."""
+    monkeypatch.setattr(
+        "sys.argv",
+        ["gents_conform_build", "/case", "--include", "*.0001-*.nc"],
+    )
+
+    record_clone_command(tmp_path)
+
+    recorded = (tmp_path / CLONE_COMMAND_FILENAME).read_text()
+    assert "'*.0001-*.nc'" in recorded
+
+
+def test_records_clone_command_uses_entry_point_name(tmp_path, monkeypatch):
+    """Only the entry point's name is recorded, not its full installed path."""
+    monkeypatch.setattr(
+        "sys.argv", ["/usr/local/bin/gents_conform_build", "/case"]
+    )
+
+    record_clone_command(tmp_path)
+
+    (_, command), = _recorded_entries(tmp_path)
+    assert command.startswith("gents_conform_build /case")
+
+
+def test_records_clone_command_appends(tmp_path, monkeypatch):
+    """A clone built over several runs keeps every command that contributed files."""
+    monkeypatch.setattr("sys.argv", ["gents_conform_build", "/case", "--include", "a*"])
+    record_clone_command(tmp_path)
+
+    monkeypatch.setattr("sys.argv", ["gents_conform_build", "/case", "--include", "b*"])
+    record_clone_command(tmp_path)
+
+    entries = _recorded_entries(tmp_path)
+    assert len(entries) == 2
+    assert entries[0][1].endswith("'a*'")
+    assert entries[1][1].endswith("'b*'")
+
+
+def test_recorded_command_file_is_valid_shell(tmp_path, monkeypatch):
+    """Only the command lines are executable; provenance is commented out."""
+    monkeypatch.setattr("sys.argv", ["gents_conform_build", "/case", "--include", "a*"])
+    record_clone_command(tmp_path)
+
+    lines = (tmp_path / CLONE_COMMAND_FILENAME).read_text().splitlines()
+    for line in lines:
+        assert line.startswith("#") or line.startswith("gents_conform_build")

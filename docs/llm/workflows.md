@@ -103,8 +103,10 @@ Flags: `-p/--pattern` (discovery glob, default `*.nc*`); `-n/--num-processes` (d
 threshold, default 0.5, `0` disables); `--overwrite` (else existing *valid* clones are
 skipped, corrupt ones rebuilt); `--preserve-format` (don't upgrade netCDF3→NETCDF4).
 Discovery uses `find_files` on the raw tree — unlike the pipeline, it does *not* filter to
-viable history files, so clones include files the pipeline is meant to ignore. Tests live
-in `gents/tests/test_case_builder.py`.
+viable history files, so clones include files the pipeline is meant to ignore. Each run
+that clones files appends its own invocation to `cmd.txt` at the top of the clone dir
+(`record_clone_command`), preserving how the clone was built. Tests live in
+`gents/tests/test_case_builder.py`.
 
 ### Conformity checking (`gents_conform`)
 
