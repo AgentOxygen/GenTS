@@ -53,6 +53,77 @@ def test_hf_sorting(structured_case):
     assert num_files == 2*len(hf_paths)
 
 
+def test_hf_sorting_semantics():
+    """sort_hf_groups() pins the group key, prefix derivation, and ordering contract."""
+    paths = [
+        PosixPath("/case/atm/hist/model.cam.h0.0001-01.nc"),
+        PosixPath("/case/atm/hist/model.cam.h0.0001-02.nc"),
+        PosixPath("/case/atm/hist/model.cam.h1.0001-01.nc"),
+        PosixPath("/case/ocn/hist/model.pop.h.0001-01.nc"),
+    ]
+    groups = sort_hf_groups(paths)
+
+    assert groups == {
+        "/case/atm/hist/model.cam.h0*": paths[0:2],
+        "/case/atm/hist/model.cam.h1*": [paths[2]],
+        "/case/ocn/hist/model.pop.h*": [paths[3]],
+    }
+    # Keys are ordered by parent directory (first appearance), then prefix.
+    assert list(groups) == [
+        "/case/atm/hist/model.cam.h0*",
+        "/case/atm/hist/model.cam.h1*",
+        "/case/ocn/hist/model.pop.h*",
+    ]
+    # Identical names in different directories never share a group.
+    split_dirs = sort_hf_groups([PosixPath("/d1/f.h0.001.nc"), PosixPath("/d2/f.h0.001.nc")])
+    assert list(split_dirs) == ["/d1/f.h0*", "/d2/f.h0*"]
+
+    # substring_index controls how many trailing tokens are dropped.
+    deep = [PosixPath("/d/a.b.c.d.e.nc")]
+    assert list(sort_hf_groups(deep, substring_index=1)) == ["/d/a.b.c.d.e*"]
+    assert list(sort_hf_groups(deep, substring_index=3)) == ["/d/a.b.c*"]
+    assert list(sort_hf_groups(deep, delimiter="_")) == ["/d/a.b.c.d.e.nc*"]
+
+    # Fewer delimiters than substring_index: strip what is there, no more.
+    assert list(sort_hf_groups([PosixPath("/d/single.nc")])) == ["/d/single*"]
+    assert list(sort_hf_groups([PosixPath("/d/nodelimiter")])) == ["/d/nodelimiter*"]
+    assert list(sort_hf_groups([PosixPath("/d/.nc")])) == ["/d/*"]
+
+    assert sort_hf_groups([]) == {}
+
+
+def test_hf_sorting_preserves_path_order(structured_case):
+    """Every input path lands in exactly one group, in its original relative order."""
+    input_head_dir, output_head_dir = structured_case
+    hf_paths = find_files(input_head_dir, "*.nc")
+    groups = sort_hf_groups(hf_paths)
+
+    regrouped = [path for group_paths in groups.values() for path in group_paths]
+    assert sorted(regrouped) == sorted(hf_paths)
+    assert len(regrouped) == len(set(regrouped))
+    for group_paths in groups.values():
+        assert group_paths == sorted(group_paths, key=hf_paths.index)
+
+
+def test_generate_output_template():
+    """generate_output_template() swaps hist->tseries and cuts the prefix at its last delimiter."""
+    head = "/data/case"
+    group = "/data/case/atm/hist/model.cam.h0*"
+
+    assert generate_output_template(head, group) == PosixPath("/data/case/atm/tseries/model.cam")
+    assert generate_output_template(head, group, "/out") == PosixPath("/out/atm/tseries/model.cam")
+    assert generate_output_template(head, "/data/case/model.h0*") == PosixPath("/data/case/model")
+
+    # An explicit cutoff_index overrides the last-delimiter default.
+    assert generate_output_template(head, group, cutoff_index=5) == PosixPath("/data/case/atm/tseries/model")
+    assert generate_output_template(head, group, cutoff_index=0) == PosixPath("/data/case/atm/tseries")
+
+    # A prefix with no delimiter is kept whole rather than losing its last character.
+    # The group key's trailing "*" survives here, since it is normally dropped only
+    # as a side effect of cutting at the last delimiter.
+    assert generate_output_template(head, "/data/case/atm/hist/README*") == PosixPath("/data/case/atm/tseries/README*")
+
+
 def test_get_year_bounds(simple_case, scrambled_case, structured_case, multistep_large_case):
     """get_year_bounds() returns correct min/max years for simple, scrambled, and structured cases."""
     input_head_dir, output_head_dir = simple_case

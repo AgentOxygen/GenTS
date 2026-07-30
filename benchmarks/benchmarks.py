@@ -1,9 +1,10 @@
-from gents.hfcollection import HFCollection
+from gents.hfcollection import HFCollection, sort_hf_groups
 from gents.timeseries import TSCollection
 from gents.mhfdataset import MHFDataset
 from gents.tests.test_cases import generate_history_file
 from gents.meta import get_attributes
 from os import listdir, makedirs
+from pathlib import Path
 
 SIMPLE_SUITE_NUM_HIST_FILES = 100
 
@@ -69,3 +70,27 @@ class LargeGroupSuite:
     def time_hfcollection_pull(self):
         hfc = HFCollection(self.hf_head_dir)
         hfc.pull_metadata()
+
+
+SORT_NUM_DIRS = 8
+SORT_STREAMS_PER_DIR = 24
+SORT_FILES_PER_STREAM = 250
+
+
+class GroupSortSuite:
+    """Stresses ``sort_hf_groups`` with a wide tree: many directories, each holding
+    many output streams. Cost here is pure path-string work, so no files are
+    written -- the grouping never touches the filesystem."""
+
+    def setup(self):
+        self.hf_paths = sorted(
+            Path(f"/case/comp{d:02d}/hist/b.e30.BHIST.ne30.{d:03d}.cam.h{s}."
+                 f"{1850 + f // 12:04d}-{f % 12 + 1:02d}.nc")
+            for d in range(SORT_NUM_DIRS)
+            for s in range(SORT_STREAMS_PER_DIR)
+            for f in range(SORT_FILES_PER_STREAM)
+        )
+
+    def time_sort_hf_groups(self):
+        groups = sort_hf_groups(self.hf_paths)
+        assert len(groups) == SORT_NUM_DIRS * SORT_STREAMS_PER_DIR
