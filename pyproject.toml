@@ -49,6 +49,7 @@ packages = ["gents", "gents.configs"]
 [project.scripts]
 run_gents = "gents.cli:main"
 gents_conform_build = "gents.conformity.case_builder:main"
+gents_conform = "gents.conformity.check:main"
 
 [project.optional-dependencies]
 test = ["pytest"]
