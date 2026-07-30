@@ -388,19 +388,26 @@ def record_clone_command(out_dir: Path):
 
 def _read_case_file(path):
     """
-    Read a file's variable names and time values without validating it.
+    Read a file's variable names and raw time values without validating it.
 
-    Mirrors how :class:`~gents.meta.netCDFMeta` locates and decodes a time
-    coordinate, but reads through :class:`~gents.datastore.GenTSDataStore`
-    directly and *returns* rather than raises when a file has no usable time
-    axis. That difference is the point: the clone deliberately mirrors the whole
-    raw case tree, including restart, static, grid and log files that carry no
-    time coordinate at all, and those must be summarised rather than rejected.
+    Mirrors how :class:`~gents.meta.netCDFMeta` locates a time coordinate, but
+    reads through :class:`~gents.datastore.GenTSDataStore` directly and
+    *returns* rather than raises when a file has no usable time axis. That
+    difference is the point: the clone deliberately mirrors the whole raw case
+    tree, including restart, static, grid and log files that carry no time
+    coordinate at all, and those must be summarised rather than rejected.
+
+    The time values are returned **undecoded**. Decoding every time step with
+    ``num2date`` costs far more than reading the header, and the summary only
+    ever reports a handful of extreme values, so the caller compares the raw
+    values and converts just those (see :func:`log_case_summary`). A file whose
+    time variable lacks ``units`` or ``calendar`` is reported as having no time
+    axis, since its values could not be decoded later.
 
     :param path: netCDF file to inspect.
     :type path: pathlib.Path
-    :returns: ``(variable_names, cftimes)``, where ``cftimes`` is ``None`` for a
-        file with no decodable time coordinate.
+    :returns: ``(variable_names, time_values)``, where ``time_values`` is
+        ``None`` for a file with no decodable time coordinate.
     :rtype: tuple[list[str], numpy.ndarray or None]
     """
     with GenTSDataStore(str(path), "r") as ds:
@@ -416,13 +423,47 @@ def _read_case_file(path):
         if "units" not in time_var.ncattrs() or "calendar" not in time_var.ncattrs():
             return variable_names, None
 
-        cftimes = num2date(
-            np.atleast_1d(np.squeeze(time_var[:])),
-            units=time_var.units,
-            calendar=time_var.calendar,
-        )
+        time_values = np.atleast_1d(np.squeeze(time_var[:]))
 
-    return variable_names, np.atleast_1d(cftimes)
+    return variable_names, time_values
+
+
+def _read_case_time_reference(src_paths):
+    """
+    Find the ``units`` and ``calendar`` to decode the case's time values with.
+
+    Samples files in order until one carries a decodable time coordinate, then
+    stops. A case is written by a single model run, so its history files share
+    one time reference; reading it once here keeps every worker from shipping a
+    copy back alongside each file's values.
+
+    Note the consequence: a directory that *did* mix time references (files
+    written against different start dates, or a mix of calendars) would have all
+    of its raw values decoded against whichever reference is found first, and
+    its reported years and frequencies would be wrong. That does not happen
+    within a real case.
+
+    :param src_paths: Files the summary covers, in the order to sample them.
+    :type src_paths: list[pathlib.Path]
+    :returns: ``(units, calendar)``, or ``(None, None)`` if no file carries a
+        decodable time coordinate.
+    :rtype: tuple[str or None, str or None]
+    """
+    for path in src_paths:
+        try:
+            with GenTSDataStore(str(path), "r") as ds:
+                time_name, _ = get_time_variables_names(ds)
+                if time_name is None:
+                    continue
+
+                time_var = ds[time_name]
+                attributes = time_var.ncattrs()
+                if "units" in attributes and "calendar" in attributes:
+                    return time_var.units, time_var.calendar
+        except Exception as exc:
+            logger.warning(f"Could not read a time reference from '{path}': {exc}")
+
+    return None, None
 
 
 def _summarize_case_file(path):
@@ -430,22 +471,34 @@ def _summarize_case_file(path):
     Reduce one file to its contribution to the case summary.
 
     Runs in a worker process, so the return value is deliberately small: the
-    file's variable names plus the handful of time facts the summary needs,
-    rather than its whole decoded time axis. Only the two latest times are kept
-    because that is all a group's output frequency is derived from.
+    file's variable names plus its local time extremes, rather than its whole
+    time axis. Nothing is decoded here and no time reference travels back — a
+    case shares one, read once by :func:`_read_case_time_reference`.
+
+    ``num2date`` is monotonic for a fixed units and calendar, so raw values
+    order exactly as the dates they denote and the extremes can be picked
+    without decoding anything.
+
+    The file's *second* latest value is carried alongside its latest because a
+    group's output frequency is the gap between two consecutive time steps. For
+    a file holding many steps that gap lies inside the file, and the local
+    minimum is a whole file-span away from the maximum, not one step.
 
     :param path: netCDF file to inspect.
     :type path: pathlib.Path
-    :returns: ``(variable_names, latest_times, year_min, year_max)``. For a file
-        with no decodable time coordinate, ``latest_times`` is empty and both
-        years are ``None``.
-    :rtype: tuple[list[str], list, int or None, int or None]
+    :returns: ``(variable_names, latest_values, earliest_value)``, where
+        ``latest_values`` holds the file's up-to-two latest raw time values in
+        ascending order. For a file with no decodable time coordinate,
+        ``latest_values`` is empty and ``earliest_value`` is ``None``.
+    :rtype: tuple[list[str], list[float], float or None]
     """
-    variable_names, cftimes = _read_case_file(path)
-    if cftimes is None:
-        return variable_names, [], None, None
+    variable_names, time_values = _read_case_file(path)
+    if time_values is None:
+        return variable_names, [], None
 
-    return variable_names, sorted(cftimes)[-2:], min(cftimes).year, max(cftimes).year
+    values = np.sort(np.asarray(time_values, dtype="float64"))
+
+    return variable_names, [float(value) for value in values[-2:]], float(values[0])
 
 
 def log_case_summary(src_paths, num_processes=1):
@@ -473,6 +526,14 @@ def log_case_summary(src_paths, num_processes=1):
     its group afterwards; the printed summary does not depend on the order
     results come back in.
 
+    Time values are compared **undecoded** and only the survivors are converted
+    to dates: two per group for its frequency, plus the case's earliest and
+    latest for the year span, rather than every time step in the case. The
+    ``units`` and ``calendar`` needed for those conversions are read once from a
+    sampled file rather than returned with every file's values -- see
+    :func:`_read_case_time_reference` for the single-time-reference assumption
+    that rests on.
+
     :param src_paths: Filtered source files the clone will mirror.
     :type src_paths: list[pathlib.Path]
     :param num_processes: Number of worker processes used to read file headers
@@ -491,8 +552,10 @@ def log_case_summary(src_paths, num_processes=1):
         print("  Case summary unavailable        : no files to summarise")
         return
 
-    # Each group's frequency comes from the two latest times in the whole group,
-    # so per-file results are accumulated here and reduced once every file is in.
+    # Running extremes over the whole case, still as raw values.
+    case_earliest = None
+    case_latest = None
+    # Group key -> that group's latest raw times, reduced to one frequency each.
     group_latest_times = {group_key: [] for group_key in hf_groups}
 
     prog_bar = ProgressBar(total=len(src_paths), label="Summarizing Case")
@@ -505,7 +568,7 @@ def log_case_summary(src_paths, num_processes=1):
         for future in as_completed(futures):
             group_key, path = futures[future]
             try:
-                variable_names, latest_times, file_min, file_max = future.result()
+                variable_names, latest_values, earliest = future.result()
             except Exception as exc:
                 logger.warning(f"Could not summarise '{path}': {exc}")
                 continue
@@ -513,23 +576,36 @@ def log_case_summary(src_paths, num_processes=1):
                 prog_bar.step()
 
             variables.update(variable_names)
-            if file_min is None:
+            if earliest is None:
                 continue
 
             timed_files += 1
-            group_latest_times[group_key] += latest_times
+            group_latest_times[group_key] += latest_values
 
-            if year_min is None or file_min < year_min:
-                year_min = file_min
-            if year_max is None or file_max > year_max:
-                year_max = file_max
+            if case_earliest is None or earliest < case_earliest:
+                case_earliest = earliest
+            if case_latest is None or latest_values[-1] > case_latest:
+                case_latest = latest_values[-1]
 
-    for latest_times in group_latest_times.values():
-        if len(latest_times) >= 2:
-            latest_pair = sorted(latest_times)[-2:]
-            frequencies.add(get_timestep_label(latest_pair[1] - latest_pair[0]))
-        elif latest_times:
-            frequencies.add("unsorted")
+    if timed_files:
+        units, calendar = _read_case_time_reference(src_paths)
+        if units is None:
+            logger.warning("No time reference found; reporting no years or frequencies.")
+        else:
+            earliest_date, latest_date = num2date(
+                [case_earliest, case_latest], units=units, calendar=calendar,
+            )
+            year_min = earliest_date.year
+            year_max = latest_date.year
+
+            for latest_times in group_latest_times.values():
+                if len(latest_times) >= 2:
+                    latest_pair = num2date(
+                        sorted(latest_times)[-2:], units=units, calendar=calendar,
+                    )
+                    frequencies.add(get_timestep_label(latest_pair[1] - latest_pair[0]))
+                elif latest_times:
+                    frequencies.add("unsorted")
 
     print(f"  Files with time coordinates     : {timed_files}")
     print(f"  Unique variables                : {len(variables)}")
