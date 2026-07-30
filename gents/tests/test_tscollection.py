@@ -427,3 +427,8 @@ def test_tscollection_add_attrs(simple_case):
         with GenTSDataStore(path, 'r') as ts_ds:
             assert ts_ds.getncattr("gents_test_key") == "gents_test_val"
             assert ts_ds.getncattr("gents_test_key2") == "gents_test_val2"
+
+
+def test_get_timestep_label_unknown_delta():
+    """An unknown timestep duration is labelled 'unsorted' rather than guessed at."""
+    assert get_timestep_label(None) == "unsorted"

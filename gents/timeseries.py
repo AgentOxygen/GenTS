@@ -382,6 +382,36 @@ def get_timestamp_format(dt, subhour_format="%Y%m%d%H%M%S", hourly_format="%Y%m%
     return time_format
 
 
+def get_timestep_label(dt):
+    """
+    Returns the frequency directory label for a given time-step duration.
+
+    Produces the ``'hour_N'`` / ``'day_N'`` / ``'month_N'`` / ``'year_N'`` labels
+    used by :meth:`TSCollection.append_timestep_dirs` as output subdirectory
+    names, or ``'unsorted'`` when the duration is unknown.
+
+    :param dt: Duration of a single model time step, or ``None`` if unknown.
+    :type dt: datetime.timedelta or None
+    :returns: Frequency directory label.
+    :rtype: str
+    """
+    if dt is None:
+        return "unsorted"
+
+    hours = np.rint(dt.total_seconds() / 60.0 / 60.0)
+    days = np.rint(hours / 24.0)
+    months = np.rint(days / 30)
+    years = np.rint(months / 12)
+
+    if hours < 24:
+        return f"hour_{int(hours)}"
+    elif days < 28:
+        return f"day_{int(days)}"
+    elif months < 12:
+        return f"month_{int(months)}"
+    return f"year_{int(years)}"
+
+
 class TSCollection:
     """
     Manages the set of time-series generation orders derived from an ``HFCollection``.
@@ -815,22 +845,7 @@ class TSCollection:
         for order_dict in copy.deepcopy(self.__orders):
             if fnmatch.fnmatch(order_dict["primary_var"], var_glob):
                 dt = self.__hf_collection.get_timestep_delta(order_dict["hf_paths"][0])
-
-                if dt is None:
-                    timestep_label = "unsorted"
-                else:
-                    hours = np.rint(dt.total_seconds() / 60.0 / 60.0)
-                    days = np.rint(hours / 24.0)
-                    months = np.rint(days / 30)
-                    years = np.rint(months / 12)
-                    if hours < 24:
-                        timestep_label = f"hour_{int(hours)}"
-                    elif days < 28:
-                        timestep_label = f"day_{int(days)}"
-                    elif months < 12:
-                        timestep_label = f"month_{int(months)}"
-                    else:
-                        timestep_label = f"year_{int(years)}"
+                timestep_label = get_timestep_label(dt)
 
                 template = Path(order_dict["ts_path_template"])
                 order_dict["ts_path_template"] = str(template.parent) + f"/{timestep_label}/" + template.name
