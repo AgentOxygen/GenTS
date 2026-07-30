@@ -43,6 +43,18 @@ replaced with missing values. This makes them small enough to store online and s
 gents_conform_build /glade/derecho/scratch/me/my_case -o ./my_case_clone -n 16
 ```
 
+Add `-d/--dryrun` to inspect a case before committing to the clone:
+```
+  Files to clone                  : 1383
+  History files (GenTS-visible)   : 1383
+  Unique variables                : 820
+  Output frequencies              : day_1, hour_3, month_1
+  Years spanned                   : 1 - 7
+Dry run: 1383 file(s) would be cloned.
+```
+
+`-v/--verbose` prints the same summary during a real build.
+
 The clone keeps every dimension, attribute, coordinate and variable of the original, just without the actual data values. Conformity is about checking the structure, naming, and metadata, not scientific accuracy (GenTS never modifies data values, it only slices and transforms them).
 
 The command that built the clone is recorded in a `cmd.txt` at the top of the clone directory, so a cloned case always carries the recipe for rebuilding it.
