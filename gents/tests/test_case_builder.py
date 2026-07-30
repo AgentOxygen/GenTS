@@ -3,8 +3,6 @@ from gents.conformity.case_builder import (
     clone_netcdf_with_missing,
     record_clone_command,
     log_case_summary,
-    _read_case_file,
-    _read_case_time_reference,
     _summarize_case_file,
     CLONE_COMMAND_FILENAME,
 )
@@ -454,82 +452,20 @@ def test_recorded_command_file_is_valid_shell(tmp_path, monkeypatch):
         assert line.startswith("#") or line.startswith("gents_conform_build")
 
 
-def test_read_case_file_returns_undecoded_times_for_history_file(tmp_path):
-    """A normal history file yields its variable names and raw, undecoded times."""
-    src = tmp_path / "src.nc"
-    generate_history_file(str(src), [15.0], [[0.0, 30.0]])
-
-    variable_names, time_values = _read_case_file(src)
-
-    assert "time" in variable_names
-    # Raw as stored, not converted to a date.
-    assert time_values is not None and list(time_values) == [15.0]
-
-
-def test_read_case_file_tolerates_missing_time_variable(tmp_path):
-    """A file with no time coordinate is summarised, not rejected."""
-    src = tmp_path / "grid.nc"
-    with Dataset(str(src), "w", format="NETCDF4") as ds:
-        ds.createDimension("x", 4)
-        ds.createVariable("TLON", np.float64, ("x",))[:] = np.arange(4)
-
-    variable_names, time_values = _read_case_file(src)
-
-    assert variable_names == ["TLON"]
-    assert time_values is None
-
-
-def test_read_case_file_tolerates_undecodable_time(tmp_path):
-    """A time variable lacking units/calendar yields no times rather than raising."""
-    src = tmp_path / "notime.nc"
-    with Dataset(str(src), "w", format="NETCDF4") as ds:
-        ds.createDimension("time", None)
-        ds.createVariable("time", np.double, ("time",))[:] = [15.0]
-
-    variable_names, time_values = _read_case_file(src)
-
-    assert variable_names == ["time"]
-    assert time_values is None
-
-
-def test_read_case_time_reference_samples_first_timed_file(tmp_path):
-    """The reference is taken from the first file that carries a decodable time axis."""
-    grid = tmp_path / "grid.nc"
-    with Dataset(str(grid), "w", format="NETCDF4") as ds:
-        ds.createDimension("x", 2)
-        ds.createVariable("area", np.float64, ("x",))[:] = np.ones(2)
-
-    history = tmp_path / "hist.nc"
-    generate_history_file(str(history), [15.0], [[0.0, 30.0]])
-
-    # The time-less file is skipped rather than ending the search.
-    assert _read_case_time_reference([grid, history]) == (
-        "days since 1850-01-01", "360_day",
-    )
-
-
-def test_read_case_time_reference_without_any_timed_file(tmp_path):
-    """A case with no decodable time coordinate anywhere yields no reference."""
-    grid = tmp_path / "grid.nc"
-    with Dataset(str(grid), "w", format="NETCDF4") as ds:
-        ds.createDimension("x", 2)
-        ds.createVariable("area", np.float64, ("x",))[:] = np.ones(2)
-
-    assert _read_case_time_reference([grid]) == (None, None)
-
-
 def test_summarize_case_file_reduces_to_local_extremes(tmp_path):
-    """A file is reduced to its variable names and local raw time extremes."""
+    """A file is reduced to its variable names, local raw extremes and reference."""
     src = tmp_path / "multi.nc"
     times = [15.0, 45.0, 75.0]
     generate_history_file(str(src), times, [[t - 15, t + 15] for t in times])
 
-    variable_names, latest_values, earliest = _summarize_case_file(src)
+    variable_names, earliest, latest_values, reference = _summarize_case_file(src)
 
     assert "time" in variable_names
-    # The second latest rides along so a multi-step file still yields one step.
-    assert latest_values == [45.0, 75.0]
+    # Raw as stored, not converted to dates; the second latest rides along so a
+    # multi-step file still yields one time step.
     assert earliest == 15.0
+    assert latest_values == [45.0, 75.0]
+    assert reference == ("days since 1850-01-01", "360_day")
 
 
 def test_summarize_case_file_returns_unsorted_files_in_order(tmp_path):
@@ -538,20 +474,30 @@ def test_summarize_case_file_returns_unsorted_files_in_order(tmp_path):
     times = [75.0, 15.0, 105.0, 45.0]
     generate_history_file(str(src), times, [[t - 15, t + 15] for t in times])
 
-    _, latest_values, earliest = _summarize_case_file(src)
+    _, earliest, latest_values, _ = _summarize_case_file(src)
 
-    assert latest_values == [75.0, 105.0]
     assert earliest == 15.0
+    assert latest_values == [75.0, 105.0]
 
 
-def test_summarize_case_file_handles_missing_time(tmp_path):
-    """A file with no time coordinate reports its variables and no time facts."""
+def test_summarize_case_file_tolerates_missing_time_variable(tmp_path):
+    """A file with no time coordinate is summarised, not rejected."""
     src = tmp_path / "grid.nc"
     with Dataset(str(src), "w", format="NETCDF4") as ds:
         ds.createDimension("x", 4)
         ds.createVariable("TLON", np.float64, ("x",))[:] = np.arange(4)
 
-    assert _summarize_case_file(src) == (["TLON"], [], None)
+    assert _summarize_case_file(src) == (["TLON"], None, [], None)
+
+
+def test_summarize_case_file_tolerates_undecodable_time(tmp_path):
+    """A time variable lacking units/calendar yields no times rather than raising."""
+    src = tmp_path / "notime.nc"
+    with Dataset(str(src), "w", format="NETCDF4") as ds:
+        ds.createDimension("time", None)
+        ds.createVariable("time", np.double, ("time",))[:] = [15.0]
+
+    assert _summarize_case_file(src) == (["time"], None, [], None)
 
 
 def _summary_case(tmp_path):
@@ -609,27 +555,61 @@ def test_log_case_summary_spans_years_across_multistep_files(tmp_path, capsys):
     assert "Years spanned                   : 1850 - 1854" in output
 
 
-def test_log_case_summary_assumes_a_single_time_reference(tmp_path, capsys):
-    """Documents the deliberate limitation: one sampled reference decodes the whole case.
+def _retime(path, units=None, calendar=None):
+    """Rewrite a history file's time reference in place."""
+    with Dataset(str(path), "a") as ds:
+        for name in ("time", "time_bounds"):
+            if units is not None:
+                ds.variables[name].units = units
+            if calendar is not None:
+                ds.variables[name].calendar = calendar
 
-    A real case is written by one model run and shares a time reference. A
-    directory that mixed them would have every raw value decoded against
-    whichever reference is sampled first, as pinned here.
-    """
-    (tmp_path / "a").mkdir()
-    (tmp_path / "b").mkdir()
-    generate_history_file(str(tmp_path / "a/case.cam.h0.0001.nc"), [15.0], [[0.0, 30.0]])
 
-    src = tmp_path / "b/case.pop.h0.0001.nc"
-    generate_history_file(str(src), [15.0], [[0.0, 30.0]])
-    with Dataset(str(src), "a") as ds:
-        # A later reference date, which is *not* consulted: the first file wins.
-        ds.variables["time"].units = "days since 1900-01-01"
+def test_log_case_summary_handles_mixed_time_references(tmp_path, capsys):
+    """Component models written against different start dates each decode correctly."""
+    (tmp_path / "atm").mkdir()
+    (tmp_path / "ocn").mkdir()
+
+    # Both streams hold raw value 15.0, but against references 50 years apart,
+    # so the identical number denotes 1850 in one and 1900 in the other.
+    generate_history_file(str(tmp_path / "atm/case.cam.h0.0001.nc"), [15.0], [[0.0, 30.0]])
+    ocn = tmp_path / "ocn/case.pop.h0.0001.nc"
+    generate_history_file(str(ocn), [15.0], [[0.0, 30.0]])
+    _retime(ocn, units="days since 1900-01-01")
 
     log_case_summary(sorted(tmp_path.rglob("*.nc")))
     output = capsys.readouterr().out
 
     assert "Files with time coordinates     : 2" in output
+    # Each extreme is decoded against its own reference, not a shared one.
+    assert "Years spanned                   : 1850 - 1900" in output
+
+
+def test_log_case_summary_handles_mixed_calendars(tmp_path, capsys):
+    """Streams on different calendars are never compared against one another.
+
+    ``cftime`` raises rather than comparing dates across calendars, so keeping
+    each calendar's values apart is what stops the summary from crashing.
+    """
+    (tmp_path / "atm").mkdir()
+    (tmp_path / "ice").mkdir()
+
+    for index in range(2):
+        generate_history_file(
+            str(tmp_path / f"atm/case.cam.h0.{index:04d}.nc"),
+            [(index + 0.5) * 30], [[index * 30, (index + 1) * 30]],
+        )
+    for index in range(2):
+        path = tmp_path / f"ice/case.cice.h0.{index:04d}.nc"
+        generate_history_file(path.as_posix(), [(index + 0.5) * 30],
+                              [[index * 30, (index + 1) * 30]])
+        _retime(path, calendar="noleap")
+
+    log_case_summary(sorted(tmp_path.rglob("*.nc")), num_processes=2)
+    output = capsys.readouterr().out
+
+    assert "Files with time coordinates     : 4" in output
+    assert "Output frequencies              : month_1" in output
     assert "Years spanned                   : 1850 - 1850" in output
 
 
