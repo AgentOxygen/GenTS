@@ -2,6 +2,7 @@ from gents.tests.test_cases import generate_history_file
 from gents.conformity.case_builder import (
     clone_netcdf_with_missing,
     record_clone_command,
+    _read_case_file,
     CLONE_COMMAND_FILENAME,
     _is_valid_netcdf,
     _resolve_clone_jobs,
@@ -547,3 +548,40 @@ def test_resolve_clone_jobs_dryrun_still_skips_valid(tmp_path):
     _make_valid_netcdf(dst)
 
     assert _resolve_clone_jobs([(src, dst)], overwrite=False, dryrun=True) == []
+
+
+def test_read_case_file_returns_times_for_history_file(tmp_path):
+    """A normal history file yields both its variable names and decoded times."""
+    src = tmp_path / "src.nc"
+    generate_history_file(str(src), [15.0], [[0.0, 30.0]])
+
+    variable_names, cftimes = _read_case_file(src)
+
+    assert "time" in variable_names
+    assert cftimes is not None and len(cftimes) == 1
+
+
+def test_read_case_file_tolerates_missing_time_variable(tmp_path):
+    """A file with no time coordinate is summarised, not rejected."""
+    src = tmp_path / "grid.nc"
+    with Dataset(str(src), "w", format="NETCDF4") as ds:
+        ds.createDimension("x", 4)
+        ds.createVariable("TLON", np.float64, ("x",))[:] = np.arange(4)
+
+    variable_names, cftimes = _read_case_file(src)
+
+    assert variable_names == ["TLON"]
+    assert cftimes is None
+
+
+def test_read_case_file_tolerates_undecodable_time(tmp_path):
+    """A time variable lacking units/calendar yields no times rather than raising."""
+    src = tmp_path / "notime.nc"
+    with Dataset(str(src), "w", format="NETCDF4") as ds:
+        ds.createDimension("time", None)
+        ds.createVariable("time", np.double, ("time",))[:] = [15.0]
+
+    variable_names, cftimes = _read_case_file(src)
+
+    assert variable_names == ["time"]
+    assert cftimes is None

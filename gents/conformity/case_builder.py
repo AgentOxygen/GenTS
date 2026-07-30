@@ -1,10 +1,12 @@
-from gents.hfcollection import find_files, HFCollection
-from gents.meta import is_var_secondary
+from gents.hfcollection import find_files, sort_hf_groups
+from gents.meta import is_var_secondary, get_time_variables_names
+from gents.datastore import GenTSDataStore
 from gents.timeseries import get_timestep_label
 from gents.utils import enable_logging, ProgressBar, get_time_stamp, get_version
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from netCDF4 import Dataset
+from cftime import num2date
 from fnmatch import fnmatch
 import numpy as np
 import argparse
@@ -442,60 +444,116 @@ def record_clone_command(out_dir: Path):
     logger.info(f"Recorded clone command in '{command_path}'.")
 
 
-def log_case_summary(head_dir, args):
+def _read_case_file(path):
     """
-    Prints a summary of the history files a case exposes once filters are applied.
+    Read a file's variable names and time values without validating it.
 
-    Describes what a conformity case actually covers, which is what decides how
-    much a conformity run over it can prove: a case with only monthly streams
+    Mirrors how :class:`~gents.meta.netCDFMeta` locates and decodes a time
+    coordinate, but reads through :class:`~gents.datastore.GenTSDataStore`
+    directly and *returns* rather than raises when a file has no usable time
+    axis. That difference is the point: the clone deliberately mirrors the whole
+    raw case tree, including restart, static, grid and log files that carry no
+    time coordinate at all, and those must be summarised rather than rejected.
+
+    :param path: netCDF file to inspect.
+    :type path: pathlib.Path
+    :returns: ``(variable_names, cftimes)``, where ``cftimes`` is ``None`` for a
+        file with no decodable time coordinate.
+    :rtype: tuple[list[str], numpy.ndarray or None]
+    """
+    with GenTSDataStore(str(path), "r") as ds:
+        variable_names = list(ds.variables)
+
+        time_name, _ = get_time_variables_names(ds)
+        if time_name is None:
+            return variable_names, None
+
+        time_var = ds[time_name]
+        # Undecodable without both attributes; netCDFMeta raises here, but a
+        # non-history file legitimately lacks them.
+        if "units" not in time_var.ncattrs() or "calendar" not in time_var.ncattrs():
+            return variable_names, None
+
+        cftimes = num2date(
+            np.atleast_1d(np.squeeze(time_var[:])),
+            units=time_var.units,
+            calendar=time_var.calendar,
+        )
+
+    return variable_names, np.atleast_1d(cftimes)
+
+
+def log_case_summary(src_paths):
+    """
+    Prints a summary of what a case covers once the clone filters are applied.
+
+    Describes what a conformity case actually exercises, which is what decides
+    how much a conformity run over it can prove: a case with only monthly streams
     spanning six years cannot exercise daily output or ten-year slicing, however
     many files it holds.
 
-    The case is inspected through an :class:`~gents.hfcollection.HFCollection`
-    built with the same discovery glob and include/exclude filters as the clone
-    itself, so the summary reports the files *GenTS* will see. That is a subset of
-    the files cloned: the clone deliberately mirrors the raw tree, including the
-    restart, static and log files GenTS is meant to ignore, and those are absent
-    here by design.
+    Every file the clone will copy is inspected, not just the ones GenTS would
+    accept as history files. Files are grouped by
+    :func:`~gents.hfcollection.sort_hf_groups`, which works on paths alone, and
+    read with :func:`_read_case_file`, which skips GenTS's metadata validation.
+    Building an ``HFCollection`` here instead would drop every file without a
+    time coordinate and abort outright on a group holding a single time step --
+    both routine in a raw case tree, and both files the clone still has to copy.
 
-    Requires a full metadata pass over the case (every header is read), so it is
-    only invoked under ``--verbose``.
+    Reads every file header, so it is only invoked under ``--verbose``.
 
-    :param head_dir: Head directory of the case being mirrored.
-    :type head_dir: pathlib.Path
-    :param args: Parsed command-line arguments supplying the filters.
-    :type args: argparse.Namespace
+    :param src_paths: Filtered source files the clone will mirror.
+    :type src_paths: list[pathlib.Path]
     """
-    hfc = HFCollection(
-        str(head_dir), hf_glob_pattern=args.pattern, num_processes=args.num_processes,
-    )
-    if args.include:
-        hfc = hfc.include(args.include)
-    if args.exclude:
-        hfc = hfc.exclude(args.exclude)
-
     variables = set()
     frequencies = set()
-    years = []
+    year_min = None
+    year_max = None
+    timed_files = 0
 
-    try:
-        hf_groups = hfc.get_groups()
-    except ValueError as exc:
-        print(f"  Case summary unavailable        : {str(exc)[:160]}")
+    hf_groups = sort_hf_groups(src_paths)
+    if not hf_groups:
+        # ProgressBar divides by its total, and there is nothing to describe.
+        print("  Case summary unavailable        : no files to summarise")
         return
 
-    for hf_paths in hf_groups.values():
-        variables.update(hfc[hf_paths[0]].get_variables())
-        frequencies.add(get_timestep_label(hfc.get_timestep_delta(hf_paths[0])))
+    prog_bar = ProgressBar(total=len(hf_groups), label="Summarizing Case")
+    for group_paths in hf_groups.values():
+        latest_times = []
 
-        for hf_path in hf_paths:
-            cftimes = np.atleast_1d(hfc[hf_path].get_cftimes())
-            years += [cftimes[0].year, cftimes[-1].year]
+        for path in group_paths:
+            try:
+                variable_names, cftimes = _read_case_file(path)
+            except Exception as exc:
+                logger.warning(f"Could not summarise '{path}': {exc}")
+                continue
 
-    print(f"  History files (GenTS-visible)   : {len(hfc)}")
+            variables.update(variable_names)
+            if cftimes is None:
+                continue
+
+            timed_files += 1
+            latest_times += sorted(cftimes)[-2:]
+
+            file_min = min(cftimes).year
+            file_max = max(cftimes).year
+            if year_min is None or file_min < year_min:
+                year_min = file_min
+            if year_max is None or file_max > year_max:
+                year_max = file_max
+
+        if len(latest_times) >= 2:
+            latest_pair = sorted(latest_times)[-2:]
+            frequencies.add(get_timestep_label(latest_pair[1] - latest_pair[0]))
+        elif latest_times:
+            frequencies.add("unsorted")
+
+        prog_bar.step()
+
+    print(f"  Files with time coordinates     : {timed_files}")
     print(f"  Unique variables                : {len(variables)}")
     print(f"  Output frequencies              : {', '.join(sorted(frequencies)) or 'none'}")
-    print(f"  Years spanned                   : {f'{min(years)} - {max(years)}' if years else 'none'}")
+    print(f"  Years spanned                   : {f'{year_min} - {year_max}' if year_min is not None else 'none'}")
 
 
 def main():
@@ -527,7 +585,7 @@ def main():
 
     if verbose:
         print(f"  Files to clone                  : {len(src_paths)}")
-        log_case_summary(head_dir, args)
+        log_case_summary(src_paths)
 
     out_dir = Path(args.outputdir)
     clone_jobs = [
