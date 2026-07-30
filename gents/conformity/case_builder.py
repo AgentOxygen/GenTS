@@ -1,5 +1,6 @@
-from gents.hfcollection import find_files
+from gents.hfcollection import find_files, HFCollection
 from gents.meta import is_var_secondary
+from gents.timeseries import get_timestep_label
 from gents.utils import enable_logging, ProgressBar, get_time_stamp, get_version
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -79,6 +80,20 @@ def parse_arguments():
         action="store_true",
         help="Overwrite existing clones. By default an existing, valid clone is "
              "left in place (corrupt ones are deleted and rebuilt)."
+    )
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable verbose output and summarise the filtered case (file count, "
+             "unique variables, output frequencies, years spanned). The summary "
+             "reads every history file header, so it costs an extra metadata pass."
+    )
+    parser.add_argument(
+        "-d", "--dryrun",
+        action="store_true",
+        help="Inspect the case and report what would be cloned without writing "
+             "anything to disk. Implies --verbose, since the summary is the point "
+             "of a dry run."
     )
     parser.add_argument(
         "--max-copy-mib",
@@ -334,7 +349,7 @@ def _is_valid_netcdf(path: Path) -> bool:
         return False
 
 
-def _resolve_clone_jobs(clone_jobs: list, overwrite: bool) -> list:
+def _resolve_clone_jobs(clone_jobs: list, overwrite: bool, dryrun: bool = False) -> list:
     """
     Decide which clone jobs to run given any pre-existing destination files.
 
@@ -347,6 +362,10 @@ def _resolve_clone_jobs(clone_jobs: list, overwrite: bool) -> list:
     :type clone_jobs: list
     :param overwrite: Overwrite existing clones unconditionally.
     :type overwrite: bool
+    :param dryrun: Report which jobs *would* run without deleting anything.
+        Doomed destinations are still counted as pending, so the reported total
+        matches what a real run would rebuild. Defaults to ``False``.
+    :type dryrun: bool
     :returns: The subset of ``clone_jobs`` that still needs to be built.
     :rtype: list
     """
@@ -357,7 +376,8 @@ def _resolve_clone_jobs(clone_jobs: list, overwrite: bool) -> list:
             if not overwrite and _is_valid_netcdf(dst_path):
                 skipped += 1
                 continue
-            dst_path.unlink()
+            if not dryrun:
+                dst_path.unlink()
         pending.append((src_path, dst_path))
 
     if skipped:
@@ -422,16 +442,82 @@ def record_clone_command(out_dir: Path):
     logger.info(f"Recorded clone command in '{command_path}'.")
 
 
+def log_case_summary(head_dir, args):
+    """
+    Prints a summary of the history files a case exposes once filters are applied.
+
+    Describes what a conformity case actually covers, which is what decides how
+    much a conformity run over it can prove: a case with only monthly streams
+    spanning six years cannot exercise daily output or ten-year slicing, however
+    many files it holds.
+
+    The case is inspected through an :class:`~gents.hfcollection.HFCollection`
+    built with the same discovery glob and include/exclude filters as the clone
+    itself, so the summary reports the files *GenTS* will see. That is a subset of
+    the files cloned: the clone deliberately mirrors the raw tree, including the
+    restart, static and log files GenTS is meant to ignore, and those are absent
+    here by design.
+
+    Requires a full metadata pass over the case (every header is read), so it is
+    only invoked under ``--verbose``.
+
+    :param head_dir: Head directory of the case being mirrored.
+    :type head_dir: pathlib.Path
+    :param args: Parsed command-line arguments supplying the filters.
+    :type args: argparse.Namespace
+    """
+    hfc = HFCollection(
+        str(head_dir), hf_glob_pattern=args.pattern, num_processes=args.num_processes,
+    )
+    if args.include:
+        hfc = hfc.include(args.include)
+    if args.exclude:
+        hfc = hfc.exclude(args.exclude)
+
+    variables = set()
+    frequencies = set()
+    years = []
+
+    try:
+        hf_groups = hfc.get_groups()
+    except ValueError as exc:
+        print(f"  Case summary unavailable        : {str(exc)[:160]}")
+        return
+
+    for hf_paths in hf_groups.values():
+        variables.update(hfc[hf_paths[0]].get_variables())
+        frequencies.add(get_timestep_label(hfc.get_timestep_delta(hf_paths[0])))
+
+        for hf_path in hf_paths:
+            cftimes = np.atleast_1d(hfc[hf_path].get_cftimes())
+            years += [cftimes[0].year, cftimes[-1].year]
+
+    print(f"  History files (GenTS-visible)   : {len(hfc)}")
+    print(f"  Unique variables                : {len(variables)}")
+    print(f"  Output frequencies              : {', '.join(sorted(frequencies)) or 'none'}")
+    print(f"  Years spanned                   : {f'{min(years)} - {max(years)}' if years else 'none'}")
+
+
 def main():
-    enable_logging(verbose=True)
     args = parse_arguments()
+    verbose = args.verbose or args.dryrun
+
+    if verbose:
+        print(f"  Input (case) directory path     : {args.hf_head_dir}")
+        print(f"  Output (clone) directory path   : {args.outputdir}")
+        print(f"  Discovery glob                  : {args.pattern}")
+        print(f"  Include filters                 : {args.include}")
+        print(f"  Exclude filters                 : {args.exclude}")
+        print(f"  Number of processes (cores)     : {args.num_processes}")
+        print(f"  Overwrite existing clones       : {args.overwrite}")
+        print(f"  Preserve netCDF3 format         : {not args.upgrade_netcdf3}")
+        print(f"  Max copy size (MiB)             : {args.max_copy_mib}")
+        print(f"  Dry run                         : {args.dryrun}")
+        enable_logging(verbose=True)
 
     if args.outputdir is None:
         raise ValueError("No output directory specified.")
 
-    # Mirror the raw case directory rather than a viable HFCollection: we want
-    # every file matching the discovery glob, including ones that GenTS's
-    # metadata filters are supposed to ignore, so the clones can exercise them.
     head_dir = Path(args.hf_head_dir).resolve()
     src_paths = [
         path for path in find_files(head_dir, args.pattern)
@@ -439,27 +525,29 @@ def main():
     ]
     logger.info("Found %d file(s) under %s to mirror.", len(src_paths), head_dir)
 
+    if verbose:
+        print(f"  Files to clone                  : {len(src_paths)}")
+        log_case_summary(head_dir, args)
+
     out_dir = Path(args.outputdir)
     clone_jobs = [
         (src_path, out_dir / src_path.relative_to(head_dir))
         for src_path in src_paths
     ]
 
-    # Drop jobs whose valid clone already exists (and rebuild corrupt ones)
-    # before creating directories or spawning workers.
-    clone_jobs = _resolve_clone_jobs(clone_jobs, args.overwrite)
+    clone_jobs = _resolve_clone_jobs(clone_jobs, args.overwrite, dryrun=args.dryrun)
     if not clone_jobs:
         logger.info("Nothing to clone; all destinations already valid.")
         print("GenTS done!")
         return
 
-    # Recorded only once there is work to do: a run that cloned nothing left the
-    # directory's contents unchanged, so adding a line would wrongly suggest it
-    # contributed files.
+    if args.dryrun:
+        print(f"Dry run: {len(clone_jobs)} file(s) would be cloned.")
+        print("GenTS done!")
+        return
+
     record_clone_command(out_dir)
 
-    # Create the mirrored directory tree serially up front so the parallel
-    # workers never race to create the same (possibly shared) parent directory.
     for parent in {dst_path.parent for _, dst_path in clone_jobs}:
         parent.mkdir(parents=True, exist_ok=True)
 

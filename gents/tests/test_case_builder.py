@@ -514,3 +514,36 @@ def test_recorded_command_file_is_valid_shell(tmp_path, monkeypatch):
     lines = (tmp_path / CLONE_COMMAND_FILENAME).read_text().splitlines()
     for line in lines:
         assert line.startswith("#") or line.startswith("gents_conform_build")
+
+
+def test_resolve_clone_jobs_dryrun_keeps_corrupt_file(tmp_path):
+    """A dry run reports a corrupt clone as pending without deleting it."""
+    src = tmp_path / "src.nc"
+    dst = tmp_path / "dst.nc"
+    dst.write_text("not a netcdf file")
+
+    pending = _resolve_clone_jobs([(src, dst)], overwrite=False, dryrun=True)
+
+    assert pending == [(src, dst)]
+    assert dst.exists()
+
+
+def test_resolve_clone_jobs_dryrun_keeps_overwritten_file(tmp_path):
+    """A dry run with overwrite leaves even a valid existing clone on disk."""
+    src = tmp_path / "src.nc"
+    dst = tmp_path / "dst.nc"
+    _make_valid_netcdf(dst)
+
+    pending = _resolve_clone_jobs([(src, dst)], overwrite=True, dryrun=True)
+
+    assert pending == [(src, dst)]
+    assert dst.exists()
+
+
+def test_resolve_clone_jobs_dryrun_still_skips_valid(tmp_path):
+    """A dry run reports the same skips a real run would: valid clones are not rebuilt."""
+    src = tmp_path / "src.nc"
+    dst = tmp_path / "dst.nc"
+    _make_valid_netcdf(dst)
+
+    assert _resolve_clone_jobs([(src, dst)], overwrite=False, dryrun=True) == []
