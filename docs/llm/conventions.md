@@ -27,7 +27,8 @@
   it is written breaks resume-after-crash *and* input filtering.
 - **4 MiB chunking rule.** `write_timeseries_file` and `check_timeseries_conform`
   implement the same convention (contiguous below 4 MiB, ~4 MiB time-chunks above).
-  Change them together or `test_conform_check`-style tests will catch you.
+  Change them together or `test_conform_check`-style tests will catch you. (`check_timeseries_conform`
+  currently mis-implements the contiguous half of this rule — see gotchas below.)
 - **Fill value at creation + skip-empty writes.** `write_timeseries_file` passes the
   source `_FillValue` to `createVariable` (and omits it from the `setncatts` copy — it
   can't be set twice) and skips writing any slice that is entirely the fill value, via
@@ -41,16 +42,46 @@
 - **All user-facing filters are `fnmatch` globs** applied to *absolute path strings*
   (or variable names for `var_glob`). Not regex, not `pathlib.match`.
 - **Only `GenTSDataStore` opens netCDF files** in the *pipeline*. Never instantiate
-  `netCDF4.Dataset` directly outside `datastore.py` — except in
-  `gents/conformity/case_builder.py`, which deliberately uses `netCDF4.Dataset` directly
-  because cloning needs low-level `createVariable` control (filters, chunking, fill value)
-  that the thin datastore wrapper doesn't expose. Don't "fix" that to use `GenTSDataStore`.
+  `netCDF4.Dataset` directly outside `datastore.py` — except under `gents/conformity/`,
+  which is not pipeline code: `case_builder.py` needs low-level `createVariable` control
+  (filters, chunking, fill value) that the thin wrapper doesn't expose, and the model
+  specifications in `models/*.py` deliberately inspect output files with plain
+  `netCDF4.Dataset` so a researcher reading a check isn't routed through a GenTS
+  abstraction. Don't "fix" either to use `GenTSDataStore`.
 - **`is_var_secondary` matching is case-insensitive.** Variable-name, secondary-dimension,
   and primary-dimension (`time`) comparisons all lower-case both sides. This is load-bearing
   for MOM6-style output (`Time`/`Time_Bounds`); without it every field misclassifies as
   secondary. Keep it case-insensitive if you touch the function.
 - **Scope guard.** GenTS reads data values only to copy them. Any feature that computes
   on, regrids, or renames data is out of scope per the developer guide.
+
+## Conformity conventions (`gents/conformity/`) — do not break
+
+`gents/conformity/README.md` is authoritative; these are the rules most likely to be
+violated by a well-meaning refactor.
+
+- **Conformity is not unit testing.** Separate tree, separate runner (`gents_conform`, not
+  `pytest`), separate question. Checks look *only* at files on disk — never import GenTS
+  internals to verify them, and never move an internals-level check (config parsing, data
+  transposition) into a specification. It belongs in `gents/tests/`.
+- **Never derive a check's expectation from the YAML config.** It is circular. Restate what
+  the model requires by hand. Sole exception: the stream-coverage section reads
+  `input_hf.include`/`exclude` because there the patterns are an *input* to the check, not
+  its subject. Applying that exception anywhere else defeats the whole design.
+- **Don't refactor specifications into shared helpers.** No model-agnostic check layer is
+  wanted. Duplication across `models/*.py` is deliberate.
+- **Don't "modernise" the plain style.** Explicit `for`/`if`, no lambdas, comprehensions, or
+  lookup tables driving logic. These files are audited by researchers, not just developers.
+  Checks needing file I/O share one pass; cheap string checks each keep their own loop
+  (measured: merging the cheap loops saved 0.6 ms against 1442 ms of file opening).
+- **One result per check, not per file.** Report offenders inside a single result. Emitting
+  a result per file makes the pass percentage scale with case size instead of spec coverage.
+- **Bump `SPEC_VERSION`** whenever checks change — recorded results reference it.
+- **Empty populations report SKIP, not PASS.** A vacuous pass inflates the score and hides
+  a coverage gap.
+- **No sampling.** There is deliberately no flag to check a subset of output. A conformity
+  result is published as evidence; a result drawn from a sample cannot support the claim it
+  appears to make. If a case is too slow to check in full, build a smaller case.
 
 ## Process conventions
 
@@ -65,6 +96,27 @@
 
 - **`build/lib/` is a stale copy** of the whole package tree. Never read, edit, or grep
   it as if it were source. Same for `GenTS.egg-info/` and `__pycache__/`.
+- **`check_timeseries_conform` is broken for contiguous/scalar variables.** It does
+  `list(var.chunking())`, but `chunking()` returns the *string* `"contiguous"` for
+  contiguously-stored variables, so `list(...)` yields `['c','o','n',...]` — never equal to
+  the shape. Such variables then fall through to `"time" not in dimensions → return False`.
+  Its own docstring says contiguous storage should pass, so this is a bug, not a
+  convention. Any time series carrying a scalar (CAM's `ndbase`/`nsbase`/`nbdate`/`nbsec`/
+  `mdt`) is wrongly reported non-conforming — 188 of 1224 files on the CESM3 conformity
+  sample. Fixing it means handling the `"contiguous"` sentinel *and* scalar/1-D variables.
+- **`append_timestep_dirs` is dead config in the CLI.** `gents_cesm3.yaml` sets
+  `output_ts.append_timestep_dirs: true`, but `cli.main` only reads `path_swaps` and
+  `compression` from `output_ts` — `TSCollection.append_timestep_dirs()` is never called
+  anywhere outside its own definition. So CLI output has no `month_1/`-style frequency
+  directories despite the config asking for them, and any CLI-driven output fails the
+  conformity check for it. Either wire the key up in `cli.main` or drop it from the YAML.
+- **`EMFILE` on wide streams.** A group with very many files (e.g. ~1800 daily
+  `cpl.hx.*.nc` in the CESM3 sample) opens them all at once via `MHFDataset` and dies with
+  `OSError: [Errno 24] Too many open files`; `execute` logs the worker failure and still
+  prints "GenTS done!", so the loss is silent. Workaround is `ulimit -n 65536` /
+  `docker run --ulimit nofile=65536:65536`. Note those `cpl` files reach the pipeline via
+  the trailing catch-all `*.nc` in `gents_cesm3.yaml`'s `input_hf.include`, not via any of
+  the six component globs above it.
 - **CLI references missing configs.** `cli.main` maps `--model cesm2` →
   `gents_cesm2.yaml` and `--model e3sm` → `gents_e3sm.yaml`, but only
   `gents_example.yaml` and `gents_cesm3.yaml` exist in `gents/configs/`. Selecting

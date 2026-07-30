@@ -19,6 +19,11 @@ pytest gents/tests/                         # full suite, local env
 pytest gents/tests/test_workflow.py         # one file
 ```
 
+`pytest` covers unit testing only. End-to-end verification against real model cases is a
+separate system with its own runner (`gents_conform`) — see
+[Conformity checking](#conformity-checking-gents_conform) below. Don't add conformity
+checks to `gents/tests/`, or unit-level checks to a model specification.
+
 CI-equivalent (what `.github/workflows/tests.yml` runs):
 
 ```bash
@@ -66,6 +71,8 @@ run_gents <hf_head_dir> --model CESM3 --append \
     --exclude "*log*" --include "*h4i*.nc"            # extend model config filters
 run_gents <hf_head_dir> --slice 5 \
     --compression zlib --level 4                      # 5-year files, compressed
+run_gents <clone_head_dir> -o <out_dir> --model CESM3 \
+    --no-data                                         # conformity: full structure, skip primary data
 ```
 
 Flag semantics worth knowing: without `--append`, any `--include`/`--exclude` *replaces*
@@ -73,7 +80,10 @@ the model config's filter lists and `--slice`/`--slice_start_year` replace its s
 batches; with `--append`, they are added on top. `--compression` requires `--level`.
 `--model` is case-insensitive; omitted → `gents_example.yaml`. Output dir defaults to
 the input dir (path swaps like `/hist/` → `/proc/tseries/` come from the YAML config).
-Don't run on HPC login nodes — this spawns many I/O-heavy processes.
+`-nd/--no-data` (→ `execute(no_data=True)`) builds the full directory/file structure but
+skips reading/writing primary-variable data — primaries read back as their fill value; the
+fast path for conformity runs over missing-value clones (see the `--no-data` concept in
+[concepts.md](concepts.md)). Don't run on HPC login nodes — this spawns many I/O-heavy processes.
 
 ### Building test-fixture clones (`gents_conform_build`)
 
@@ -95,6 +105,36 @@ skipped, corrupt ones rebuilt); `--preserve-format` (don't upgrade netCDF3→NET
 Discovery uses `find_files` on the raw tree — unlike the pipeline, it does *not* filter to
 viable history files, so clones include files the pipeline is meant to ignore. Tests live
 in `gents/tests/test_case_builder.py`.
+
+### Conformity checking (`gents_conform`)
+
+Verify that GenTS handled a specific model's case correctly. Separate from the pytest
+suite — see the "conformity testing" concept in [concepts.md](concepts.md) for the
+distinction, and `gents/conformity/README.md` for the authoritative guide.
+
+```bash
+# 1. Clone a real case down to testable size (once, offline)
+gents_conform_build /glade/derecho/scratch/me/my_case -o ./my_case_clone -n 16
+
+# 2. Generate time series from the clone (--no-data is what makes this CI-fast)
+run_gents ./my_case_clone -o ./my_case_output --model CESM3 --no-data
+
+# 3. Check the output against the model specification
+gents_conform ./my_case_output -i ./my_case_clone --model CESM3
+gents_conform ./my_case_output --model CESM3 --json report.json   # record a result
+gents_conform --list-models                                        # specs + versions
+```
+
+`-i/--hf_dir` is optional but enables the checks comparing output against its source —
+the only ones that catch a stream that silently produced nothing; without it they report
+SKIP. Exits `0` if every check passed, `1` if any failed, so it drops straight into CI.
+Steps 2–3 may need `ulimit -n 65536` on cases with very wide streams (see the `EMFILE`
+gotcha in [conventions.md](conventions.md)).
+
+Editing a specification: copy the nearest existing check in `models/<model>.py`, write a
+comment saying *why the model requires it* in the model's own vocabulary, and bump
+`SPEC_VERSION`. Read the conformity conventions in [conventions.md](conventions.md)
+first — several obvious-looking refactors are explicitly unwanted there.
 
 ### YAML model configs (`gents/configs/*.yaml`)
 

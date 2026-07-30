@@ -53,11 +53,40 @@ bundled YAML config (`gents/configs/*.yaml`) merged with command-line flags.
 Dependency direction is one-way: `cli → (hfcollection, timeseries) → (meta, mhfdataset) → datastore`.
 `utils` is a leaf used by the upper layers. Keep it that way.
 
-`gents/conformity/case_builder.py` (the `gents_conform_build` tool) sits *outside* this
-pipeline: it reuses `find_files` (discovery) and `is_var_secondary` (classification) but
-builds missing-value clones of a case directory rather than time series. See the
-"missing-value clone" concept in [concepts.md](concepts.md). It is the one module allowed
-to construct `netCDF4.Dataset` directly (it needs low-level `createVariable` control).
+## Conformity subsystem (`gents/conformity/`)
+
+Sits *outside* the pipeline above and outside the pytest suite — it verifies GenTS's
+output on disk rather than its internals. `gents/conformity/README.md` is the
+authoritative guide; read it before editing a specification. Its modules may construct
+`netCDF4.Dataset` directly (see [conventions.md](conventions.md)).
+
+```
+real case dir
+   │  gents_conform_build → case_builder.clone_netcdf_with_missing()
+   │  reuses find_files (discovery) + is_var_secondary (classification)
+   ▼
+missing-value clone (small enough to store/share)
+   │  run_gents --no-data  (the normal pipeline, primaries never read/written)
+   ▼
+time series output tree
+   │  gents_conform → check.main()
+   │     models/__init__.SPECIFICATIONS[model] → spec.run(ts_dir, hf_dir, report)
+   ▼
+Report → console text + optional JSON; exit 0 if conformant, 1 if any check failed
+```
+
+| Module | Owns |
+|---|---|
+| `case_builder.py` | `gents_conform_build`; missing-value cloning, size guard, netCDF3→4 upgrade |
+| `check.py` | `gents_conform` argparse + driver; model lookup, exit code |
+| `report.py` | `Report`, `CheckResult`; `check`/`check_each`/`skip`, `pass_rate`, `to_dict`, `format_text` |
+| `models/__init__.py` | `SPECIFICATIONS` registry (mirrors `model_config_files` in `cli.main`) |
+| `models/cesm3.py` | The CESM3 specification — four sections: directory structure, file names, file contents, comparison against the original case |
+
+Adding a model = write `models/<model>.py` exposing `MODEL`, `SPEC_VERSION`,
+`run(ts_dir, hf_dir, report)`, then register it in `SPECIFICATIONS`. Do **not** factor
+shared checks out of an existing specification; see the "model specification" concept in
+[concepts.md](concepts.md) for why duplication is intended here.
 
 ## Core data structures
 

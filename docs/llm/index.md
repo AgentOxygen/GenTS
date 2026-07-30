@@ -19,12 +19,14 @@ verified against the source; when docs and code disagree, trust the code and fix
 | Modify code without breaking invariants; known gotchas and stale spots | [conventions.md](conventions.md) |
 | Run tests/CLI/docs/benchmarks; common dev recipes | [workflows.md](workflows.md) |
 | Build tiny missing-value clones of a case dir for testing (`gents_conform_build`) | [concepts.md](concepts.md), [workflows.md](workflows.md) |
+| Add/edit a conformity check or model specification (`gents_conform`) | `gents/conformity/README.md` (authoritative), then [concepts.md](concepts.md) |
 
 ## Package identity
 
 - **PyPI name:** `GenTS`, import name `gents`. CLI entry points: `run_gents`
-  (→ `gents.cli:main`, the HF→TS pipeline) and `gents_conform_build`
-  (→ `gents.conformity.case_builder:main`, the test-fixture clone tool).
+  (→ `gents.cli:main`, the HF→TS pipeline), `gents_conform_build`
+  (→ `gents.conformity.case_builder:main`, the test-fixture clone tool), and
+  `gents_conform` (→ `gents.conformity.check:main`, the conformity checker).
 - **Python:** ≥ 3.10. **Dependencies (only these):** `numpy`, `netCDF4`, `cftime`, `pyyaml`.
   Minimal dependency stack is a stated design principle — do not add dependencies casually.
 - **Version:** derived from git tags via `setuptools-scm` (`gents.utils.get_version()` reads
@@ -46,8 +48,12 @@ gents/                  Package source (8 core pipeline modules ~3,200 lines, + 
   cli.py                argparse CLI + YAML-config-driven main()
   utils.py              logging setup, ProgressBar, version, collection info loggers
   configs/              Bundled YAML model configs (gents_example.yaml, gents_cesm3.yaml)
-  conformity/           case_builder.py: gents_conform_build tool — mirror a case dir as
-                        tiny missing-value clones for testing (not part of the pipeline)
+  conformity/           End-to-end verification against real model cases. Outside the
+                        pipeline; separate from unit tests. See its own README.md.
+    case_builder.py       gents_conform_build — mirror a case dir as tiny clones
+    check.py              gents_conform — run a model spec against generated output
+    report.py             pass/fail/skip collector; text + JSON rendering
+    models/cesm3.py       what correct CESM3 output looks like (the file that matters)
   tests/                pytest suite; test_cases.py generates synthetic netCDF fixtures
 docs/                   Sphinx docs (index/install/user/dev/api .rst)
 benchmarks/             ASV performance benchmarks
