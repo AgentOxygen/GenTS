@@ -2,7 +2,9 @@ from gents.tests.test_cases import generate_history_file
 from gents.conformity.case_builder import (
     clone_netcdf_with_missing,
     record_clone_command,
+    log_case_summary,
     _read_case_file,
+    _summarize_case_file,
     CLONE_COMMAND_FILENAME,
 )
 from netCDF4 import Dataset
@@ -486,3 +488,97 @@ def test_read_case_file_tolerates_undecodable_time(tmp_path):
 
     assert variable_names == ["time"]
     assert cftimes is None
+
+
+def test_summarize_case_file_reduces_to_summary_facts(tmp_path):
+    """A file is reduced to its variable names, two latest times, and year bounds."""
+    src = tmp_path / "multi.nc"
+    times = [15.0, 45.0, 75.0]
+    generate_history_file(str(src), times, [[t - 15, t + 15] for t in times])
+
+    variable_names, latest_times, year_min, year_max = _summarize_case_file(src)
+
+    assert "time" in variable_names
+    # Only the two latest times survive; that is all a frequency needs.
+    assert len(latest_times) == 2
+    assert latest_times[0] < latest_times[1]
+    assert year_min == year_max == 1850
+
+
+def test_summarize_case_file_handles_missing_time(tmp_path):
+    """A file with no time coordinate reports its variables and no time facts."""
+    src = tmp_path / "grid.nc"
+    with Dataset(str(src), "w", format="NETCDF4") as ds:
+        ds.createDimension("x", 4)
+        ds.createVariable("TLON", np.float64, ("x",))[:] = np.arange(4)
+
+    assert _summarize_case_file(src) == (["TLON"], [], None, None)
+
+
+def _summary_case(tmp_path):
+    """A two-stream case: monthly + daily, plus a grid file carrying no time axis."""
+    (tmp_path / "atm").mkdir()
+    (tmp_path / "ocn").mkdir()
+
+    for index in range(4):
+        generate_history_file(
+            str(tmp_path / f"atm/case.cam.h0.{1850 + index // 12:04d}-{index % 12 + 1:02d}.nc"),
+            [(index + 0.5) * 30], [[index * 30, (index + 1) * 30]],
+        )
+    for index in range(3):
+        generate_history_file(
+            str(tmp_path / f"ocn/case.pop.h.nday1.1850-01-{index + 1:02d}.nc"),
+            [index + 0.5], [[index, index + 1]], num_vars=2,
+        )
+    with Dataset(str(tmp_path / "atm/grid.nc"), "w", format="NETCDF4") as ds:
+        ds.createDimension("x", 2)
+        ds.createVariable("area", np.float64, ("x",))[:] = np.ones(2)
+
+    return sorted(tmp_path.rglob("*.nc"))
+
+
+def test_log_case_summary_reports_case_coverage(tmp_path, capsys):
+    """The summary counts timed files, variables, per-group frequencies and year span."""
+    src_paths = _summary_case(tmp_path)
+
+    log_case_summary(src_paths)
+    output = capsys.readouterr().out
+
+    # 7 history files carry time; the grid file does not.
+    assert "Files with time coordinates     : 7" in output
+    # Frequency is derived per group, so both streams are represented.
+    assert "Output frequencies              : day_1, month_1" in output
+    assert "Years spanned                   : 1850 - 1850" in output
+
+
+def test_log_case_summary_parallel_matches_serial(tmp_path, capsys):
+    """Spreading the header reads over workers does not change the summary."""
+    src_paths = _summary_case(tmp_path)
+
+    log_case_summary(src_paths, num_processes=1)
+    serial = capsys.readouterr().out
+    log_case_summary(src_paths, num_processes=4)
+    parallel = capsys.readouterr().out
+
+    assert serial == parallel
+
+
+def test_log_case_summary_survives_unreadable_file(tmp_path, capsys):
+    """A corrupt file is warned about and skipped; the rest of the case still reports."""
+    src_paths = _summary_case(tmp_path)
+    corrupt = tmp_path / "atm/corrupt.nc"
+    corrupt.write_bytes(b"not a netcdf file")
+    src_paths.append(corrupt)
+
+    log_case_summary(src_paths, num_processes=2)
+    output = capsys.readouterr().out
+
+    assert "Files with time coordinates     : 7" in output
+    assert "Years spanned                   : 1850 - 1850" in output
+
+
+def test_log_case_summary_handles_no_files(capsys):
+    """An empty file list reports that there is nothing to summarise."""
+    log_case_summary([])
+
+    assert "no files to summarise" in capsys.readouterr().out

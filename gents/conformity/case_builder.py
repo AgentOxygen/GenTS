@@ -54,8 +54,8 @@ def parse_arguments():
         "-n", "--num-processes",
         type=int,
         default=1,
-        help="Number of worker processes used to clone files in parallel. "
-             "(Default 1)"
+        help="Number of worker processes used to clone files, and to read file "
+             "headers for the --verbose summary, in parallel. (Default 1)"
     )
     parser.add_argument(
         "--exclude",
@@ -425,7 +425,30 @@ def _read_case_file(path):
     return variable_names, np.atleast_1d(cftimes)
 
 
-def log_case_summary(src_paths):
+def _summarize_case_file(path):
+    """
+    Reduce one file to its contribution to the case summary.
+
+    Runs in a worker process, so the return value is deliberately small: the
+    file's variable names plus the handful of time facts the summary needs,
+    rather than its whole decoded time axis. Only the two latest times are kept
+    because that is all a group's output frequency is derived from.
+
+    :param path: netCDF file to inspect.
+    :type path: pathlib.Path
+    :returns: ``(variable_names, latest_times, year_min, year_max)``. For a file
+        with no decodable time coordinate, ``latest_times`` is empty and both
+        years are ``None``.
+    :rtype: tuple[list[str], list, int or None, int or None]
+    """
+    variable_names, cftimes = _read_case_file(path)
+    if cftimes is None:
+        return variable_names, [], None, None
+
+    return variable_names, sorted(cftimes)[-2:], min(cftimes).year, max(cftimes).year
+
+
+def log_case_summary(src_paths, num_processes=1):
     """
     Prints a summary of what a case covers once the clone filters are applied.
 
@@ -442,10 +465,19 @@ def log_case_summary(src_paths):
     time coordinate and abort outright on a group holding a single time step --
     both routine in a raw case tree, and both files the clone still has to copy.
 
-    Reads every file header, so it is only invoked under ``--verbose``.
+    Reads every file header, so it is only invoked under ``--verbose``. Those
+    reads are the whole cost of the summary and are independent of one another,
+    so they are spread over ``num_processes`` worker processes exactly as the
+    clone itself is. Group membership is decided from paths alone, before any
+    file is opened, so each file can be read in any order and folded back into
+    its group afterwards; the printed summary does not depend on the order
+    results come back in.
 
     :param src_paths: Filtered source files the clone will mirror.
     :type src_paths: list[pathlib.Path]
+    :param num_processes: Number of worker processes used to read file headers
+        in parallel. Defaults to ``1``.
+    :type num_processes: int
     """
     variables = set()
     frequencies = set()
@@ -459,38 +491,45 @@ def log_case_summary(src_paths):
         print("  Case summary unavailable        : no files to summarise")
         return
 
-    prog_bar = ProgressBar(total=len(hf_groups), label="Summarizing Case")
-    for group_paths in hf_groups.values():
-        latest_times = []
+    # Each group's frequency comes from the two latest times in the whole group,
+    # so per-file results are accumulated here and reduced once every file is in.
+    group_latest_times = {group_key: [] for group_key in hf_groups}
 
-        for path in group_paths:
+    prog_bar = ProgressBar(total=len(src_paths), label="Summarizing Case")
+    with ProcessPoolExecutor(max_workers=num_processes) as executor:
+        futures = {}
+        for group_key, group_paths in hf_groups.items():
+            for path in group_paths:
+                futures[executor.submit(_summarize_case_file, path)] = (group_key, path)
+
+        for future in as_completed(futures):
+            group_key, path = futures[future]
             try:
-                variable_names, cftimes = _read_case_file(path)
+                variable_names, latest_times, file_min, file_max = future.result()
             except Exception as exc:
                 logger.warning(f"Could not summarise '{path}': {exc}")
                 continue
+            finally:
+                prog_bar.step()
 
             variables.update(variable_names)
-            if cftimes is None:
+            if file_min is None:
                 continue
 
             timed_files += 1
-            latest_times += sorted(cftimes)[-2:]
+            group_latest_times[group_key] += latest_times
 
-            file_min = min(cftimes).year
-            file_max = max(cftimes).year
             if year_min is None or file_min < year_min:
                 year_min = file_min
             if year_max is None or file_max > year_max:
                 year_max = file_max
 
+    for latest_times in group_latest_times.values():
         if len(latest_times) >= 2:
             latest_pair = sorted(latest_times)[-2:]
             frequencies.add(get_timestep_label(latest_pair[1] - latest_pair[0]))
         elif latest_times:
             frequencies.add("unsorted")
-
-        prog_bar.step()
 
     print(f"  Files with time coordinates     : {timed_files}")
     print(f"  Unique variables                : {len(variables)}")
@@ -526,7 +565,7 @@ def main():
 
     if verbose:
         print(f"  Files to clone                  : {len(src_paths)}")
-        log_case_summary(src_paths)
+        log_case_summary(src_paths, args.num_processes)
 
     out_dir = Path(args.outputdir)
     clone_jobs = [
