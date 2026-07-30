@@ -249,65 +249,6 @@ def get_group_timestep_delta(metas):
     return latest_pair[1] - latest_pair[0]
 
 
-def generate_output_template(hf_head_dir, group_path_id, output_head_dir=None, directory_swaps={"hist": "tseries"}, filename_delimiter=".", cutoff_index=None):
-    """
-    Constructs a time-series output path template from a history file group path.
-
-    Builds the output path (excluding the variable-name and timestamp suffix) by
-    extracting the subdirectory structure relative to ``hf_head_dir``, applying
-    any ``directory_swaps`` renames, and stripping date tokens from the filename
-    prefix up to ``cutoff_index``.
-
-    :param hf_head_dir: Head directory used when reading the history files.
-    :type hf_head_dir: str
-    :param group_path_id: Group path pattern produced by :func:`sort_hf_groups`
-        (e.g. ``'/data/hist/model.h0*'``).
-    :type group_path_id: str or pathlib.Path
-    :param output_head_dir: Alternate head directory for output. Defaults to
-        ``None`` (uses ``hf_head_dir``).
-    :type output_head_dir: str or None
-    :param directory_swaps: Mapping of directory name substrings to replace
-        (e.g. ``{'hist': 'tseries'}``). Defaults to ``{'hist': 'tseries'}``.
-    :type directory_swaps: dict
-    :param filename_delimiter: Delimiter used to split the filename into tokens.
-        Defaults to ``'.'``.
-    :type filename_delimiter: str
-    :param cutoff_index: Character index at which to truncate the filename prefix.
-        Defaults to ``None`` (cuts at the last delimiter occurrence, or keeps the
-        whole prefix if it holds no delimiter).
-    :type cutoff_index: int or None
-    :returns: Path template for time-series output (without variable/timestamp suffix).
-    :rtype: pathlib.Path
-    """
-    group_path_id = Path(group_path_id)
-
-    raw_filename_prefix = group_path_id.name
-    if cutoff_index is None:
-        cutoff_index = raw_filename_prefix.rfind(".")
-        # ``rfind`` reports -1 for a prefix with no delimiter, which would slice
-        # the last character off instead of leaving the name alone.
-        if cutoff_index == -1:
-            cutoff_index = len(raw_filename_prefix)
-    filename_prefix = raw_filename_prefix[:cutoff_index]
-    
-    sub_dir_structure = (str(group_path_id.parent).split(hf_head_dir)[-1]).split("/")
-
-    for key in directory_swaps:
-        for index in range(len(sub_dir_structure)):
-            if sub_dir_structure[index] == key:
-                sub_dir_structure[index] = directory_swaps[key]
-
-    sub_dir_path = "/"
-    for directory in sub_dir_structure:
-        sub_dir_path += f"{directory}/"
-
-    if output_head_dir is None:
-        output_template = Path(f"{hf_head_dir}/{sub_dir_path}/{filename_prefix}")
-    else:
-        output_template = Path(f"{output_head_dir}/{sub_dir_path}/{filename_prefix}")
-    return output_template
-
-
 def is_ds_within_years(ds_meta, min_year, max_year):
     """
     Checks whether a dataset's representative time falls within a year range.

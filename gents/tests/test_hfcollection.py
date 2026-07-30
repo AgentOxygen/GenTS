@@ -105,25 +105,6 @@ def test_hf_sorting_preserves_path_order(structured_case):
         assert group_paths == sorted(group_paths, key=hf_paths.index)
 
 
-def test_generate_output_template():
-    """generate_output_template() swaps hist->tseries and cuts the prefix at its last delimiter."""
-    head = "/data/case"
-    group = "/data/case/atm/hist/model.cam.h0*"
-
-    assert generate_output_template(head, group) == PosixPath("/data/case/atm/tseries/model.cam")
-    assert generate_output_template(head, group, "/out") == PosixPath("/out/atm/tseries/model.cam")
-    assert generate_output_template(head, "/data/case/model.h0*") == PosixPath("/data/case/model")
-
-    # An explicit cutoff_index overrides the last-delimiter default.
-    assert generate_output_template(head, group, cutoff_index=5) == PosixPath("/data/case/atm/tseries/model")
-    assert generate_output_template(head, group, cutoff_index=0) == PosixPath("/data/case/atm/tseries")
-
-    # A prefix with no delimiter is kept whole rather than losing its last character.
-    # The group key's trailing "*" survives here, since it is normally dropped only
-    # as a side effect of cutting at the last delimiter.
-    assert generate_output_template(head, "/data/case/atm/hist/README*") == PosixPath("/data/case/atm/tseries/README*")
-
-
 def test_get_year_bounds(simple_case, scrambled_case, structured_case, multistep_large_case):
     """get_year_bounds() returns correct min/max years for simple, scrambled, and structured cases."""
     input_head_dir, output_head_dir = simple_case
