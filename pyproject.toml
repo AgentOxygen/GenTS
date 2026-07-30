@@ -53,5 +53,5 @@ gents_conform_build = "gents.conformity.case_builder:main"
 [project.optional-dependencies]
 test = ["pytest"]
 docs = ["sphinx", "sphinx-autobuild"]
-bench = ["asv"]
+bench = ["asv", "py-spy"]
 dev = ["GenTS[test,docs,bench]"]
