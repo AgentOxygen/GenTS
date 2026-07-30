@@ -4,8 +4,6 @@ from gents.conformity.case_builder import (
     record_clone_command,
     _read_case_file,
     CLONE_COMMAND_FILENAME,
-    _is_valid_netcdf,
-    _resolve_clone_jobs,
 )
 from netCDF4 import Dataset
 from os.path import getsize
@@ -358,70 +356,6 @@ def test_size_guard_disabled_copies_verbatim(tmp_path):
         assert np.array_equal(np.asarray(d.variables["BIG2D"][:]), np.ones((400, 400)))
 
 
-def _make_valid_netcdf(path):
-    """Write a minimal valid netCDF file at ``path``."""
-    with Dataset(str(path), "w", format="NETCDF4") as ds:
-        ds.createDimension("x", 2)
-        ds.createVariable("V", np.float32, ("x",))[:] = [1.0, 2.0]
-
-
-def test_is_valid_netcdf(tmp_path):
-    """_is_valid_netcdf distinguishes readable files from corrupt/missing ones."""
-    good = tmp_path / "good.nc"
-    _make_valid_netcdf(good)
-    assert _is_valid_netcdf(good) is True
-
-    corrupt = tmp_path / "corrupt.nc"
-    corrupt.write_bytes(b"not a netcdf file")
-    assert _is_valid_netcdf(corrupt) is False
-
-    assert _is_valid_netcdf(tmp_path / "missing.nc") is False
-
-
-def test_resolve_clone_jobs_skips_existing_valid(tmp_path):
-    """An existing valid clone is dropped from the job list and left untouched."""
-    src = tmp_path / "src.nc"
-    dst = tmp_path / "dst.nc"
-    _make_valid_netcdf(dst)  # pretend a prior run already produced it
-
-    pending = _resolve_clone_jobs([(src, dst)], overwrite=False)
-
-    assert pending == []
-    assert dst.exists()  # not deleted
-
-
-def test_resolve_clone_jobs_rebuilds_corrupt(tmp_path):
-    """An existing corrupt clone is deleted and its job retained for rebuild."""
-    src = tmp_path / "src.nc"
-    dst = tmp_path / "dst.nc"
-    dst.write_bytes(b"garbage")
-
-    pending = _resolve_clone_jobs([(src, dst)], overwrite=False)
-
-    assert pending == [(src, dst)]
-    assert not dst.exists()  # corrupt file removed
-
-
-def test_resolve_clone_jobs_overwrite_deletes_valid(tmp_path):
-    """With overwrite, even a valid existing clone is deleted and rebuilt."""
-    src = tmp_path / "src.nc"
-    dst = tmp_path / "dst.nc"
-    _make_valid_netcdf(dst)
-
-    pending = _resolve_clone_jobs([(src, dst)], overwrite=True)
-
-    assert pending == [(src, dst)]
-    assert not dst.exists()
-
-
-def test_resolve_clone_jobs_keeps_missing(tmp_path):
-    """A job whose destination does not yet exist is always kept."""
-    src = tmp_path / "src.nc"
-    dst = tmp_path / "dst.nc"
-
-    assert _resolve_clone_jobs([(src, dst)], overwrite=False) == [(src, dst)]
-
-
 def _recorded_entries(out_dir):
     """Return the command file split into (provenance_comment, command) pairs."""
     lines = (out_dir / CLONE_COMMAND_FILENAME).read_text().splitlines()
@@ -515,39 +449,6 @@ def test_recorded_command_file_is_valid_shell(tmp_path, monkeypatch):
     lines = (tmp_path / CLONE_COMMAND_FILENAME).read_text().splitlines()
     for line in lines:
         assert line.startswith("#") or line.startswith("gents_conform_build")
-
-
-def test_resolve_clone_jobs_dryrun_keeps_corrupt_file(tmp_path):
-    """A dry run reports a corrupt clone as pending without deleting it."""
-    src = tmp_path / "src.nc"
-    dst = tmp_path / "dst.nc"
-    dst.write_text("not a netcdf file")
-
-    pending = _resolve_clone_jobs([(src, dst)], overwrite=False, dryrun=True)
-
-    assert pending == [(src, dst)]
-    assert dst.exists()
-
-
-def test_resolve_clone_jobs_dryrun_keeps_overwritten_file(tmp_path):
-    """A dry run with overwrite leaves even a valid existing clone on disk."""
-    src = tmp_path / "src.nc"
-    dst = tmp_path / "dst.nc"
-    _make_valid_netcdf(dst)
-
-    pending = _resolve_clone_jobs([(src, dst)], overwrite=True, dryrun=True)
-
-    assert pending == [(src, dst)]
-    assert dst.exists()
-
-
-def test_resolve_clone_jobs_dryrun_still_skips_valid(tmp_path):
-    """A dry run reports the same skips a real run would: valid clones are not rebuilt."""
-    src = tmp_path / "src.nc"
-    dst = tmp_path / "dst.nc"
-    _make_valid_netcdf(dst)
-
-    assert _resolve_clone_jobs([(src, dst)], overwrite=False, dryrun=True) == []
 
 
 def test_read_case_file_returns_times_for_history_file(tmp_path):

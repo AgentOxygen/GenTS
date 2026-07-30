@@ -78,12 +78,6 @@ def parse_arguments():
              "can shrink; with this flag they keep their format and full size."
     )
     parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="Overwrite existing clones. By default an existing, valid clone is "
-             "left in place (corrupt ones are deleted and rebuilt)."
-    )
-    parser.add_argument(
         "-v", "--verbose",
         action="store_true",
         help="Enable verbose output and summarise the filtered case (file count, "
@@ -335,58 +329,6 @@ def _passes_filters(path: str, include: list, exclude: list) -> bool:
     return True
 
 
-def _is_valid_netcdf(path: Path) -> bool:
-    """
-    Report whether ``path`` is a readable (non-corrupt) netCDF file.
-
-    :param path: Path to test.
-    :type path: pathlib.Path
-    :returns: ``True`` if the file opens as a netCDF dataset.
-    :rtype: bool
-    """
-    try:
-        with Dataset(str(path), "r"):
-            return True
-    except Exception:
-        return False
-
-
-def _resolve_clone_jobs(clone_jobs: list, overwrite: bool, dryrun: bool = False) -> list:
-    """
-    Decide which clone jobs to run given any pre-existing destination files.
-
-    With ``overwrite`` set, every existing destination is deleted and all jobs
-    are kept. Otherwise an existing *valid* clone is left in place and its job
-    dropped, while a *corrupt* existing clone is deleted and its job retained so
-    it is rebuilt.
-
-    :param clone_jobs: List of ``(src_path, dst_path)`` tuples.
-    :type clone_jobs: list
-    :param overwrite: Overwrite existing clones unconditionally.
-    :type overwrite: bool
-    :param dryrun: Report which jobs *would* run without deleting anything.
-        Doomed destinations are still counted as pending, so the reported total
-        matches what a real run would rebuild. Defaults to ``False``.
-    :type dryrun: bool
-    :returns: The subset of ``clone_jobs`` that still needs to be built.
-    :rtype: list
-    """
-    pending = []
-    skipped = 0
-    for src_path, dst_path in clone_jobs:
-        if dst_path.exists():
-            if not overwrite and _is_valid_netcdf(dst_path):
-                skipped += 1
-                continue
-            if not dryrun:
-                dst_path.unlink()
-        pending.append((src_path, dst_path))
-
-    if skipped:
-        logger.info("Skipping %d existing valid clone(s).", skipped)
-    return pending
-
-
 def record_clone_command(out_dir: Path):
     """
     Append the current invocation to the clone directory's command log.
@@ -410,12 +352,12 @@ def record_clone_command(out_dir: Path):
     ``is_var_secondary`` decides which variables get emptied — a clone built by a
     different version may have classified them differently.
 
-    Entries are appended rather than overwritten because a clone is often built
-    over several runs: existing valid clones are skipped by default, so resuming
-    an interrupted build, or extending a clone with more history files, is
-    normal. Overwriting would discard the command that produced the files already
-    present and misreport how the directory was made. A clone built in one go
-    therefore holds exactly one entry.
+    A clone is normally built by a single command and so holds exactly one entry.
+    Entries are nonetheless appended rather than overwritten: a run only touches
+    the files its filters select, so pointing a second command with different
+    filters at the same directory adds to it, and overwriting would discard the
+    command that produced everything already there. Building a variant is
+    ordinarily cheaper and clearer than layering onto an existing clone.
 
     Arguments are quoted with :func:`shlex.join` so a recorded command can be
     pasted back into a shell unchanged. Without it, glob patterns passed to
@@ -567,7 +509,6 @@ def main():
         print(f"  Include filters                 : {args.include}")
         print(f"  Exclude filters                 : {args.exclude}")
         print(f"  Number of processes (cores)     : {args.num_processes}")
-        print(f"  Overwrite existing clones       : {args.overwrite}")
         print(f"  Preserve netCDF3 format         : {not args.upgrade_netcdf3}")
         print(f"  Max copy size (MiB)             : {args.max_copy_mib}")
         print(f"  Dry run                         : {args.dryrun}")
@@ -593,9 +534,8 @@ def main():
         for src_path in src_paths
     ]
 
-    clone_jobs = _resolve_clone_jobs(clone_jobs, args.overwrite, dryrun=args.dryrun)
     if not clone_jobs:
-        logger.info("Nothing to clone; all destinations already valid.")
+        logger.info("No files matched; nothing to clone.")
         print("GenTS done!")
         return
 
