@@ -70,6 +70,14 @@ def parse_arguments():
         help="Reads and interprets history file metadata but does not generate time series files."
     )
     parser.add_argument(
+        "-nd", "--no-data",
+        dest="no_data",
+        action="store_true",
+        help="Generate the full time series structure but skip reading/writing primary "
+             "variable data (primaries read back as their fill value). Used for fast "
+             "conformity testing over missing-value case clones."
+    )
+    parser.add_argument(
         "-w", "--overwrite",
         action="store_true",
         help="Overwrite existing time series files if they exist."
@@ -177,6 +185,7 @@ def main():
         print(f"  Overwrite TS Files           : {args.overwrite}")
         print(f"  Slice size                   : {args.slice}")
         print(f"  Dry run                      : {args.dryrun}")
+        print(f"  Skip primary data (no-data)  : {args.no_data}")
         print(f"  Number of HF processes (cores)  : {args.hfcores}")
         print(f"  Number of TS processes (cores)  : {args.tscores}")
         print(f"  Include filters                 : {args.include}")
@@ -267,7 +276,7 @@ def main():
     tsc = tsc.add_attrs({"gents_command": " ".join(sys.argv)})
 
     if not args.dryrun:
-        tsc.execute()
+        tsc.execute(no_data=args.no_data)
     else:
         print(f"Dry run: {len(tsc)} timeseries files would be generated.")
     print("GenTS done!")
