@@ -117,31 +117,6 @@ def calculate_year_slices(slice_size_years, min_year, max_year):
     return ranges
 
 
-def find_all_indices(string, substring):
-    """
-    Returns all start indices where ``substring`` occurs within ``string``.
-
-    Uses a sliding-window ``str.find`` loop so overlapping occurrences are
-    all reported.
-
-    :param string: The string to search in.
-    :type string: str
-    :param substring: The substring to search for.
-    :type substring: str
-    :returns: List of integer indices where ``substring`` begins.
-    :rtype: list[int]
-    """
-    indices = []
-    start = 0
-    while True:
-        index = string.find(substring, start)
-        if index == -1:
-            break
-        indices.append(index)
-        start = index + 1
-    return indices
-
-
 def sort_hf_groups(hf_paths, delimiter=".", substring_index=2):
     """
     Groups history file paths by directory and shared filename prefix.
@@ -152,6 +127,15 @@ def sort_hf_groups(hf_paths, delimiter=".", substring_index=2):
 
     For example, ``model.h0.0001-01.nc`` and ``model.h0.0001-02.nc`` share
     the prefix ``model.h0`` and end up in the same group.
+
+    A filename with fewer than ``substring_index`` delimiters keeps whatever
+    tokens it has (``gridfile.nc`` groups under ``gridfile*``, ``README`` under
+    ``README*``); nothing is stripped that is not there.
+
+    Each path's prefix is derived once and used to bucket it directly, so the
+    whole tree is grouped in a single pass. Group keys are ordered by parent
+    directory (order of first appearance) then by prefix; within a group, paths
+    keep their input order.
 
     :param hf_paths: List of history file paths to group.
     :type hf_paths: list[pathlib.Path]
@@ -165,32 +149,19 @@ def sort_hf_groups(hf_paths, delimiter=".", substring_index=2):
         to lists of matching file paths.
     :rtype: dict[str, list[pathlib.Path]]
     """
+    # parent directory -> filename prefix -> paths. ``rsplit`` with a maxsplit
+    # of ``substring_index`` drops exactly the trailing tokens asked for, and
+    # naturally leaves a name with fewer delimiters than that intact.
     directory_groups = {}
     for path in hf_paths:
-        if path.parent in directory_groups:
-            directory_groups[path.parent].append(path)
-        else:
-            directory_groups[path.parent]= [path]
+        prefix = path.name.rsplit(delimiter, substring_index)[0]
+        directory_groups.setdefault(path.parent, {}).setdefault(prefix, []).append(path)
 
     hf_groups = {}
-    for parent_path in directory_groups:
-        group_paths = [path for path in directory_groups[parent_path]]
-        substrings = []
-        for path in group_paths:
-            num_delims = len(path.name.split(delimiter)) - 1
-            delim_index = -1 * min(num_delims, substring_index)
-            parsed = path.name[:find_all_indices(path.name, delimiter)[delim_index]]
-            substrings.append(parsed)
-        
-        for substring in np.unique(substrings):
-            hf_groups[f"{parent_path}/{substring}*"] = []
-            for path in group_paths:
-                num_delims = len(path.name.split(delimiter)) - 1
-                delim_index = -1 * min(num_delims, substring_index)
-                parsed = path.name[:find_all_indices(path.name, delimiter)[delim_index]]
-                if substring == parsed:
-                    hf_groups[f"{parent_path}/{substring}*"].append(path)
-        
+    for parent_path, prefix_groups in directory_groups.items():
+        for prefix in sorted(prefix_groups):
+            hf_groups[f"{parent_path}/{prefix}*"] = prefix_groups[prefix]
+
     return hf_groups
 
 
@@ -302,16 +273,21 @@ def generate_output_template(hf_head_dir, group_path_id, output_head_dir=None, d
         Defaults to ``'.'``.
     :type filename_delimiter: str
     :param cutoff_index: Character index at which to truncate the filename prefix.
-        Defaults to ``None`` (cuts at the last delimiter occurrence).
+        Defaults to ``None`` (cuts at the last delimiter occurrence, or keeps the
+        whole prefix if it holds no delimiter).
     :type cutoff_index: int or None
     :returns: Path template for time-series output (without variable/timestamp suffix).
     :rtype: pathlib.Path
     """
     group_path_id = Path(group_path_id)
-                         
+
     raw_filename_prefix = group_path_id.name
     if cutoff_index is None:
-        cutoff_index = find_all_indices(raw_filename_prefix, ".")[-1]
+        cutoff_index = raw_filename_prefix.rfind(".")
+        # ``rfind`` reports -1 for a prefix with no delimiter, which would slice
+        # the last character off instead of leaving the name alone.
+        if cutoff_index == -1:
+            cutoff_index = len(raw_filename_prefix)
     filename_prefix = raw_filename_prefix[:cutoff_index]
     
     sub_dir_structure = (str(group_path_id.parent).split(hf_head_dir)[-1]).split("/")
