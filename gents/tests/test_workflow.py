@@ -4,6 +4,7 @@ from gents.timeseries import TSCollection
 from gents.tests.test_cases import *
 from gents.conformity.case_builder import clone_netcdf_with_missing
 from gents.datastore import GenTSDataStore
+from netCDF4 import default_fillvals
 from os import listdir, makedirs, rename
 from os.path import getsize
 import pytest
@@ -60,6 +61,37 @@ def test_simple_workflow(simple_case):
                     
                     for key in hf_ds[var_name].ncattrs():
                         assert ts_ds[var_name].getncattr(key) == hf_ds[var_name].getncattr(key)
+
+
+def test_no_data_workflow(simple_case):
+    """
+    execute(no_data=True) produces the full TS structure but leaves primary data
+    unwritten: correct file count, shapes, populated time axis, and integrity
+    stamp, with primaries reading back as their fill value rather than real data.
+    """
+    input_head_dir, output_head_dir = simple_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+    ts_paths = ts_collection.execute(no_data=True)
+
+    assert len(ts_paths) == SIMPLE_NUM_VARS
+
+    for path in ts_paths:
+        var_name = path.split(".")[-3]
+        with GenTSDataStore(path, 'r') as ts_ds:
+            # Structure is intact: time axis, secondary data, integrity stamp.
+            assert ts_ds["time"].size == SIMPLE_NUM_TEST_HIST_FILES
+            assert ts_ds["time_bounds"].shape[0] == SIMPLE_NUM_TEST_HIST_FILES
+            assert ts_ds.getncattr("gents_version") == get_version()
+
+            # Primary variable exists at full shape but carries no real data:
+            # it reads back as its fill value (default fill here, since the
+            # synthetic source has no _FillValue), not the source's values.
+            var = ts_ds[var_name]
+            var.set_auto_mask(False)
+            assert var.shape[0] == SIMPLE_NUM_TEST_HIST_FILES
+            expected_fill = getattr(var, "_FillValue", default_fillvals[var.dtype.str[1:]])
+            assert np.all(np.asarray(var[:]) == expected_fill)
 
 
 def test_simple_workflow_slicing(simple_case):

@@ -106,7 +106,7 @@ def _is_missing(arr, fill_value):
     return bool(np.all(arr == fill_value))
 
 
-def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_data, overwrite=False, complevel=0, compression=None, ts_start_index=None, ts_end_index=None, append_attrs=None):
+def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_data, overwrite=False, complevel=0, compression=None, ts_start_index=None, ts_end_index=None, append_attrs=None, no_data=False):
     """
     Writes a single time-series netCDF file for one primary variable.
 
@@ -160,6 +160,15 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
     :type ts_end_index: int or None
     :param append_attrs: Attributes to append to output NetCDF files.
     :type append_attrs: dict or None
+    :param no_data: If ``True``, the primary variable is created (with its fill
+        value) but its data is neither read from the source nor written, leaving
+        it unwritten (HDF5 returns the fill value on read). Secondary variables
+        (coordinates, time, bounds) are still written, so the file remains a
+        structurally valid, self-describing time series. This produces the same
+        kind of missing-value output as :mod:`gents.conformity.case_builder` and
+        exists to run the pipeline over conformity clones without paying to
+        materialise fill data. Defaults to ``False``.
+    :type no_data: bool
     :returns: Path to the written (or skipped) output file.
     :rtype: str
     """
@@ -218,7 +227,9 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
                 {key: val for key, val in primary_attrs.items() if key != "_FillValue"}
             )
 
-            if len(var_shape) > 0 and "time" in var_dims:
+            if no_data:
+                pass
+            elif len(var_shape) > 0 and "time" in var_dims:
                 for i in range(0, var_shape[0], chunksizes[0]):
                     end = min(i + chunksizes[0], var_shape[0])
                     chunk = agg_hf_ds.get_var_vals(
@@ -282,7 +293,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
     return ts_out_path
 
 
-def generate_time_series(hf_paths, ts_path_template, secondary_vars, ts_args):
+def generate_time_series(hf_paths, ts_path_template, secondary_vars, ts_args, no_data=False):
     """
     Generates time-series files for a group of history files.
 
@@ -303,16 +314,19 @@ def generate_time_series(hf_paths, ts_path_template, secondary_vars, ts_args):
         keyword arguments for :func:`write_timeseries_file` (must include a
         ``'ts_string'`` key for the timestamp suffix).
     :type ts_args: dict
+    :param no_data: Forwarded to :func:`write_timeseries_file` — skip reading and
+        writing primary-variable data. Defaults to ``False``.
+    :type no_data: bool
     :returns: List of paths to the generated time-series files.
     :rtype: list[str]
     """
     ts_paths = []
     with MHFDataset(hf_paths) as agg_hf_ds:
         secondary_vars_data = {}
-        
+
         for variable in secondary_vars:
             secondary_vars_data[variable] = agg_hf_ds.get_var_vals(variable)
-        
+
         for variable in ts_args:
             args = copy.deepcopy(ts_args[variable])
             ts_string = args["ts_string"]
@@ -324,6 +338,7 @@ def generate_time_series(hf_paths, ts_path_template, secondary_vars, ts_args):
                 ts_out_path=ts_out_path,
                 primary_var=variable,
                 secondary_vars_data=secondary_vars_data,
+                no_data=no_data,
                 **args
             ))
     return ts_paths
@@ -851,7 +866,7 @@ class TSCollection:
         for order_dict in self.__orders:
             makedirs(Path(order_dict['ts_path_template']).parent, exist_ok=exist_ok)
 
-    def execute(self, optimize=True, optimize_batch_n=200, raise_errors=False):
+    def execute(self, optimize=True, optimize_batch_n=200, raise_errors=False, no_data=False):
         """
         Executes all time-series generation orders in parallel.
 
@@ -873,6 +888,11 @@ class TSCollection:
         :param raise_errors: If ``True`` (default ``False``), calls errors are raised
             rather than just logged.
         :type raise_errors: bool
+        :param no_data: If ``True``, skip reading and writing primary-variable
+            data (see :func:`write_timeseries_file`). The full directory/file
+            structure is still produced; primaries read back as their fill value.
+            Defaults to ``False``.
+        :type no_data: bool
         :returns: List of paths to all generated time-series output files.
         :rtype: list[str]
         """
@@ -916,7 +936,8 @@ class TSCollection:
                     "hf_paths": init_order["hf_paths"],
                     "ts_path_template": init_order["ts_path_template"],
                     "secondary_vars": init_order["secondary_vars"],
-                    "ts_args": ts_args
+                    "ts_args": ts_args,
+                    "no_data": no_data
                 })
         else:
             for index, order in enumerate(self.__orders):
@@ -930,7 +951,8 @@ class TSCollection:
                     "hf_paths": order["hf_paths"],
                     "ts_path_template": order["ts_path_template"],
                     "secondary_vars": order["secondary_vars"],
-                    "ts_args": ts_args
+                    "ts_args": ts_args,
+                    "no_data": no_data
                 })
         with ProcessPoolExecutor(max_workers=self.__num_processes) as executor:
             futures = {executor.submit(generate_time_series, **args): args for args in optimized_orders}
