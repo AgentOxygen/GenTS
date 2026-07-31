@@ -135,7 +135,7 @@ def _is_missing(arr, fill_value):
     return bool(np.all(arr == fill_value))
 
 
-def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_data, overwrite=False, complevel=0, compression=None, ts_start_index=None, ts_end_index=None, append_attrs=None, no_data=False):
+def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_data, overwrite=False, complevel=0, compression=None, ts_start_index=None, ts_end_index=None, append_attrs=None, no_data=False, chunk_target_bytes=CHUNK_TARGET_BYTES):
     """
     Writes a single time-series netCDF file for one primary variable.
 
@@ -179,6 +179,12 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
     :param compression: netCDF4 compression algorithm (e.g. ``'zlib'``).
         Defaults to ``None``.
     :type compression: str or None
+    :param chunk_target_bytes: Target chunk size in bytes, forwarded to
+        :func:`compute_chunksizes`. Defaults to :data:`CHUNK_TARGET_BYTES`
+        (4 MiB). Note that :func:`check_timeseries_conform` always checks
+        against :data:`CHUNK_TARGET_BYTES` regardless of this argument, so a
+        file written with a non-default value will not conform.
+    :type chunk_target_bytes: int
     :param ts_start_index: Time index to start reading from aggregated history files.
         If ``None``, read from the first time step for the full aggregation.
         Defaults to ``None``.
@@ -230,7 +236,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
                     ts_ds.createDimension(dim, var_shape[index])
 
             var_dtype = agg_hf_ds.get_var_dtype(primary_var)
-            chunksizes = compute_chunksizes(var_shape, var_dtype.itemsize)
+            chunksizes = compute_chunksizes(var_shape, var_dtype.itemsize, target_bytes=chunk_target_bytes)
 
             # Route _FillValue through creation so unwritten regions read back as
             # it, then omit it from the copied attributes (it cannot be set twice).
@@ -740,7 +746,7 @@ class TSCollection:
         logger.debug(f"Exclusive filter(s) applied: '{var_glob}' to history files matching '{path_glob}'")
         return self.copy(ts_orders=filtered_orders)
 
-    def add_args(self, path_glob="*", var_glob="*", level=None, alg=None, overwrite=None):
+    def add_args(self, path_glob="*", var_glob="*", level=None, alg=None, overwrite=None, chunk_target_bytes=None):
         """
         Updates generation arguments on orders that match both filters.
 
@@ -760,6 +766,10 @@ class TSCollection:
         :type alg: str or None
         :param overwrite: Overwrite flag to apply. Defaults to ``None`` (unchanged).
         :type overwrite: bool or None
+        :param chunk_target_bytes: Target chunk size in bytes, forwarded to
+            :func:`write_timeseries_file`. Defaults to ``None`` (unchanged,
+            i.e. :data:`CHUNK_TARGET_BYTES`).
+        :type chunk_target_bytes: int or None
         :returns: New ``TSCollection`` with updated order arguments.
         :rtype: TSCollection
         """
@@ -770,7 +780,7 @@ class TSCollection:
                 if fnmatch.fnmatch(path, path_glob):
                     path_matched = True
                     break
-            
+
             if path_matched and fnmatch.fnmatch(order_dict["primary_var"], var_glob):
                 if level is not None:
                     order_dict["complevel"] = level
@@ -778,9 +788,11 @@ class TSCollection:
                     order_dict["compression"] = alg
                 if overwrite is not None:
                     order_dict["overwrite"] = overwrite
+                if chunk_target_bytes is not None:
+                    order_dict["chunk_target_bytes"] = chunk_target_bytes
             new_orders.append(order_dict)
 
-        logger.debug(f"Arguments applied (excluding None): ['level': {level}, 'alg': {alg}, 'overwrite': {overwrite}] to history files matching '{path_glob}' and variables matching '{var_glob}'.")
+        logger.debug(f"Arguments applied (excluding None): ['level': {level}, 'alg': {alg}, 'overwrite': {overwrite}, 'chunk_target_bytes': {chunk_target_bytes}] to history files matching '{path_glob}' and variables matching '{var_glob}'.")
         return self.copy(ts_orders=new_orders)
 
     def apply_path_swap(self, string_match, string_swap, path_glob="*", var_glob="*"):
@@ -834,6 +846,30 @@ class TSCollection:
         :rtype: TSCollection
         """
         return self.add_args(path_glob=path_glob, var_glob=var_glob, level=level, alg=alg)
+
+    def apply_chunk_target_bytes(self, target_bytes, path_glob="*", var_glob="*"):
+        """
+        Sets the chunk-size target on matching time-series orders.
+
+        Convenience wrapper around :meth:`add_args`. See
+        :func:`compute_chunksizes` for how this value is used and
+        :data:`CHUNK_TARGET_BYTES` for the default. Note that
+        :func:`check_timeseries_conform` always checks against
+        :data:`CHUNK_TARGET_BYTES` regardless of this setting, so orders
+        written with a non-default value will not conform.
+
+        :param target_bytes: Target chunk size in bytes.
+        :type target_bytes: int
+        :param path_glob: ``fnmatch`` glob applied to source history file paths.
+            Defaults to ``'*'``.
+        :type path_glob: str
+        :param var_glob: ``fnmatch`` glob applied to primary variable names.
+            Defaults to ``'*'``.
+        :type var_glob: str
+        :returns: New ``TSCollection`` with the chunk-size target applied.
+        :rtype: TSCollection
+        """
+        return self.add_args(path_glob=path_glob, var_glob=var_glob, chunk_target_bytes=target_bytes)
 
     def apply_overwrite(self, path_glob, var_glob="*"):
         """
