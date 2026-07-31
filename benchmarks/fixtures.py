@@ -14,12 +14,14 @@ import json
 from pathlib import Path
 from shutil import rmtree
 
+import numpy as np
+
 from gents.tests.test_cases import generate_history_file
 
 MANIFEST_NAME = "_case_manifest.json"
 
 
-def build_bench_case(root, n_files, n_steps, n_lat=3, n_lon=4, n_vars=1, step_days=30):
+def build_bench_case(root, n_files, n_steps, n_lat=3, n_lon=4, n_vars=1, step_days=30, dtype=float, fill="constant"):
     """
     Builds (or reuses) a synthetic history-file case under ``root``.
 
@@ -52,6 +54,17 @@ def build_bench_case(root, n_files, n_steps, n_lat=3, n_lon=4, n_vars=1, step_da
     :type n_vars: int
     :param step_days: Spacing between time steps, in days. Defaults to ``30``.
     :type step_days: int
+    :param dtype: Primary/auxiliary variable dtype, forwarded to
+        :func:`~gents.tests.test_cases.generate_history_file`. Defaults to
+        ``float`` (float64); pass ``"float32"`` (or ``np.float32``) for
+        fixtures representative of typical model output.
+    :type dtype: type or numpy.dtype or str
+    :param fill: ``"constant"`` (default) or ``"random"``, forwarded to
+        :func:`~gents.tests.test_cases.generate_history_file`. Use
+        ``"random"`` for any benchmark measuring compression -- constant
+        data compresses to nearly nothing regardless of the compression
+        settings under test.
+    :type fill: str
     :returns: Sorted list of generated (or reused) file paths.
     :rtype: list[pathlib.Path]
     """
@@ -59,6 +72,7 @@ def build_bench_case(root, n_files, n_steps, n_lat=3, n_lon=4, n_vars=1, step_da
     params = {
         "n_files": n_files, "n_steps": n_steps, "n_lat": n_lat,
         "n_lon": n_lon, "n_vars": n_vars, "step_days": step_days,
+        "dtype": np.dtype(dtype).name, "fill": fill,
     }
     manifest_path = root / MANIFEST_NAME
 
@@ -75,7 +89,7 @@ def build_bench_case(root, n_files, n_steps, n_lat=3, n_lon=4, n_vars=1, step_da
     for path in hf_paths:
         times = [(step + i) * step_days for i in range(n_steps)]
         bounds = [[(step + i) * step_days, (step + i + 1) * step_days] for i in range(n_steps)]
-        generate_history_file(str(path), times, bounds, num_vars=n_vars, dim_shapes=dim_shapes)
+        generate_history_file(str(path), times, bounds, num_vars=n_vars, dim_shapes=dim_shapes, dtype=dtype, fill=fill)
         step += n_steps
 
     manifest_path.write_text(json.dumps(params))
