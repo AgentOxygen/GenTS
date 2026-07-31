@@ -82,7 +82,7 @@ class ProgressBar:
     time by overwriting a single terminal line in place.
     """
 
-    def __init__(self, total, length=40, label=""):
+    def __init__(self, total, length=40, label="", quiet=False):
         """
         Initialises the progress bar state.
 
@@ -93,21 +93,29 @@ class ProgressBar:
         :param label: Short text label displayed beside the progress counter.
             Defaults to an empty string.
         :type label: str
+        :param quiet: If ``True``, :meth:`step` still advances the internal
+            counter but writes nothing to stdout. Defaults to ``False``
+            (current behavior: always drawn).
+        :type quiet: bool
         """
         self.total = total
         self.length = length
         self.start_time = time()
         self.count = -1
         self.label = label
+        self.quiet = quiet
         self.step()
 
     def step(self):
         """
         Advances the progress bar by one iteration and redraws the terminal line.
 
-        Writes a newline once the counter reaches ``total``.
+        Writes a newline once the counter reaches ``total``. A no-op beyond
+        incrementing the counter when constructed with ``quiet=True``.
         """
         self.count += 1
+        if self.quiet:
+            return
         percent = self.count / self.total
         filled_length = int(self.length * percent)
         bar = "█" * filled_length + "-" * (self.length - filled_length)
@@ -121,14 +129,14 @@ class ProgressBar:
             sys.stdout.write("\n")
 
 
-def log_hfcollection_info(hfc):
+def log_hfcollection_info(hfc, show_progress=True):
     """
     Logs summary statistics for an ``HFCollection`` at INFO level.
 
     Iterates over all groups in the collection to compute aggregate metrics and
     identify outliers. Requires metadata to have been pulled (calls
     ``hfc.check_pulled()``). A progress bar is displayed on stdout during
-    the scan.
+    the scan, unless suppressed.
 
     Statistics logged:
 
@@ -142,6 +150,9 @@ def log_hfcollection_info(hfc):
 
     :param hfc: A pulled ``HFCollection`` instance to inspect.
     :type hfc: gents.hfcollection.HFCollection
+    :param show_progress: If ``False``, suppress the stdout progress bar.
+        Defaults to ``True``.
+    :type show_progress: bool
     """
     logger = logging.getLogger("gents")
 
@@ -155,7 +166,7 @@ def log_hfcollection_info(hfc):
     hf_groups = hfc.get_groups()
     logger.info(f"Output Groups formed: {len(hf_groups)}")
 
-    prog_bar = ProgressBar(total=len(hf_groups), label="Calculating HFCollection Statistics")
+    prog_bar = ProgressBar(total=len(hf_groups), label="Calculating HFCollection Statistics", quiet=not show_progress)
     total_data_tb = 0
     largest_num_vars = 0
     largest_group_num_vars = None
@@ -206,13 +217,14 @@ def log_hfcollection_info(hfc):
     )
 
 
-def log_tscollection_info(tsc):
+def log_tscollection_info(tsc, show_progress=True):
     """
     Logs summary statistics for a ``TSCollection`` at INFO level.
 
     Iterates over all time series orders in the collection to compute aggregate
     metrics and identify the largest output file. Auxiliary-only orders are
-    skipped. A progress bar is displayed on stdout during the scan.
+    skipped. A progress bar is displayed on stdout during the scan, unless
+    suppressed.
 
     Statistics logged:
 
@@ -223,6 +235,9 @@ def log_tscollection_info(tsc):
 
     :param tsc: A ``TSCollection`` instance to inspect.
     :type tsc: gents.timeseries.TSCollection
+    :param show_progress: If ``False``, suppress the stdout progress bar.
+        Defaults to ``True``.
+    :type show_progress: bool
     """
     logger = logging.getLogger("gents")
 
@@ -241,7 +256,7 @@ def log_tscollection_info(tsc):
     largest_ts_dims = None
     largest_ts_num_files = None
 
-    prog_bar = ProgressBar(total=len(tsc), label="Calculating TSCollection Statistics")
+    prog_bar = ProgressBar(total=len(tsc), label="Calculating TSCollection Statistics", quiet=not show_progress)
     for order in tsc:
         prog_bar.step()
         if order["primary_var"] != "auxiliary":

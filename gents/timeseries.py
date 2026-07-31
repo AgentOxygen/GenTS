@@ -942,7 +942,7 @@ class TSCollection:
         for order_dict in self.__orders:
             makedirs(Path(order_dict['ts_path_template']).parent, exist_ok=exist_ok)
 
-    def execute(self, optimize=True, optimize_batch_n=200, raise_errors=False, no_data=False):
+    def execute(self, optimize=True, optimize_batch_n=200, raise_errors=False, no_data=False, show_progress=True):
         """
         Executes all time-series generation orders in parallel.
 
@@ -969,6 +969,9 @@ class TSCollection:
             structure is still produced; primaries read back as their fill value.
             Defaults to ``False``.
         :type no_data: bool
+        :param show_progress: If ``False``, suppress the stdout progress bar.
+            Defaults to ``True``.
+        :type show_progress: bool
         :returns: List of paths to all generated time-series output files.
         :rtype: list[str]
         """
@@ -1030,7 +1033,7 @@ class TSCollection:
                     "ts_args": ts_args,
                     "no_data": no_data
                 })
-        prog_bar = ProgressBar(total=len(optimized_orders), label="Generating Timeseries")
+        prog_bar = ProgressBar(total=len(optimized_orders), label="Generating Timeseries", quiet=not show_progress)
         if self.__num_processes > 1:
             with ProcessPoolExecutor(max_workers=self.__num_processes) as executor:
                 futures = {executor.submit(generate_time_series, **args): args for args in optimized_orders}

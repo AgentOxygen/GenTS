@@ -652,7 +652,7 @@ class HFCollection:
         logger.info(f"Sorted along time.")
         return self.copy(meta_map=sorted_map)
     
-    def pull_metadata(self, check_valid=True, raise_errors=False):
+    def pull_metadata(self, check_valid=True, raise_errors=False, show_progress=True):
         """
         Loads metadata for all history files in the collection in parallel.
 
@@ -668,11 +668,14 @@ class HFCollection:
         :param raise_errors: If ``True`` (default ``False``), calls errors are raised
             rather than just logged.
         :type raise_errors: bool
+        :param show_progress: If ``False``, suppress the stdout progress bar.
+            Defaults to ``True``.
+        :type show_progress: bool
         """
         logger.info(f"Pulling metadata...")
         paths = list(self.__hf_to_meta_map.keys())
 
-        prog_bar = ProgressBar(total=len(paths), label="Pulling Metadata")
+        prog_bar = ProgressBar(total=len(paths), label="Pulling Metadata", quiet=not show_progress)
         if self.__num_processes > 1:
             with ProcessPoolExecutor(max_workers=self.__num_processes) as executor:
                 futures = {executor.submit(get_meta_from_path, path): path for path in paths}
