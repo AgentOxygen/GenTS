@@ -230,8 +230,9 @@ class MHFDataset:
 
         Two execution paths are used depending on fragmentation:
 
-        - **Non-fragmented:** iterates over the requested time values and reads
-          each time step from the appropriate single file.
+        - **Non-fragmented:** reads maximal runs of consecutive requested time
+          steps that land in the same file at consecutive positions in one
+          slice read each, rather than one read per time step.
         - **Fragmented:** for each time step, reads from all spatial-tile files
           and inserts each tile into the correct slice of a pre-allocated output
           array by matching tile coordinate values against the combined coordinate
@@ -261,10 +262,19 @@ class MHFDataset:
 
         var_vals = np.empty(data_shape, dtype=self.__hf_datasets[0][var_name].dtype)
         if not self.is_fragmented():
-            for index, time_val in enumerate(time_vals):
-                hf_index, sub_t_index = self.__time_mapping[time_val][0]
+            n = len(time_vals)
+            index = 0
+            while index < n:
+                hf_index, sub_t_index = self.__time_mapping[time_vals[index]][0]
+                run_len = 1
+                while index + run_len < n:
+                    next_hf_index, next_sub_t_index = self.__time_mapping[time_vals[index + run_len]][0]
+                    if next_hf_index != hf_index or next_sub_t_index != sub_t_index + run_len:
+                        break
+                    run_len += 1
                 hf_data = self.__hf_datasets[hf_index]
-                var_vals[index] = hf_data[var_name][sub_t_index]
+                var_vals[index:index + run_len] = hf_data[var_name][sub_t_index:sub_t_index + run_len]
+                index += run_len
         else:
             for time_index, time_val in enumerate(time_vals):
                 for hf_index, sub_t_index in self.__time_mapping[time_val]:
