@@ -969,15 +969,26 @@ class TSCollection:
                     "ts_args": ts_args,
                     "no_data": no_data
                 })
-        with ProcessPoolExecutor(max_workers=self.__num_processes) as executor:
-            futures = {executor.submit(generate_time_series, **args): args for args in optimized_orders}
-            prog_bar = ProgressBar(total=len(futures), label="Generating Timeseries")
-            for future in as_completed(futures):
+        prog_bar = ProgressBar(total=len(optimized_orders), label="Generating Timeseries")
+        if self.__num_processes > 1:
+            with ProcessPoolExecutor(max_workers=self.__num_processes) as executor:
+                futures = {executor.submit(generate_time_series, **args): args for args in optimized_orders}
+                for future in as_completed(futures):
+                    try:
+                        results.append(future.result())
+                    except Exception as exc:
+                        order = futures[future]
+                        logger.warning(f"Failed to generate time series for {order['ts_path_template']}: {exc}", exc_info=True)
+                        if raise_errors:
+                            raise
+                    finally:
+                        prog_bar.step()
+        else:
+            for args in optimized_orders:
                 try:
-                    results.append(future.result())
+                    results.append(generate_time_series(**args))
                 except Exception as exc:
-                    path = futures[future]
-                    logger.warning(f"Failed to generate time series for {path}: {exc}", exc_info=True)
+                    logger.warning(f"Failed to generate time series for {args['ts_path_template']}: {exc}", exc_info=True)
                     if raise_errors:
                         raise
                 finally:

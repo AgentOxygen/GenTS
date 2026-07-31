@@ -5,8 +5,9 @@ from gents.tests.test_cases import *
 from gents.tests.test_workflow import is_monotonic
 from gents.datastore import GenTSDataStore
 from unittest.mock import patch, wraps
-from os import listdir
+from os import listdir, remove
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+import logging
 import pytest
 
 NUM_PARALLEL_TASKS=2
@@ -93,5 +94,78 @@ def test_dataset_opens(simple_case):
         with patch("gents.mhfdataset.GenTSDataStore", wraps=GenTSDataStore) as mock_ds:
             assert mock_ds.call_count == 0
             ts_collection = TSCollection(hf_collection, output_head_dir, num_processes=1)
-            ts_collection.execute(optimize=False) 
+            ts_collection.execute(optimize=False)
             assert mock_ds.call_count == SIMPLE_NUM_TEST_HIST_FILES*SIMPLE_NUM_VARS
+
+
+def test_pull_metadata_pool_error_raises(no_time_case):
+    """pull_metadata(num_processes>1, raise_errors=True) propagates a worker exception through the pool branch."""
+    input_head_dir, output_head_dir = no_time_case
+    hf_collection = HFCollection(input_head_dir, num_processes=NUM_PARALLEL_TASKS)
+    with pytest.raises(ValueError, match=".nc"):
+        hf_collection.pull_metadata(raise_errors=True)
+
+
+def test_pull_metadata_pool_error_logged(no_time_case, caplog):
+    """pull_metadata(num_processes>1, raise_errors=False) logs and drops failures instead of raising."""
+    caplog.set_level(logging.WARNING, logger="gents")
+    input_head_dir, output_head_dir = no_time_case
+    hf_collection = HFCollection(input_head_dir, num_processes=NUM_PARALLEL_TASKS)
+    hf_collection.pull_metadata()
+
+    assert len(hf_collection) == 0
+    assert "Failed to load metadata" in caplog.text
+
+
+def test_execute_serial_error_raises(simple_case):
+    """execute(num_processes=1, raise_errors=True) propagates a worker exception in-process."""
+    input_head_dir, output_head_dir = simple_case
+    hf_collection = HFCollection(input_head_dir, num_processes=1)
+    ts_collection = TSCollection(hf_collection, output_head_dir, num_processes=1)
+    remove(list(hf_collection)[0])
+
+    with pytest.raises(FileNotFoundError):
+        ts_collection.execute(raise_errors=True)
+
+
+def test_execute_serial_error_logged(simple_case, caplog):
+    """execute(num_processes=1, raise_errors=False) logs a legible identifier and returns partial results instead of raising."""
+    caplog.set_level(logging.WARNING, logger="gents")
+    input_head_dir, output_head_dir = simple_case
+    hf_collection = HFCollection(input_head_dir, num_processes=1)
+    ts_collection = TSCollection(hf_collection, output_head_dir, num_processes=1)
+    remove(list(hf_collection)[0])
+
+    ts_paths = ts_collection.execute()
+
+    assert ts_paths == []
+    assert "Failed to generate time series for" in caplog.text
+    assert str(output_head_dir) in caplog.text
+    assert "'hf_paths'" not in caplog.text
+
+
+def test_execute_pool_error_raises(simple_case):
+    """execute(num_processes>1, raise_errors=True) propagates a worker exception through the pool branch."""
+    input_head_dir, output_head_dir = simple_case
+    hf_collection = HFCollection(input_head_dir, num_processes=NUM_PARALLEL_TASKS)
+    ts_collection = TSCollection(hf_collection, output_head_dir, num_processes=NUM_PARALLEL_TASKS)
+    remove(list(hf_collection)[0])
+
+    with pytest.raises(FileNotFoundError):
+        ts_collection.execute(raise_errors=True)
+
+
+def test_execute_pool_error_logged(simple_case, caplog):
+    """execute(num_processes>1, raise_errors=False) logs the failed order's output path, not the raw order dict."""
+    caplog.set_level(logging.WARNING, logger="gents")
+    input_head_dir, output_head_dir = simple_case
+    hf_collection = HFCollection(input_head_dir, num_processes=NUM_PARALLEL_TASKS)
+    ts_collection = TSCollection(hf_collection, output_head_dir, num_processes=NUM_PARALLEL_TASKS)
+    remove(list(hf_collection)[0])
+
+    ts_paths = ts_collection.execute()
+
+    assert ts_paths == []
+    assert "Failed to generate time series for" in caplog.text
+    assert str(output_head_dir) in caplog.text
+    assert "'hf_paths'" not in caplog.text

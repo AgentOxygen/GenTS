@@ -672,15 +672,25 @@ class HFCollection:
         logger.info(f"Pulling metadata...")
         paths = list(self.__hf_to_meta_map.keys())
 
-        with ProcessPoolExecutor(max_workers=self.__num_processes) as executor:
-            futures = {executor.submit(get_meta_from_path, path): path for path in paths}
-            results = []
-            prog_bar = ProgressBar(total=len(futures), label="Pulling Metadata")
-            for future in as_completed(futures):
-                path = futures[future]
+        prog_bar = ProgressBar(total=len(paths), label="Pulling Metadata")
+        if self.__num_processes > 1:
+            with ProcessPoolExecutor(max_workers=self.__num_processes) as executor:
+                futures = {executor.submit(get_meta_from_path, path): path for path in paths}
+                for future in as_completed(futures):
+                    path = futures[future]
+                    try:
+                        result = future.result()
+                        self.__hf_to_meta_map[path] = result
+                    except Exception as exc:
+                        logger.warning(f"Failed to load metadata for {path}: {exc}", exc_info=True)
+                        if raise_errors:
+                            raise
+                    finally:
+                        prog_bar.step()
+        else:
+            for path in paths:
                 try:
-                    result = future.result()
-                    self.__hf_to_meta_map[path] = result
+                    self.__hf_to_meta_map[path] = get_meta_from_path(path)
                 except Exception as exc:
                     logger.warning(f"Failed to load metadata for {path}: {exc}", exc_info=True)
                     if raise_errors:
