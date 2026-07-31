@@ -65,9 +65,13 @@ class MHFDataset:
         Opens all history file handles and builds the internal time mapping.
 
         Constructs ``__time_mapping``: a dictionary from each unique float time
-        value to the list of file indices that contain it.  Raises an exception if
-        the number of files per time step is not consistent across all time values
-        (i.e. fragmentation is inconsistent).
+        value to the list of ``(file_index, sub_time_index)`` pairs that
+        contain it -- ``sub_time_index`` is the position of that time value
+        within *its own file's* time array (``0`` for single-step files),
+        precomputed here so :meth:`get_var_vals` never has to re-scan a
+        file's time array to find it. Raises an exception if the number of
+        files per time step is not consistent across all time values (i.e.
+        fragmentation is inconsistent).
 
         :raises Exception: If the spatial fragmentation is not consistent over time.
         """
@@ -76,19 +80,19 @@ class MHFDataset:
             for ds in self.__hf_datasets:
                 ds.set_auto_maskandscale(False)
             self.__time_name, self.time_bnds_name = get_time_variables_names(self.__hf_datasets[0])
-            self.__time_vals = [np.squeeze(hf_data[self.__time_name][:]) for hf_data in self.__hf_datasets]
+            time_vals_by_file = [np.squeeze(hf_data[self.__time_name][:]) for hf_data in self.__hf_datasets]
 
             for hf_index in range(len(self.__hf_datasets)):
-                time_vals = self.__time_vals[hf_index]
+                time_vals = time_vals_by_file[hf_index]
                 if len(time_vals.shape) == 0:
                     time_vals = [float(time_vals)]
-                
-                for time in time_vals:
+
+                for sub_t_index, time in enumerate(time_vals):
                     time = float(time)
                     if time in self.__time_mapping:
-                        self.__time_mapping[time].append(hf_index)
+                        self.__time_mapping[time].append((hf_index, sub_t_index))
                     else:
-                        self.__time_mapping[time] = [hf_index]
+                        self.__time_mapping[time] = [(hf_index, sub_t_index)]
             if not self.is_time_consistent():
                 raise Exception("Fragmentation is not consistent over time.")
 
@@ -258,19 +262,14 @@ class MHFDataset:
         var_vals = np.empty(data_shape, dtype=self.__hf_datasets[0][var_name].dtype)
         if not self.is_fragmented():
             for index, time_val in enumerate(time_vals):
-                hf_index = self.__time_mapping[time_val][0]
+                hf_index, sub_t_index = self.__time_mapping[time_val][0]
                 hf_data = self.__hf_datasets[hf_index]
-                if hf_data[self.__time_name].shape[0] > 1:
-                    sub_t_index = int(np.where(self.__time_vals[hf_index] == time_val)[0][0])
-                    var_vals[index] = hf_data[var_name][sub_t_index]
-                else:
-                    var_vals[index] = hf_data[var_name][0]
+                var_vals[index] = hf_data[var_name][sub_t_index]
         else:
             for time_index, time_val in enumerate(time_vals):
-                for hf_index in self.__time_mapping[time_val]:
+                for hf_index, sub_t_index in self.__time_mapping[time_val]:
                     hf_data = self.__hf_datasets[hf_index]
                     if self.__time_name in hf_data[var_name].dimensions and hf_data[self.__time_name].shape[0] > 1:
-                        sub_t_index = int(np.where(self.__time_vals[hf_index] == time_val)[0][0])
                         hf_data_fragment = hf_data[var_name][sub_t_index]
                     else:
                         hf_data_fragment = hf_data[var_name][0]
