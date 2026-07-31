@@ -23,6 +23,35 @@ import warnings
 
 logger = logging.getLogger(__name__)
 
+CHUNK_TARGET_BYTES = 4 * (1024**2)
+
+
+def compute_chunksizes(var_shape, itemsize, target_bytes=CHUNK_TARGET_BYTES):
+    """
+    Chooses netCDF chunk sizes for a variable shaped ``(time, ...)``.
+
+    Variables whose full size is under ``target_bytes`` are stored
+    contiguously (chunksizes equal to ``var_shape``). Larger variables are
+    chunked along the time axis (axis 0) so each chunk is as large as
+    possible without exceeding ``target_bytes``; the remaining dimensions
+    keep their full size.
+
+    :param var_shape: Full variable shape, time axis first.
+    :type var_shape: list[int]
+    :param itemsize: Size in bytes of one array element.
+    :type itemsize: int
+    :param target_bytes: Chunk size target in bytes. Defaults to
+        :data:`CHUNK_TARGET_BYTES` (4 MiB).
+    :type target_bytes: int
+    :returns: Chunk sizes, one per dimension of ``var_shape``.
+    :rtype: list[int]
+    """
+    if np.prod(var_shape) * itemsize < target_bytes:
+        return var_shape
+    time_chunk_size = max(1, target_bytes // (np.prod(var_shape[1:]) * itemsize))
+    return [time_chunk_size] + var_shape[1:]
+
+
 def check_timeseries_integrity(ts_path: str):
     """
     Checks whether a time-series file was written completely by GenTS.
@@ -75,7 +104,7 @@ def check_timeseries_conform(ts_path: str):
                 chunking = list(ts_ds[variable].chunking())
                 chunking[0] += 1
                 bumped_size = np.prod(chunking)*ts_ds[variable].dtype.itemsize
-                if bumped_size < 4*(1024**2):
+                if bumped_size < CHUNK_TARGET_BYTES:
                     return False
         
     return True
@@ -201,11 +230,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
                     ts_ds.createDimension(dim, var_shape[index])
 
             var_dtype = agg_hf_ds.get_var_dtype(primary_var)
-            if np.prod(var_shape)*var_dtype.itemsize < 4*(1024**2):
-                chunksizes = var_shape
-            else:
-                time_chunk_size = max(1, 4*(1024**2) // (np.prod(var_shape[1:]) * var_dtype.itemsize))
-                chunksizes = [time_chunk_size] + var_shape[1:]
+            chunksizes = compute_chunksizes(var_shape, var_dtype.itemsize)
 
             # Route _FillValue through creation so unwritten regions read back as
             # it, then omit it from the copied attributes (it cannot be set twice).
