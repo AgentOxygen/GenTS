@@ -241,6 +241,39 @@ def test_netcdfmeta_raises_on_no_time(tmp_path):
             netCDFMeta(ds, path)
 
 
+@pytest.fixture
+def lazy_meta(tmp_path):
+    path = str(tmp_path / "test.nc")
+    generate_history_file(path, [15.0], [[0.0, 30.0]])
+    with GenTSDataStore(path, "r") as ds:
+        return netCDFMeta(ds, path, decode_dates=False), path
+
+
+def test_netcdfmeta_decode_dates_false_defers_and_still_decodes(lazy_meta):
+    """decode_dates=False defers CFTime conversion, but get_cftimes()/get_cftime_bounds() still decode correctly on demand, after the source file has closed."""
+    meta, _ = lazy_meta
+    cftimes = meta.get_cftimes()
+    assert len(cftimes) == 1
+    bounds = meta.get_cftime_bounds()
+    assert bounds is not None
+    assert bounds.shape == (1, 2)
+
+
+def test_netcdfmeta_decode_dates_false_no_bounds(tmp_path):
+    """decode_dates=False with no time-bounds variable: get_cftime_bounds() still returns None rather than raising."""
+    path = str(tmp_path / "test.nc")
+    generate_history_file(path, [15.0], None)
+    with GenTSDataStore(path, "r") as ds:
+        meta = netCDFMeta(ds, path, decode_dates=False)
+    assert meta.get_cftime_bounds() is None
+
+
+def test_netcdfmeta_decode_dates_false_is_valid(lazy_meta):
+    """is_valid() still works correctly (triggering the lazy decode internally) when constructed with decode_dates=False."""
+    meta, _ = lazy_meta
+    assert meta.is_valid() is True
+
+
 def test_get_meta_from_path(tmp_path):
     """get_meta_from_path() returns a populated netCDFMeta with the correct path."""
     path = str(tmp_path / "test.nc")
