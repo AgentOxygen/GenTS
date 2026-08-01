@@ -352,7 +352,7 @@ def generate_time_series(hf_paths, ts_path_template, secondary_vars, ts_args, no
     :rtype: list[str]
     """
     ts_paths = []
-    with MHFDataset(hf_paths) as agg_hf_ds:
+    with MHFDataset(hf_paths, preload_var_list=list(ts_args)) as agg_hf_ds:
         secondary_vars_data = {}
 
         for variable in secondary_vars:

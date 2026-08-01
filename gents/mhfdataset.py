@@ -1,11 +1,10 @@
 from gents.datastore import GenTSDataStore
 from pathlib import Path
-from gents.meta import get_attributes, get_time_variables_names
-from cftime import num2date
+from gents.meta import netCDFMeta
 import numpy as np
 
 
-def get_concat_coords(hf_datasets):
+def extend_coords(ds, dim_coords={}):
     """
     Builds a combined coordinate map across all datasets in a spatially fragmented group.
 
@@ -21,16 +20,13 @@ def get_concat_coords(hf_datasets):
     :returns: Dictionary mapping dimension names to their combined coordinate arrays.
     :rtype: dict
     """
-    dim_coords = {}
-
-    for ds in hf_datasets:
-        for dim in ds.dimensions:
-            if dim in ds.variables and dim in dim_coords:
-                dim_coords[dim] = np.unique(np.concat([ds[dim][:], dim_coords[dim]]))
-            elif dim in ds.variables:
-                dim_coords[dim] = ds[dim][:]
-            else:
-                dim_coords[dim] = np.arange(ds.dimensions[dim].size)
+    for dim in ds.dimensions:
+        if dim in ds.variables and dim in dim_coords:
+            dim_coords[dim] = np.unique(np.concat([ds[dim][:], dim_coords[dim]]))
+        elif dim in ds.variables:
+            dim_coords[dim] = ds[dim][:]
+        else:
+            dim_coords[dim] = np.arange(ds.dimensions[dim].size)
 
     return dim_coords
 
@@ -45,7 +41,7 @@ class MHFDataset:
     on :meth:`close` (or ``__exit__``).
     """
 
-    def __init__(self, hf_paths):
+    def __init__(self, hf_paths, preload_var_list=None, memory_limit_bytes=np.inf, load_secondaries=True):
         """
         Stores the history file paths and initialises empty internal state.
 
@@ -56,9 +52,18 @@ class MHFDataset:
         :type hf_paths: list[str or pathlib.Path]
         """
         self.__hf_files = [Path(path) for path in hf_paths]
-        self.__hf_datasets = None
+        self.__hf_metas = []
         self.__time_mapping = {}
-        self.__data_coords = None
+        self.__time_name = None
+        self.time_bnds_name = None
+        self.__data_coords = {}
+        self.__data_secondary_var_cache = {}
+        self.__data_var_cache = {}
+        self.__last_var_read = None
+        self.__memory_limit_bytes = memory_limit_bytes
+        self.__past_vars_read = []
+        self.__load_secondaries = load_secondaries
+        self.__preload_var_list = list(preload_var_list) if preload_var_list is not None else []
 
     def open(self):
         """
@@ -73,36 +78,143 @@ class MHFDataset:
         files per time step is not consistent across all time values (i.e.
         fragmentation is inconsistent).
 
+        Secondary-variable data (``time``, ``time_bnds``, and -- for a
+        fragmented group -- per-tile ``lat``/``lon``) can differ from file to
+        file, so it is accumulated per file here rather than read once from
+        the first file and reused; these arrays are small compared to primary
+        variable data, so the extra reads are cheap. Primary variables named
+        in ``preload_var_list`` are read in this same per-file pass too, so
+        :meth:`get_var_vals` can serve them straight from cache instead of
+        reopening every file a second time.
+
         :raises Exception: If the spatial fragmentation is not consistent over time.
         """
-        if self.__hf_datasets is None:
-            self.__hf_datasets = [GenTSDataStore(path, 'r') for path in self.__hf_files]
-            for ds in self.__hf_datasets:
-                ds.set_auto_maskandscale(False)
-            self.__time_name, self.time_bnds_name = get_time_variables_names(self.__hf_datasets[0])
-            time_vals_by_file = [np.squeeze(hf_data[self.__time_name][:]) for hf_data in self.__hf_datasets]
+        for hf_index, path in enumerate(self.__hf_files):
+            with GenTSDataStore(path, 'r') as hf_ds:
+                # MHFDataset only ever consumes raw float times (self.__time_mapping)
+                # -- never the decoded CFTime values -- so skip the num2date cost.
+                hf_meta = netCDFMeta(hf_ds, path, decode_dates=False)
 
-            for hf_index in range(len(self.__hf_datasets)):
-                time_vals = time_vals_by_file[hf_index]
-                if len(time_vals.shape) == 0:
-                    time_vals = [float(time_vals)]
+                self.__data_coords = extend_coords(hf_ds, self.__data_coords)
 
-                for sub_t_index, time in enumerate(time_vals):
+                if self.__time_name is None or self.time_bnds_name is None:
+                    self.__time_name = hf_meta.get_time_var_name()
+                    self.time_bnds_name = hf_meta.get_timebnds_var_name()
+
+                hf_ds.set_auto_maskandscale(False)
+
+                for sub_t_index, time in enumerate(hf_meta.get_float_times()):
                     time = float(time)
                     if time in self.__time_mapping:
                         self.__time_mapping[time].append((hf_index, sub_t_index))
                     else:
                         self.__time_mapping[time] = [(hf_index, sub_t_index)]
-            if not self.is_time_consistent():
-                raise Exception("Fragmentation is not consistent over time.")
+
+                if self.__load_secondaries:
+                    for var_name in hf_meta.get_secondary_variables():
+                        if var_name in self.__data_secondary_var_cache:
+                            self.__data_secondary_var_cache[var_name].append(hf_ds[var_name][:])
+                        else:
+                            self.__data_secondary_var_cache[var_name] = [hf_ds[var_name][:]]
+
+                for var_name in self.__preload_var_list:
+                    # Callers may pass sentinel/non-variable names (e.g. TSCollection's
+                    # "auxiliary" pseudo-order for groups with no primary variables) --
+                    # only preload names that are actually primary variables in this file.
+                    if var_name not in hf_meta.get_primary_variables():
+                        continue
+                    if var_name in self.__data_var_cache:
+                        self.__data_var_cache[var_name].append(hf_ds[var_name][:])
+                    else:
+                        self.__data_var_cache[var_name] = [hf_ds[var_name][:]]
+
+                self.__hf_metas.append(hf_meta)
+
+        if not self.is_time_consistent():
+            raise Exception("Fragmentation is not consistent over time.")
 
     def close(self):
         """
-        Closes all open netCDF4 file handles.
+        Drops all cached variable data, leaving the instance ready to be reopened.
         """
-        if self.__hf_datasets is not None:
-            for ds in self.__hf_datasets:
-                ds.close()
+        self.__data_var_cache = {}
+        self.__data_secondary_var_cache = {}
+
+    def __cache_variable(self, target_var_name, cache_ahead=True):
+        vars_to_cache = [target_var_name]
+        # Check memory size of cache + the target variable to cache
+        cache_size_b = self.get_var_dsize(target_var_name)
+        for var_name in self.__data_var_cache:
+            cache_size_b += self.get_var_dsize(var_name)
+
+        if cache_size_b > self.__memory_limit_bytes:
+            raise MemoryError(f"Cache size of {cache_size_b / (1024**3)}GB with '{target_var_name}' exceeds limit of {self.__memory_limit_bytes / (1024**3)}GB.")
+        
+        if cache_ahead:
+            for nvar_name in self.__hf_metas[0].get_primary_variables():
+                if self.get_var_dsize(nvar_name) + cache_size_b > self.__memory_limit_bytes:
+                    continue
+                if nvar_name not in self.__past_vars_read and nvar_name not in vars_to_cache:
+                    cache_size_b += self.get_var_dsize(nvar_name)
+                    vars_to_cache.append(nvar_name)
+
+        # if the variable has no time dimension, no reason to iterate over all of the history files
+        # we tackle those first (if they exist)
+        notime_vars_to_cache = []
+        time_vars_to_cache = []
+        for var_name in vars_to_cache:
+            if self.__time_name in self.get_var_dimensions(var_name):
+                time_vars_to_cache.append(var_name)
+            else:
+                notime_vars_to_cache.append(var_name)
+
+        # Iterate over history files
+        for index, path in enumerate(self.__hf_files):
+            with GenTSDataStore(path, 'r') as hf_ds:
+                if index == 0:
+                    for var_name in notime_vars_to_cache:
+                        self.__data_var_cache[var_name] = hf_ds[var_name][:]
+                
+                for var_name in time_vars_to_cache:
+                    if var_name in self.__data_var_cache:
+                        self.__data_var_cache[var_name].append(hf_ds[var_name][:])
+                    else:
+                        self.__data_var_cache[var_name] = [hf_ds[var_name][:]]
+
+    def __get_hf_data(self, index, var_name):
+        hf_path = self.__hf_files[index]
+
+        if var_name in self.__data_secondary_var_cache:
+            return self.__data_secondary_var_cache[var_name][index]
+
+        # Check if done reading last variable and delete if so
+        if self.__last_var_read != var_name:
+            if self.__last_var_read is not None:
+                del self.__data_var_cache[self.__last_var_read]
+            self.__past_vars_read.append(self.__last_var_read)
+            self.__last_var_read = var_name
+        
+        # Check cache, if its in the cache, return it
+        if var_name in self.__data_var_cache:
+            return self.__data_var_cache[var_name][index]
+        # If its not in the cache, this is likely a new block of variables
+        # so, check if the entire timeseries for variable fits in cache and if possible put it there
+        # also put the other variables that will fit.
+        else:
+            var_memory_size = self.get_var_dsize(var_name)
+
+            if var_memory_size < self.__memory_limit_bytes:
+                # cache this variable + others to fill it, then return from cache
+                self.__cache_variable(var_name)
+                return self.__data_var_cache[var_name][index]
+            else:
+                # doesnt fit in memory, so don't cache
+                # we could partially cache the timeseries, but for now, I will just skip caching the variable all together
+                with GenTSDataStore(hf_path, 'r') as hf_ds:
+                    return hf_ds[var_name][:]
+
+    def get_var_dsize(self, var_name):
+        return np.prod(self.get_var_data_shape(var_name))*self.get_var_dtype(var_name).itemsize
 
     def get_time_vals(self):
         """
@@ -153,8 +265,7 @@ class MHFDataset:
         :returns: List of dimension name strings in the order they appear on the variable.
         :rtype: list[str]
         """
-        init_ds = self.__hf_datasets[0][var_name]
-        return list(init_ds.dimensions)
+        return self.__hf_metas[0].get_variable_dims(var_name)
 
     def get_var_dtype(self, var_name):
         """
@@ -165,7 +276,7 @@ class MHFDataset:
         :returns: NumPy dtype of the variable.
         :rtype: numpy.dtype
         """
-        return self.__hf_datasets[0][var_name].dtype
+        return self.__hf_metas[0].get_variable_dtype(var_name)
 
     def get_var_attrs(self, var_name):
         """
@@ -176,29 +287,7 @@ class MHFDataset:
         :returns: Dictionary mapping attribute names to their values.
         :rtype: dict
         """
-        return get_attributes(self.__hf_datasets[0][var_name])
-
-    def __check_coord_map(self):
-        """
-        Lazily initialises the combined coordinate map for all dimensions.
-
-        For non-fragmented groups, builds the map from the first file's dimensions
-        plus the aggregated time values from :meth:`get_time_vals`.  For fragmented
-        groups, delegates to :func:`get_concat_coords` to merge spatial coordinates
-        across all tiles.  Has no effect if the map has already been built.
-        """
-        if self.__data_coords is None:
-            if self.is_fragmented():
-                self.__data_coords = get_concat_coords(self.__hf_datasets)
-            else:
-                self.__data_coords = {}
-                init_ds = self.__hf_datasets[0]
-                for dim in init_ds.dimensions:
-                    if dim in init_ds.variables:
-                        self.__data_coords[dim] = init_ds[dim][:]
-                    else:
-                        self.__data_coords[dim] = np.arange(init_ds.dimensions[dim].size)
-                self.__data_coords[self.__time_name] = self.get_time_vals()
+        return self.__hf_metas[0].get_variable_attrs(var_name)
 
     def get_var_data_shape(self, var_name):
         """
@@ -213,15 +302,14 @@ class MHFDataset:
         :returns: List of dimension sizes representing the aggregated output shape.
         :rtype: list[int]
         """
-        self.__check_coord_map()
+        init_meta = self.__hf_metas[0]
         if var_name in self.__data_coords:
             return [len(self.__data_coords[var_name])]
         else:
-            init_ds = self.__hf_datasets[0][var_name]
             dim_shape = []
-            if self.__time_name in init_ds.dimensions:
+            if self.__time_name in init_meta.get_variable_dims(var_name):
                 dim_shape.append(len(self.get_time_vals()))
-            dim_shape += [len(self.__data_coords[dim]) for dim in init_ds.dimensions if dim != self.__time_name]
+            dim_shape += [len(self.__data_coords[dim]) for dim in init_meta.get_variable_dims(var_name) if dim != self.__time_name]
             return dim_shape
 
     def get_var_vals(self, var_name, time_index_start=0, time_index_end=None):
@@ -249,18 +337,17 @@ class MHFDataset:
         :returns: Array containing the variable data for the requested time slice.
         :rtype: numpy.ndarray
         """
-        self.__check_coord_map()
         if var_name in self.__data_coords:
             return self.__data_coords[var_name]
 
         if "time" not in self.get_var_dimensions(var_name):
-            return self.__hf_datasets[0][var_name][:]
+            return self.__get_hf_data(0, var_name)
 
         time_vals = self.get_time_vals()[time_index_start:time_index_end]
         data_shape = self.get_var_data_shape(var_name)
         data_shape[0] = len(time_vals)
 
-        var_vals = np.empty(data_shape, dtype=self.__hf_datasets[0][var_name].dtype)
+        var_vals = np.empty(data_shape, dtype=self.__hf_metas[0].get_variable_dtype(var_name))
         if not self.is_fragmented():
             n = len(time_vals)
             index = 0
@@ -272,24 +359,24 @@ class MHFDataset:
                     if next_hf_index != hf_index or next_sub_t_index != sub_t_index + run_len:
                         break
                     run_len += 1
-                hf_data = self.__hf_datasets[hf_index]
-                var_vals[index:index + run_len] = hf_data[var_name][sub_t_index:sub_t_index + run_len]
+                var_data = self.__get_hf_data(hf_index, var_name)
+                var_vals[index:index + run_len] = var_data[sub_t_index:sub_t_index + run_len]
                 index += run_len
         else:
             for time_index, time_val in enumerate(time_vals):
                 for hf_index, sub_t_index in self.__time_mapping[time_val]:
-                    hf_data = self.__hf_datasets[hf_index]
-                    if self.__time_name in hf_data[var_name].dimensions and hf_data[self.__time_name].shape[0] > 1:
-                        hf_data_fragment = hf_data[var_name][sub_t_index]
+                    var_data = self.__get_hf_data(hf_index, var_name)
+                    if self.__time_name in self.get_var_dimensions(var_name) and self.get_var_data_shape(self.__time_name)[0] > 1:
+                        hf_data_fragment = var_data[sub_t_index]
                     else:
-                        hf_data_fragment = hf_data[var_name][0]
+                        hf_data_fragment = var_data[0]
                     
                     index_ranges = []
-                    for dim_index, dim in enumerate(hf_data[var_name].dimensions):
+                    for dim_index, dim in enumerate(self.get_var_dimensions(var_name)):
                         if dim == self.__time_name:
                             index_ranges.append(time_index)
-                        elif dim in hf_data.variables:
-                            dim_vals = hf_data[dim][:]
+                        elif dim in self.__hf_metas[0].get_variables():
+                            dim_vals = self.__get_hf_data(hf_index, dim)
                             lower_index = np.where(np.min(dim_vals) == self.__data_coords[dim])[0][0]
                             upper_index = np.where(np.max(dim_vals) == self.__data_coords[dim])[0][0]
                             if lower_index == upper_index:
@@ -314,11 +401,11 @@ class MHFDataset:
         :returns: Dictionary mapping global attribute names to their values.
         :rtype: dict
         """
-        assert self.__hf_datasets is not None
+        assert self.__hf_metas is not None
 
         agg_attrs = {}
-        for ds in self.__hf_datasets:
-            agg_attrs |= get_attributes(ds)
+        for hf_meta in self.__hf_metas:
+            agg_attrs |= hf_meta.get_attributes()
         return agg_attrs
 
     def __enter__(self):
@@ -332,11 +419,8 @@ class MHFDataset:
     def __contains__(self, key):
         return key in self.__hf_files
 
-    def __iter__(self):
-        return iter(self.__hf_datasets)
-
     def __len__(self):
-        return len(self.__hf_datasets)
+        return len(self.__hf_files)
     
     def __getitem__(self, item):
-        return self.__hf_datasets[item]
+        return self.__hf_files[item]
