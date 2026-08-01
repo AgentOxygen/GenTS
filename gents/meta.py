@@ -130,7 +130,7 @@ class netCDFMeta:
     :mod:`gents.hfcollection`.
     """
 
-    def __init__(self, ds, path: str):
+    def __init__(self, ds, path: str, decode_dates=True):
         """
         Reads and caches metadata from an open netCDF4 dataset.
 
@@ -141,9 +141,14 @@ class netCDFMeta:
            :func:`get_time_variables_names`.
         3. Reads and normalises time values (handles scalar, 1-D, and
            higher-dimensional arrays via ``numpy.squeeze``).
-        4. Converts float times to CFTime objects via ``cftime.num2date``.
-        5. If a time-bounds variable exists, reads and converts it (falling back
-           to the time variable's units/calendar if the bounds variable lacks them).
+        4. If ``decode_dates`` is true, converts float times to CFTime objects
+           via ``cftime.num2date``. Otherwise the ``units``/``calendar`` needed
+           to do so are still resolved and cached, and the conversion happens
+           lazily the first time :meth:`get_cftimes` or :meth:`get_cftime_bounds`
+           is called -- ``num2date`` is measurably expensive per file and many
+           consumers (:class:`~gents.mhfdataset.MHFDataset`) never call either.
+        5. If a time-bounds variable exists, reads it (falling back to the time
+           variable's units/calendar if the bounds variable lacks its own).
         6. Classifies every variable as primary or secondary via
            :func:`is_var_secondary`.
         7. Records coordinate bounds for each dimension that has an associated
@@ -153,6 +158,12 @@ class netCDFMeta:
         :type ds: netCDF4.Dataset
         :param path: File-system path to the history file (stored for later retrieval).
         :type path: str
+        :param decode_dates: If ``True`` (default), decode CFTime values eagerly
+            here, matching prior behavior. If ``False``, defer the ``num2date``
+            call until :meth:`get_cftimes`/:meth:`get_cftime_bounds` is actually
+            called -- the file does not need to still be open for that, since
+            only the raw float values and the units/calendar strings are needed.
+        :type decode_dates: bool
         :raises ValueError: If no time-equivalent variable is found, or if the
             time-bounds variable is a scalar.
         :raises AttributeError: If the time variable lacks ``units`` or ``calendar``
@@ -165,10 +176,12 @@ class netCDFMeta:
         self.__path = path
 
         time_eqv, time_bnds_eqv = get_time_variables_names(ds)
-        
+
         if time_eqv is None:
             raise ValueError(f"No equivalent time variable found to concatenate over. Path: {self.__path}")
 
+        self.__time_eqv = time_eqv
+        self.__time_bnds_eqv = time_bnds_eqv
         self.__time_vals = ds[time_eqv][:]
 
         if len(self.__time_vals.shape) > 1:
@@ -179,11 +192,14 @@ class netCDFMeta:
         if 'calendar' not in ds[time_eqv].ncattrs() or 'units' not in ds[time_eqv].ncattrs():
             raise AttributeError(f"Unable to pull 'calendar' and/or 'units' attributes from '{time_eqv}' time-equivalent variable. Path: {self.__path}")
 
-        self.__cftime_vals = num2date(self.__time_vals, units=ds[time_eqv].units, calendar=ds[time_eqv].calendar)
+        self.__time_units = ds[time_eqv].units
+        self.__time_calendar = ds[time_eqv].calendar
 
         self.__time_bounds_vals = None
         self.__cftime_bounds_vals = None
-        
+        self.__time_bounds_units = None
+        self.__time_bounds_calendar = None
+
         if time_bnds_eqv:
             self.__time_bounds_vals = ds[time_bnds_eqv][:]
 
@@ -195,15 +211,22 @@ class netCDFMeta:
                 raise ValueError(f"Found a 'time_bounds' equivalent variable, but it was a single value. It must have two values (one for each boundary). Path: {self.__path}")
 
             try:
-                self.__cftime_bounds_vals = num2date(self.__time_bounds_vals, units=ds[time_bnds_eqv].units, calendar=ds[time_bnds_eqv].calendar)
+                self.__time_bounds_units = ds[time_bnds_eqv].units
+                self.__time_bounds_calendar = ds[time_bnds_eqv].calendar
             except AttributeError:
-                self.__cftime_bounds_vals = num2date(self.__time_bounds_vals, units=ds[time_eqv].units, calendar=ds[time_eqv].calendar)
+                self.__time_bounds_units = self.__time_units
+                self.__time_bounds_calendar = self.__time_calendar
+
+        if decode_dates:
+            self.__decode_dates()
+
         self.__var_names = list(ds.variables)
         self.__primary_var_names = []
         self.__secondary_var_names = []
         self.__variable_shapes = {}
         self.__variable_dims = {}
         self.__variable_dtypes = {}
+        self.__variable_attrs = {}
 
         for variable in ds.variables:
             if is_var_secondary(ds[variable]):
@@ -213,6 +236,7 @@ class netCDFMeta:
             self.__variable_shapes[variable] = ds[variable].shape
             self.__variable_dims[variable] = ds[variable].dimensions
             self.__variable_dtypes[variable] = ds[variable].dtype
+            self.__variable_attrs[variable] = get_attributes(ds[variable])
 
         self.__dim_bounds = {}
 
@@ -232,15 +256,41 @@ class netCDFMeta:
         :rtype: str
         """
         return self.__path
-    
+
+    def get_time_var_name(self):
+        return self.__time_eqv
+
+    def get_timebnds_var_name(self):
+        return self.__time_bnds_eqv
+
+    def __decode_dates(self):
+        """
+        Converts cached raw float time (and time-bounds, if present) values to
+        CFTime objects, if not already done. Idempotent -- safe to call
+        whether construction eagerly decoded already or not. Needs only the
+        raw values and units/calendar strings cached in ``__init__``, so the
+        source file does not need to still be open.
+        """
+        if self.__cftime_vals is None:
+            self.__cftime_vals = num2date(self.__time_vals, units=self.__time_units, calendar=self.__time_calendar)
+        if self.__time_bounds_vals is not None and self.__cftime_bounds_vals is None:
+            self.__cftime_bounds_vals = num2date(
+                self.__time_bounds_vals, units=self.__time_bounds_units, calendar=self.__time_bounds_calendar
+            )
+
     def get_cftime_bounds(self):
         """
         Returns the time-bounds array as CFTime objects.
+
+        Decodes lazily on first call if the instance was constructed with
+        ``decode_dates=False``.
 
         :returns: Array of CFTime bound pairs, or ``None`` if the history file
             contains no time-bounds variable.
         :rtype: numpy.ndarray or None
         """
+        if self.__time_bounds_vals is not None and self.__cftime_bounds_vals is None:
+            self.__decode_dates()
         return self.__cftime_bounds_vals
 
     def get_float_time_bounds(self):
@@ -266,9 +316,14 @@ class netCDFMeta:
         """
         Returns the time values converted to CFTime objects.
 
+        Decodes lazily on first call if the instance was constructed with
+        ``decode_dates=False``.
+
         :returns: Array of CFTime datetime objects corresponding to each time step.
         :rtype: numpy.ndarray
         """
+        if self.__cftime_vals is None:
+            self.__decode_dates()
         return self.__cftime_vals
 
     def get_variables(self):
@@ -337,6 +392,9 @@ class netCDFMeta:
         :rtype: numpy.dtype
         """
         return self.__variable_dtypes[variable]
+
+    def get_variable_attrs(self, variable):
+        return self.__variable_attrs[variable]
 
     def get_attributes(self):
         """
