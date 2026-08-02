@@ -93,7 +93,17 @@ class MHFDataset:
             with GenTSDataStore(path, 'r') as hf_ds:
                 # MHFDataset only ever consumes raw float times (self.__time_mapping)
                 # -- never the decoded CFTime values -- so skip the num2date cost.
-                hf_meta = netCDFMeta(hf_ds, path, decode_dates=False)
+                # time_bnds data and dimension bounds are read/computed by this
+                # class itself (secondary-var cache, extend_coords) -- loading
+                # them again inside netCDFMeta would be a pure duplicate read.
+                # Variable attributes are only ever consulted from the first
+                # file in the group (get_var_attrs() below), so only load them
+                # there.
+                hf_meta = netCDFMeta(
+                    hf_ds, path,
+                    decode_dates=False, load_time_bounds=False, compute_dim_bounds=False,
+                    load_variable_attrs=(hf_index == 0),
+                )
 
                 self.__data_coords = extend_coords(hf_ds, self.__data_coords)
 

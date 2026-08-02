@@ -19,6 +19,28 @@ def test_MHFDataset_open_skips_date_decoding(simple_case):
         mock_num2date.assert_not_called()
 
 
+def test_MHFDataset_open_skips_redundant_netCDFMeta_work(simple_case):
+    """open() opts every file out of time-bounds loading and dim-bounds computation (both duplicate work MHFDataset does itself), and opts out of variable-attribute loading for every file but the first (the only one get_var_attrs() ever reads from)."""
+    from gents.meta import netCDFMeta as real_netCDFMeta
+    input_head_dir, output_head_dir = simple_case
+    hf_collection = HFCollection(input_head_dir)
+    hf_groups = hf_collection.get_groups()
+    group = next(iter(hf_groups))
+
+    with patch("gents.mhfdataset.netCDFMeta", wraps=real_netCDFMeta) as mock_meta:
+        with MHFDataset(hf_groups[group]) as agg_hf_ds:
+            # get_var_attrs() must still work end-to-end off file 0's loaded attrs.
+            assert agg_hf_ds.get_var_attrs("VAR0").get("standard_name") == "VAR0"
+
+    calls = mock_meta.call_args_list
+    assert len(calls) == len(hf_groups[group])
+    for index, call in enumerate(calls):
+        assert call.kwargs["decode_dates"] is False
+        assert call.kwargs["load_time_bounds"] is False
+        assert call.kwargs["compute_dim_bounds"] is False
+        assert call.kwargs["load_variable_attrs"] is (index == 0)
+
+
 def test_MHFDataset_simple(simple_case):
     """MHFDataset opens a non-fragmented group, exposes correct file handles, and returns the expected variable shape and values."""
     input_head_dir, output_head_dir = simple_case

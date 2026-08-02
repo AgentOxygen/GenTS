@@ -130,7 +130,8 @@ class netCDFMeta:
     :mod:`gents.hfcollection`.
     """
 
-    def __init__(self, ds, path: str, decode_dates=True):
+    def __init__(self, ds, path: str, decode_dates=True, load_time_bounds=True,
+                 load_variable_attrs=True, compute_dim_bounds=True):
         """
         Reads and caches metadata from an open netCDF4 dataset.
 
@@ -147,12 +148,23 @@ class netCDFMeta:
            lazily the first time :meth:`get_cftimes` or :meth:`get_cftime_bounds`
            is called -- ``num2date`` is measurably expensive per file and many
            consumers (:class:`~gents.mhfdataset.MHFDataset`) never call either.
-        5. If a time-bounds variable exists, reads it (falling back to the time
-           variable's units/calendar if the bounds variable lacks its own).
+        5. If ``load_time_bounds`` is true and a time-bounds variable exists,
+           reads it (falling back to the time variable's units/calendar if the
+           bounds variable lacks its own).
         6. Classifies every variable as primary or secondary via
-           :func:`is_var_secondary`.
-        7. Records coordinate bounds for each dimension that has an associated
-           coordinate variable.
+           :func:`is_var_secondary`. If ``load_variable_attrs`` is true, also
+           reads every variable's own attributes.
+        7. If ``compute_dim_bounds`` is true, records coordinate bounds for each
+           dimension that has an associated coordinate variable.
+
+        ``load_time_bounds``, ``load_variable_attrs``, and ``compute_dim_bounds``
+        exist because :class:`~gents.mhfdataset.MHFDataset` never needs any of
+        the three (it reads ``time_bnds`` data and coordinate bounds itself,
+        and only ever reads variable attributes from the first file in a
+        group) -- each was a real, measured, wholly-or-partly wasted per-file
+        cost otherwise. Opting out is intentionally strict: calling the
+        corresponding getter afterward raises rather than silently returning
+        stale or empty data.
 
         :param ds: Open netCDF4 dataset for the history file.
         :type ds: netCDF4.Dataset
@@ -164,6 +176,20 @@ class netCDFMeta:
             called -- the file does not need to still be open for that, since
             only the raw float values and the units/calendar strings are needed.
         :type decode_dates: bool
+        :param load_time_bounds: If ``True`` (default), read the raw ``time_bnds``
+            array (if present). If ``False``, skip that read entirely --
+            :meth:`get_float_time_bounds`/:meth:`get_cftime_bounds` raise
+            ``RuntimeError`` if called and a bounds variable actually exists in
+            the file (still return ``None`` if the file genuinely has none).
+        :type load_time_bounds: bool
+        :param load_variable_attrs: If ``True`` (default), read every variable's
+            own attributes. If ``False``, skip it -- :meth:`get_variable_attrs`
+            raises ``RuntimeError`` if called.
+        :type load_variable_attrs: bool
+        :param compute_dim_bounds: If ``True`` (default), compute per-dimension
+            coordinate bounds. If ``False``, skip it -- :meth:`get_dim_bounds`
+            raises ``RuntimeError`` if called.
+        :type compute_dim_bounds: bool
         :raises ValueError: If no time-equivalent variable is found, or if the
             time-bounds variable is a scalar.
         :raises AttributeError: If the time variable lacks ``units`` or ``calendar``
@@ -171,6 +197,9 @@ class netCDFMeta:
         """
         self.__time_vals = None
         self.__cftime_vals = None
+        self.__load_time_bounds = load_time_bounds
+        self.__load_variable_attrs = load_variable_attrs
+        self.__compute_dim_bounds = compute_dim_bounds
 
         self.__attrs = get_attributes(ds)
         self.__path = path
@@ -200,7 +229,7 @@ class netCDFMeta:
         self.__time_bounds_units = None
         self.__time_bounds_calendar = None
 
-        if time_bnds_eqv:
+        if time_bnds_eqv and load_time_bounds:
             self.__time_bounds_vals = ds[time_bnds_eqv][:]
 
             if len(self.__time_bounds_vals.shape) > 2:
@@ -236,17 +265,19 @@ class netCDFMeta:
             self.__variable_shapes[variable] = ds[variable].shape
             self.__variable_dims[variable] = ds[variable].dimensions
             self.__variable_dtypes[variable] = ds[variable].dtype
-            self.__variable_attrs[variable] = get_attributes(ds[variable])
+            if load_variable_attrs:
+                self.__variable_attrs[variable] = get_attributes(ds[variable])
 
         self.__dim_bounds = {}
 
-        for dim_variable in ds.dimensions:
-            if dim_variable in ds.variables:
-                dim_data = ds[dim_variable][:]
-                if dim_data.shape[0] >= 2:
-                    self.__dim_bounds[dim_variable] = [np.min(dim_data), np.max(dim_data)]
-                else:
-                    self.__dim_bounds[dim_variable] = [np.min(dim_data)]
+        if compute_dim_bounds:
+            for dim_variable in ds.dimensions:
+                if dim_variable in ds.variables:
+                    dim_data = ds[dim_variable][:]
+                    if dim_data.shape[0] >= 2:
+                        self.__dim_bounds[dim_variable] = [np.min(dim_data), np.max(dim_data)]
+                    else:
+                        self.__dim_bounds[dim_variable] = [np.min(dim_data)]
 
     def get_path(self):
         """
@@ -278,6 +309,13 @@ class netCDFMeta:
                 self.__time_bounds_vals, units=self.__time_bounds_units, calendar=self.__time_bounds_calendar
             )
 
+    def __check_time_bounds_loaded(self):
+        if self.__time_bnds_eqv and not self.__load_time_bounds:
+            raise RuntimeError(
+                f"Time-bounds data was not loaded for this netCDFMeta (load_time_bounds=False), "
+                f"but '{self.__time_bnds_eqv}' exists in the file. Path: {self.__path}"
+            )
+
     def get_cftime_bounds(self):
         """
         Returns the time-bounds array as CFTime objects.
@@ -288,7 +326,10 @@ class netCDFMeta:
         :returns: Array of CFTime bound pairs, or ``None`` if the history file
             contains no time-bounds variable.
         :rtype: numpy.ndarray or None
+        :raises RuntimeError: If constructed with ``load_time_bounds=False`` and
+            the file actually has a time-bounds variable.
         """
+        self.__check_time_bounds_loaded()
         if self.__time_bounds_vals is not None and self.__cftime_bounds_vals is None:
             self.__decode_dates()
         return self.__cftime_bounds_vals
@@ -300,7 +341,10 @@ class netCDFMeta:
         :returns: Array of float time-bound pairs, or ``None`` if the history file
             contains no time-bounds variable.
         :rtype: numpy.ndarray or None
+        :raises RuntimeError: If constructed with ``load_time_bounds=False`` and
+            the file actually has a time-bounds variable.
         """
+        self.__check_time_bounds_loaded()
         return self.__time_bounds_vals
 
     def get_float_times(self):
@@ -394,6 +438,20 @@ class netCDFMeta:
         return self.__variable_dtypes[variable]
 
     def get_variable_attrs(self, variable):
+        """
+        Returns the attribute dictionary for a single variable.
+
+        :param variable: Name of the variable to look up.
+        :type variable: str
+        :returns: Dictionary mapping attribute names to their values.
+        :rtype: dict
+        :raises RuntimeError: If constructed with ``load_variable_attrs=False``.
+        """
+        if not self.__load_variable_attrs:
+            raise RuntimeError(
+                f"Variable attributes were not loaded for this netCDFMeta "
+                f"(load_variable_attrs=False). Path: {self.__path}"
+            )
         return self.__variable_attrs[variable]
 
     def get_attributes(self):
@@ -440,7 +498,13 @@ class netCDFMeta:
 
         :returns: Dictionary mapping dimension names to their coordinate bound lists.
         :rtype: dict
+        :raises RuntimeError: If constructed with ``compute_dim_bounds=False``.
         """
+        if not self.__compute_dim_bounds:
+            raise RuntimeError(
+                f"Dimension bounds were not computed for this netCDFMeta "
+                f"(compute_dim_bounds=False). Path: {self.__path}"
+            )
         return self.__dim_bounds
 
 def get_meta_from_path(path: str):

@@ -274,6 +274,56 @@ def test_netcdfmeta_decode_dates_false_is_valid(lazy_meta):
     assert meta.is_valid() is True
 
 
+def test_netcdfmeta_load_time_bounds_false_raises(tmp_path):
+    """load_time_bounds=False raises on get_float_time_bounds()/get_cftime_bounds() if the file actually has a time-bounds variable."""
+    path = str(tmp_path / "test.nc")
+    generate_history_file(path, [15.0], [[0.0, 30.0]])
+    with GenTSDataStore(path, "r") as ds:
+        meta = netCDFMeta(ds, path, load_time_bounds=False)
+    with pytest.raises(RuntimeError, match="load_time_bounds"):
+        meta.get_float_time_bounds()
+    with pytest.raises(RuntimeError, match="load_time_bounds"):
+        meta.get_cftime_bounds()
+
+
+def test_netcdfmeta_load_time_bounds_false_no_bounds_in_file(tmp_path):
+    """load_time_bounds=False on a file with no time-bounds variable at all still returns None, not a raise -- nothing was actually skipped."""
+    path = str(tmp_path / "test.nc")
+    generate_history_file(path, [15.0], None)
+    with GenTSDataStore(path, "r") as ds:
+        meta = netCDFMeta(ds, path, load_time_bounds=False)
+    assert meta.get_float_time_bounds() is None
+    assert meta.get_cftime_bounds() is None
+
+
+def test_netcdfmeta_load_variable_attrs_false_raises(simple_meta):
+    """load_variable_attrs=False raises on get_variable_attrs()."""
+    path = str(simple_meta[1])
+    with GenTSDataStore(path, "r") as ds:
+        meta = netCDFMeta(ds, path, load_variable_attrs=False)
+    with pytest.raises(RuntimeError, match="load_variable_attrs"):
+        meta.get_variable_attrs("VAR0")
+
+
+def test_netcdfmeta_load_variable_attrs_true_default(simple_meta):
+    """load_variable_attrs defaults to True, matching prior behavior."""
+    meta, _ = simple_meta
+    attrs = meta.get_variable_attrs("VAR0")
+    assert attrs.get("standard_name") == "VAR0"
+
+
+def test_netcdfmeta_compute_dim_bounds_false_raises(tmp_path):
+    """compute_dim_bounds=False raises on get_dim_bounds()."""
+    path = str(tmp_path / "test.nc")
+    lat_vals = np.linspace(-90, 90, 3)
+    lon_vals = np.linspace(-180, 180, 4)
+    generate_history_file(path, [15.0], [[0.0, 30.0]], dim_vals={"lat": lat_vals, "lon": lon_vals})
+    with GenTSDataStore(path, "r") as ds:
+        meta = netCDFMeta(ds, path, compute_dim_bounds=False)
+    with pytest.raises(RuntimeError, match="compute_dim_bounds"):
+        meta.get_dim_bounds()
+
+
 def test_get_meta_from_path(tmp_path):
     """get_meta_from_path() returns a populated netCDFMeta with the correct path."""
     path = str(tmp_path / "test.nc")
