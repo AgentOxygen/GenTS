@@ -227,3 +227,42 @@ def test_MHFDataset_tight_memory_limit_does_not_corrupt_primary_vars(tmp_path):
             assert np.array_equal(vals, expected), f"{var_name}: expected {expected.tolist()}, got {vals.tolist()}"
     finally:
         ds.close()
+
+
+def test_MHFDataset_repeated_reads_of_same_file_do_not_return_none(tmp_path):
+    """
+    write_timeseries_file() writes a primary variable in fixed byte-sized
+    chunks (chunksizes[0] from compute_chunksizes), independent of how many
+    time steps live in each source history file. When a single file holds
+    more time steps than fit in one write chunk (e.g. a high-frequency
+    stream like hourly output, vs. the one-step-per-file fixtures every
+    other test here uses), that file's cached data is requested across two
+    separate get_var_vals() calls. __get_hf_data() nulls a file's cache
+    entry the moment it's read once ("free up that memory" -- assuming
+    each file is only ever read once per variable); the second call for the
+    same file then gets back None, and get_var_vals()'s
+    var_data[sub_t_index:sub_t_index + run_len] slice crashes with
+    TypeError: 'NoneType' object is not subscriptable.
+    """
+    hf_paths = []
+    for f in range(2):
+        path = f"{tmp_path}/hf{f}.nc"
+        time_vals = [f * 4 + t for t in range(4)]
+        time_bnds = [[tv, tv + 1] for tv in time_vals]
+        generate_history_file(path, time_vals, time_bnds, num_vars=1)
+        with GenTSDataStore(path, "a") as ds:
+            for t in range(4):
+                ds["VAR0"][t, :, :] = f * 4 + t
+        hf_paths.append(path)
+
+    ds = MHFDataset(hf_paths, preload_var_list=["VAR0"])
+    ds.open()
+    try:
+        # Mimic write_timeseries_file's chunked writes splitting file 0's 4
+        # time steps across a write-chunk boundary (steps 0-1, then 2-3).
+        chunk1 = np.array(ds.get_var_vals("VAR0", time_index_start=0, time_index_end=2))[:, 0, 0]
+        chunk2 = np.array(ds.get_var_vals("VAR0", time_index_start=2, time_index_end=4))[:, 0, 0]
+        assert chunk1.tolist() == [0.0, 1.0]
+        assert chunk2.tolist() == [2.0, 3.0]
+    finally:
+        ds.close()

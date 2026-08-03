@@ -271,12 +271,13 @@ class MHFDataset:
             self.__past_vars_read.append(self.__last_var_read)
             self.__last_var_read = var_name
         
-        # Check cache, if its in the cache, return it
+        # Check cache, if its in the cache, return it. A single file's cached
+        # entry may legitimately be read more than once per variable (e.g.
+        # write_timeseries_file's byte-sized write chunks don't align with
+        # source file boundaries), so it is not freed here -- whole-variable
+        # eviction on switch (above) and close() already bound cache growth.
         if var_name in self.__data_var_cache and index < len(self.__data_var_cache[var_name]):
-            hf_data = self.__data_var_cache[var_name][index]
-            # Free up that memory, but keep the spot in the list so the order/positions are preserved
-            self.__data_var_cache[var_name][index] = None
-            return hf_data
+            return self.__data_var_cache[var_name][index]
         # If its not in the cache, this is likely a new block of variables
         # so, check if the entire timeseries for variable fits in cache and if possible put it there
         # also put the other variables that will fit.
