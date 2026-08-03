@@ -98,6 +98,49 @@ def test_dataset_opens(simple_case):
             assert mock_ds.call_count == SIMPLE_NUM_TEST_HIST_FILES*SIMPLE_NUM_VARS
 
 
+def test_execute_memory_limit_bytes_threaded_to_MHFDataset(simple_case):
+    """execute(memory_limit_bytes=...) reaches every MHFDataset it constructs, and defaults to unbounded (inf) when not given."""
+    import numpy as np
+    from gents.mhfdataset import MHFDataset
+
+    input_head_dir, output_head_dir = simple_case
+    hf_collection = HFCollection(input_head_dir, num_processes=1)
+
+    with patch("gents.timeseries.MHFDataset", wraps=MHFDataset) as mock_mhfdataset:
+        ts_collection = TSCollection(hf_collection, output_head_dir, num_processes=1)
+        ts_collection.execute(memory_limit_bytes=12345)
+        assert mock_mhfdataset.call_count > 0
+        for call in mock_mhfdataset.call_args_list:
+            assert call.kwargs["memory_limit_bytes"] == 12345
+
+    with patch("gents.timeseries.MHFDataset", wraps=MHFDataset) as mock_mhfdataset:
+        ts_collection = TSCollection(hf_collection, output_head_dir, num_processes=1).apply_overwrite("*")
+        ts_collection.execute()
+        assert mock_mhfdataset.call_count > 0
+        for call in mock_mhfdataset.call_args_list:
+            assert call.kwargs["memory_limit_bytes"] == np.inf
+
+
+def test_execute_memory_limit_bytes_not_yet_enforced_by_preload(simple_case):
+    """
+    Known current limitation, pinned down so a future change doesn't silently
+    alter it either way: memory_limit_bytes reaches MHFDataset correctly (see
+    test_execute_memory_limit_bytes_threaded_to_MHFDataset), but MHFDataset's
+    preload_var_list path -- what every order taken through TSCollection.execute()
+    uses -- does not itself check the limit while preloading. The limit is only
+    enforced by the on-demand __cache_variable fallback, which preload bypasses.
+    An absurdly small limit should therefore NOT prevent a normal run from
+    succeeding today. If this test starts failing because execute() now raises
+    or drops data under a tiny limit, that's preload becoming memory-aware --
+    update this test to assert the new, real enforcement instead of removing it.
+    """
+    input_head_dir, output_head_dir = simple_case
+    hf_collection = HFCollection(input_head_dir, num_processes=1)
+    ts_collection = TSCollection(hf_collection, output_head_dir, num_processes=1)
+    ts_paths = ts_collection.execute(memory_limit_bytes=1)
+    assert len(ts_paths) == SIMPLE_NUM_VARS
+
+
 def test_pull_metadata_pool_error_raises(no_time_case):
     """pull_metadata(num_processes>1, raise_errors=True) propagates a worker exception through the pool branch."""
     input_head_dir, output_head_dir = no_time_case

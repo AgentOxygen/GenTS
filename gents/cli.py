@@ -33,6 +33,7 @@ def parse_arguments():
     - ``-sl`` / ``--slice``: Maximum length of individual time-series files in years (default ``10``).
     - ``-hc`` / ``--hfcores``: Maximum number of cores for parallel metadata reads (default ``64``).
     - ``-tc`` / ``--tscores``: Maximum number of cores for parallel time-series writes (default ``8``).
+    - ``--memory-limit``: Maximum memory (in GB) each ``MHFDataset`` may use to cache variable data (default unbounded).
     - ``-m`` / ``--model``: Model default configuration to apply (``'CESM3'``, ``'CESM2'``, or ``'E3SM'``; default ``'none'``).
     - ``--exclude``: Glob pattern to exclude; may be specified multiple times. Overrides the model default unless ``--append`` is also set.
     - ``--include``: Glob pattern to include; may be specified multiple times. Overrides the model default unless ``--append`` is also set.
@@ -107,6 +108,14 @@ def parse_arguments():
         help="Maximum number of cores to use for writing timeseries if running in parallel. (Default 8)"
     )
     parser.add_argument(
+        "--memory-limit",
+        dest="memory_limit_gb",
+        type=float,
+        default=None,
+        help="Maximum memory (in GB) MHFDataset may use to cache variable data per worker "
+             "while generating time series. (Default: unbounded)"
+    )
+    parser.add_argument(
         "-m", "--model",
         type=str,
         default=None,
@@ -178,6 +187,8 @@ def main():
     if args.compression is not None and args.level is None:
         raise ValueError(f"Compression '{args.compression}' selected, please specifiy a level using `--level`")
 
+    memory_limit_bytes = args.memory_limit_gb * (1024**3) if args.memory_limit_gb is not None else float("inf")
+
     if args.verbose:
         print(f"  Input (HF) directory path    : {args.hf_head_dir}")
         print(f"  Output (TS) directory path   : {args.outputdir}")
@@ -195,6 +206,7 @@ def main():
         print(f"  Slice start year                : {args.slice_start_year}")
         print(f"  Compression method              : {args.compression}")
         print(f"  Compression level               : {args.level}")
+        print(f"  Memory limit (GB)               : {args.memory_limit_gb}")
         enable_logging(verbose=True)
 
     config_dir = Path(__file__).parent / "configs"
@@ -276,7 +288,7 @@ def main():
     tsc = tsc.add_attrs({"gents_command": " ".join(sys.argv)})
 
     if not args.dryrun:
-        tsc.execute(no_data=args.no_data)
+        tsc.execute(no_data=args.no_data, memory_limit_bytes=memory_limit_bytes)
     else:
         print(f"Dry run: {len(tsc)} timeseries files would be generated.")
     print("GenTS done!")

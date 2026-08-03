@@ -154,3 +154,76 @@ def test_MHFDataset_fragmented_values(tmp_path):
         lat_index = int(np.where(lat_vals == tile["lat"][0])[0][0])
         lon_index = int(np.where(lon_vals == tile["lon"][0])[0][0])
         assert var_vals[0, lat_index, lon_index] == tile["value"]
+
+
+def test_MHFDataset_tight_memory_limit_does_not_crash_on_secondary_vars(tmp_path):
+    """
+    A memory_limit_bytes too small to cache every file's secondary-variable
+    (time_bounds/lat/lon) data must not leave a variable PARTIALLY cached --
+    __get_hf_data has no bounds-checked fallback for
+    self.__data_secondary_var_cache, so a partial cache list crashes with
+    IndexError the first time a file beyond the cached prefix is read.
+    """
+    n_files = 10
+    dim_shapes = {"time": None, "bnds": 2, "lat": 2, "lon": 2}
+    hf_paths = []
+    for i in range(n_files):
+        path = f"{tmp_path}/hf{i:02d}.nc"
+        generate_history_file(path, [float(i)], [[float(i), float(i) + 1]], num_vars=1, dim_shapes=dim_shapes)
+        hf_paths.append(path)
+
+    with MHFDataset(hf_paths, preload_var_list=["VAR0"]) as full_ds:
+        secondary_total = sum(
+            full_ds.get_var_dsize(name) for name in full_ds._MHFDataset__data_secondary_var_cache
+        )
+
+    # Enough for some, but not all, files' worth of secondary data.
+    limit = int(secondary_total * 0.5)
+
+    ds = MHFDataset(hf_paths, preload_var_list=["VAR0"], memory_limit_bytes=limit)
+    ds.open()
+    try:
+        for i in range(n_files):
+            bounds = ds.get_var_vals("time_bounds", time_index_start=i, time_index_end=i + 1)
+            assert np.array(bounds).flatten().tolist() == [float(i), float(i) + 1]
+    finally:
+        ds.close()
+
+
+def test_MHFDataset_tight_memory_limit_does_not_corrupt_primary_vars(tmp_path):
+    """
+    Reading two primary variables in sequence -- exactly what
+    TSCollection.execute() does for every group, one output file per
+    variable off a shared MHFDataset -- under a memory_limit_bytes too small
+    to fully cache both must not silently return one variable's data tagged
+    with a different file's values. (Regression for the partial-cache
+    index-alignment bug: once a variable's cache list is a partial prefix,
+    __cache_variable's reactive fallback appends a fresh full re-read on top
+    of it instead of replacing it, shifting every later index.)
+    """
+    n_files = 10
+    hf_paths = []
+    for i in range(n_files):
+        path = f"{tmp_path}/hf{i:02d}.nc"
+        generate_history_file(path, [(i + 0.5) * 30], [[i * 30, (i + 1) * 30]], num_vars=2)
+        with GenTSDataStore(path, "a") as ds:
+            ds["VAR0"][:] = float(i) * 10
+            ds["VAR1"][:] = float(i) * 10 + 1
+        hf_paths.append(path)
+
+    with MHFDataset(hf_paths, preload_var_list=["VAR0", "VAR1"]) as full_ds:
+        full0 = full_ds.get_var_dsize("VAR0")
+        full1 = full_ds.get_var_dsize("VAR1")
+
+    # Enough for VAR0 in full plus most, but not all, of VAR1.
+    limit = full0 + int(full1 * 0.6)
+
+    ds = MHFDataset(hf_paths, preload_var_list=["VAR0", "VAR1"], memory_limit_bytes=limit)
+    ds.open()
+    try:
+        for var_name, tag in [("VAR0", 0.0), ("VAR1", 1.0)]:
+            vals = np.array(ds.get_var_vals(var_name)).reshape(n_files, -1)[:, 0]
+            expected = np.array([float(i) * 10 + tag for i in range(n_files)])
+            assert np.array_equal(vals, expected), f"{var_name}: expected {expected.tolist()}, got {vals.tolist()}"
+    finally:
+        ds.close()

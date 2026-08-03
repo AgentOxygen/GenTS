@@ -324,7 +324,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
     return ts_out_path
 
 
-def generate_time_series(hf_paths, ts_path_template, secondary_vars, ts_args, no_data=False):
+def generate_time_series(hf_paths, ts_path_template, secondary_vars, ts_args, no_data=False, memory_limit_bytes=np.inf):
     """
     Generates time-series files for a group of history files.
 
@@ -348,11 +348,15 @@ def generate_time_series(hf_paths, ts_path_template, secondary_vars, ts_args, no
     :param no_data: Forwarded to :func:`write_timeseries_file` — skip reading and
         writing primary-variable data. Defaults to ``False``.
     :type no_data: bool
+    :param memory_limit_bytes: Forwarded to :class:`~gents.mhfdataset.MHFDataset`.
+        Defaults to ``numpy.inf`` (unbounded, matching prior behavior).
+    :type memory_limit_bytes: float
     :returns: List of paths to the generated time-series files.
     :rtype: list[str]
     """
     ts_paths = []
-    with MHFDataset(hf_paths, preload_var_list=list(ts_args)) as agg_hf_ds:
+    preloads = [name for name in list(ts_args) if name != "auxiliary"]
+    with MHFDataset(hf_paths, preload_var_list=preloads, memory_limit_bytes=memory_limit_bytes) as agg_hf_ds:
         secondary_vars_data = {}
 
         for variable in secondary_vars:
@@ -942,7 +946,7 @@ class TSCollection:
         for order_dict in self.__orders:
             makedirs(Path(order_dict['ts_path_template']).parent, exist_ok=exist_ok)
 
-    def execute(self, optimize=True, optimize_batch_n=200, raise_errors=False, no_data=False, show_progress=True):
+    def execute(self, optimize=True, optimize_batch_n=200, raise_errors=False, no_data=False, show_progress=True, memory_limit_bytes=np.inf):
         """
         Executes all time-series generation orders in parallel.
 
@@ -972,6 +976,15 @@ class TSCollection:
         :param show_progress: If ``False``, suppress the stdout progress bar.
             Defaults to ``True``.
         :type show_progress: bool
+        :param memory_limit_bytes: Forwarded to every :class:`~gents.mhfdataset.MHFDataset`
+            this call constructs. Defaults to ``numpy.inf`` (unbounded, matching
+            prior behavior). Note: as of this writing, ``MHFDataset``'s
+            ``preload_var_list`` path (what every order taken through this method
+            uses) does not itself check this limit while preloading -- it is
+            enforced only by the on-demand ``__cache_variable`` fallback, which
+            the preload path bypasses. See ``get_var_dsize``-based sizing in
+            ``MHFDataset`` for where that check currently lives.
+        :type memory_limit_bytes: float
         :returns: List of paths to all generated time-series output files.
         :rtype: list[str]
         """
@@ -1016,7 +1029,8 @@ class TSCollection:
                     "ts_path_template": init_order["ts_path_template"],
                     "secondary_vars": init_order["secondary_vars"],
                     "ts_args": ts_args,
-                    "no_data": no_data
+                    "no_data": no_data,
+                    "memory_limit_bytes": memory_limit_bytes
                 })
         else:
             for index, order in enumerate(self.__orders):
@@ -1031,7 +1045,8 @@ class TSCollection:
                     "ts_path_template": order["ts_path_template"],
                     "secondary_vars": order["secondary_vars"],
                     "ts_args": ts_args,
-                    "no_data": no_data
+                    "no_data": no_data,
+                    "memory_limit_bytes": memory_limit_bytes
                 })
         prog_bar = ProgressBar(total=len(optimized_orders), label="Generating Timeseries", quiet=not show_progress)
         if self.__num_processes > 1:

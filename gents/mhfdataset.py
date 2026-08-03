@@ -65,6 +65,45 @@ class MHFDataset:
         self.__load_secondaries = load_secondaries
         self.__preload_var_list = list(preload_var_list) if preload_var_list is not None else []
 
+    def __estimate_var_bytes(self, var_name, hf_meta):
+        """
+        Estimates a variable's full aggregated size (every file in the group)
+        from a single file's shape, scaled by file count.
+
+        Exact when every file in the group has the same number of time steps
+        (the common case); an over- or under-estimate otherwise (e.g. a
+        shorter final file in a run). Used only to plan preload caching
+        before the group has been fully scanned -- see :meth:`open`.
+        """
+        shape = hf_meta.get_variable_shapes(var_name)
+        itemsize = hf_meta.get_variable_dtype(var_name).itemsize
+        return int(np.prod(shape)) * itemsize * len(self.__hf_files)
+
+    def __plan_cacheable_vars(self, candidate_names, hf_meta, running_total=0):
+        """
+        Decides, once, which of ``candidate_names`` (in priority order) fit
+        in their entirety under ``memory_limit_bytes``, given bytes already
+        committed elsewhere (``running_total``).
+
+        All-or-nothing per variable: a variable is only included if its full
+        estimated size fits, never partially. This is what keeps
+        ``self.__data_var_cache``/``self.__data_secondary_var_cache`` lists
+        either complete (one entry per file) or entirely absent -- code
+        downstream (:meth:`__get_hf_data`, :meth:`__cache_variable`) assumes
+        exactly that; a partial (prefix-only) cache list silently returns a
+        different file's data once the reactive fallback re-caches on top of
+        it, or crashes outright for secondary variables, which have no
+        fallback at all.
+        """
+        fit = []
+        for var_name in candidate_names:
+            estimated_bytes = self.__estimate_var_bytes(var_name, hf_meta)
+            if running_total + estimated_bytes > self.__memory_limit_bytes:
+                continue
+            running_total += estimated_bytes
+            fit.append(var_name)
+        return fit
+
     def open(self):
         """
         Opens all history file handles and builds the internal time mapping.
@@ -85,25 +124,48 @@ class MHFDataset:
         variable data, so the extra reads are cheap. Primary variables named
         in ``preload_var_list`` are read in this same per-file pass too, so
         :meth:`get_var_vals` can serve them straight from cache instead of
-        reopening every file a second time.
+        reopening every file a second time -- which ones actually get cached
+        is decided once, right after the first file is read (see
+        :meth:`__plan_cacheable_vars`), and applied identically to every
+        file in the group: a variable is either cached for the whole group
+        or not cached at all, never partially.
 
         :raises Exception: If the spatial fragmentation is not consistent over time.
         """
+        vars_to_cache_secondary = None
+        vars_to_cache_primary = None
+
         for hf_index, path in enumerate(self.__hf_files):
             with GenTSDataStore(path, 'r') as hf_ds:
-                # MHFDataset only ever consumes raw float times (self.__time_mapping)
-                # -- never the decoded CFTime values -- so skip the num2date cost.
-                # time_bnds data and dimension bounds are read/computed by this
-                # class itself (secondary-var cache, extend_coords) -- loading
-                # them again inside netCDFMeta would be a pure duplicate read.
-                # Variable attributes are only ever consulted from the first
-                # file in the group (get_var_attrs() below), so only load them
-                # there.
                 hf_meta = netCDFMeta(
                     hf_ds, path,
                     decode_dates=False, load_time_bounds=False, compute_dim_bounds=False,
                     load_variable_attrs=(hf_index == 0),
                 )
+                if hf_index == 0:
+                    checked_preload_list = []
+                    # Make sure that all variables actually exist in this group
+                    for var_name in self.__preload_var_list:
+                        # To ensure we dont duplicate in the primary cache
+                        if self.__load_secondaries and var_name in hf_meta.get_secondary_variables():
+                            continue
+                        # Check that variable actually exists in group
+                        if var_name not in hf_meta.get_variables():
+                            raise KeyError(f"Attempted to cache non-existent variable '{var_name}'.")
+                        checked_preload_list.append(var_name)
+                    self.__preload_var_list = checked_preload_list
+
+                    # if the preload list doesnt cover the full history file
+                    # and cache_ahead is still enabled, then we need to fetch
+                    # everything else ahead in the history file
+                    for var_name in hf_meta.get_primary_variables():
+                        if var_name not in self.__preload_var_list:
+                            self.__preload_var_list.append(var_name)
+
+                    secondary_names = list(hf_meta.get_secondary_variables()) if self.__load_secondaries else []
+                    vars_to_cache_secondary = self.__plan_cacheable_vars(secondary_names, hf_meta)
+                    secondary_bytes = sum(self.__estimate_var_bytes(name, hf_meta) for name in vars_to_cache_secondary)
+                    vars_to_cache_primary = self.__plan_cacheable_vars(self.__preload_var_list, hf_meta, secondary_bytes)
 
                 self.__data_coords = extend_coords(hf_ds, self.__data_coords)
 
@@ -121,16 +183,13 @@ class MHFDataset:
                         self.__time_mapping[time] = [(hf_index, sub_t_index)]
 
                 if self.__load_secondaries:
-                    for var_name in hf_meta.get_secondary_variables():
+                    for var_name in vars_to_cache_secondary:
                         if var_name in self.__data_secondary_var_cache:
                             self.__data_secondary_var_cache[var_name].append(hf_ds[var_name][:])
                         else:
                             self.__data_secondary_var_cache[var_name] = [hf_ds[var_name][:]]
 
-                for var_name in self.__preload_var_list:
-                    # Callers may pass sentinel/non-variable names (e.g. TSCollection's
-                    # "auxiliary" pseudo-order for groups with no primary variables) --
-                    # only preload names that are actually primary variables in this file.
+                for var_name in vars_to_cache_primary:
                     if var_name not in hf_meta.get_primary_variables():
                         continue
                     if var_name in self.__data_var_cache:
@@ -150,18 +209,28 @@ class MHFDataset:
         self.__data_var_cache = {}
         self.__data_secondary_var_cache = {}
 
+    def __get_cache_dsize(self):
+        cache_size_b = 0
+        for var_name in self.__data_var_cache:
+            for data in self.__data_var_cache[var_name]:
+                if data is not None:
+                    cache_size_b += data.size * data.dtype.itemsize
+        for var_name in self.__data_secondary_var_cache:
+            for data in self.__data_secondary_var_cache[var_name]:
+                if data is not None:
+                    cache_size_b += data.size * data.dtype.itemsize
+        return cache_size_b
+
     def __cache_variable(self, target_var_name, cache_ahead=True):
         vars_to_cache = [target_var_name]
         # Check memory size of cache + the target variable to cache
-        cache_size_b = self.get_var_dsize(target_var_name)
-        for var_name in self.__data_var_cache:
-            cache_size_b += self.get_var_dsize(var_name)
+        cache_size_b = self.__get_cache_dsize() + self.get_var_dsize(target_var_name)
 
         if cache_size_b > self.__memory_limit_bytes:
             raise MemoryError(f"Cache size of {cache_size_b / (1024**3)}GB with '{target_var_name}' exceeds limit of {self.__memory_limit_bytes / (1024**3)}GB.")
         
         if cache_ahead:
-            for nvar_name in self.__hf_metas[0].get_primary_variables():
+            for nvar_name in self.__preload_var_list:
                 if self.get_var_dsize(nvar_name) + cache_size_b > self.__memory_limit_bytes:
                     continue
                 if nvar_name not in self.__past_vars_read and nvar_name not in vars_to_cache:
@@ -192,35 +261,35 @@ class MHFDataset:
                         self.__data_var_cache[var_name] = [hf_ds[var_name][:]]
 
     def __get_hf_data(self, index, var_name):
-        hf_path = self.__hf_files[index]
-
         if var_name in self.__data_secondary_var_cache:
             return self.__data_secondary_var_cache[var_name][index]
 
         # Check if done reading last variable and delete if so
         if self.__last_var_read != var_name:
-            if self.__last_var_read is not None:
-                del self.__data_var_cache[self.__last_var_read]
+            if self.__last_var_read is not None and self.__last_var_read in self.__data_var_cache:
+                self.__data_var_cache[self.__last_var_read] = []
             self.__past_vars_read.append(self.__last_var_read)
             self.__last_var_read = var_name
         
         # Check cache, if its in the cache, return it
-        if var_name in self.__data_var_cache:
-            return self.__data_var_cache[var_name][index]
+        if var_name in self.__data_var_cache and index < len(self.__data_var_cache[var_name]):
+            hf_data = self.__data_var_cache[var_name][index]
+            # Free up that memory, but keep the spot in the list so the order/positions are preserved
+            self.__data_var_cache[var_name][index] = None
+            return hf_data
         # If its not in the cache, this is likely a new block of variables
         # so, check if the entire timeseries for variable fits in cache and if possible put it there
         # also put the other variables that will fit.
         else:
-            var_memory_size = self.get_var_dsize(var_name)
-
-            if var_memory_size < self.__memory_limit_bytes:
+            if self.__get_cache_dsize() + self.get_var_dsize(var_name) < self.__memory_limit_bytes:
                 # cache this variable + others to fill it, then return from cache
                 self.__cache_variable(var_name)
                 return self.__data_var_cache[var_name][index]
             else:
                 # doesnt fit in memory, so don't cache
                 # we could partially cache the timeseries, but for now, I will just skip caching the variable all together
-                with GenTSDataStore(hf_path, 'r') as hf_ds:
+                # note that parial caching can happen in open()
+                with GenTSDataStore(self.__hf_files[index], 'r') as hf_ds:
                     return hf_ds[var_name][:]
 
     def get_var_dsize(self, var_name):
