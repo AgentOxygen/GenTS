@@ -18,6 +18,7 @@ USER 1000:1000
 CMD ["pytest", "-v", "gents/tests/"]
 
 FROM runtime AS bench
+ENV HOME=/usr/local/gents
 USER root
 RUN rm -rf /var/lib/apt/lists/* && git config --system --add safe.directory '*'
 RUN uv pip install --system ".[bench]"
