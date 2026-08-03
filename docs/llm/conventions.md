@@ -146,6 +146,42 @@ violated by a well-meaning refactor.
   catches these.
 - **`HFCollection.__init__` raises `FileNotFoundError`** when the directory contains no
   matches — constructing a collection is never a silent no-op.
+- **`sort_hf_groups` ordering is part of its contract.** Group keys come out ordered by
+  parent directory (order of first appearance in `hf_paths`) then by prefix; within a
+  group, paths keep their input order. Downstream order (`get_groups` → `TSCollection`
+  orders → output) inherits this, so keep it if you touch the grouping. Prefixes are
+  derived with `name.rsplit(delimiter, substring_index)[0]` in a single bucketing pass —
+  don't reintroduce a per-unique-prefix rescan of the file list, which made grouping
+  quadratic in the number of streams per directory.
+- **A filename with no delimiter groups under its whole name.** `sort_hf_groups` strips
+  only the tokens that are actually there, so `README` groups under `README*` and
+  `gridfile.nc` under `gridfile*`. (Before July 2026 such a name raised `IndexError`;
+  `substring_index=0` likewise stripped everything after the *first* delimiter instead of
+  stripping nothing.) Every caller uses the default `substring_index=2`.
+- **`pull_metadata` hard-raises on single-timestep groups.** Per-file metadata failures are
+  logged and the file dropped (`raise_errors=False`), but the *timestep delta* loop
+  afterwards re-raises `ValueError` from `get_group_timestep_delta` for any group with
+  fewer than two total time steps, taking the whole collection down. Raw case trees hit
+  this routinely (initial-condition dumps, single-snapshot history), which is why
+  `run_gents --model CESM3` works — its config filters those out — while a bare
+  `HFCollection` over the same tree does not. Callers that can't guarantee filtered input
+  must catch `ValueError` around the first metadata-triggering call.
+- **`include([])` empties a collection; `_passes_filters([])` keeps everything.** The two
+  filter paths use opposite conventions for an empty pattern list: `HFCollection.include`
+  requires a match against at least one pattern (none ⇒ nothing retained), while
+  `gents/conformity/case_builder.py`'s `_passes_filters` treats an empty list as "no filter
+  applied". Guard with `if patterns:` when feeding case_builder-style filters into an
+  `HFCollection`, or the collection silently comes back empty.
+- **Don't reach for `HFCollection` to inspect a raw case tree.** It is built for *viable
+  history files*: `check_validity` drops anything `netCDFMeta` rejects (no time coordinate,
+  or a time variable missing `units`/`calendar`), and `pull_metadata` then raises on any
+  single-timestep group. A raw case directory is full of both — grids, restarts, statics,
+  initial-condition dumps — so the collection either silently discards most of the tree or
+  dies. `gents/conformity/case_builder.py` therefore inspects cases with the path-only
+  `sort_hf_groups` plus its own `_summarize_case_file`, which repeats `netCDFMeta`'s time
+  lookup over a `GenTSDataStore` but returns empty-handed where `netCDFMeta` raises. Keep
+  that split: the clone must describe every file it copies, not just the GenTS-legible
+  ones.
 - **`MHFDataset` trusts the first file** of a group for variable dims/dtype/attrs;
   variable-set consistency is enforced earlier by `check_groups_by_variables`
   (majority wins, minority files dropped with a warning).

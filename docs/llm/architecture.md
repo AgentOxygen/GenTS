@@ -22,7 +22,8 @@ HFCollection {path: netCDFMeta}                    gents/meta.py
    ▼
 TSCollection — list of order dicts                 gents/timeseries.py
    │  modifiers: include/exclude, add_args, apply_compression,
-   │             apply_path_swap, apply_overwrite, append_timestep_dirs, add_attrs
+   │             apply_chunk_target_bytes, apply_path_swap, apply_overwrite,
+   │             append_timestep_dirs, add_attrs
    │  .execute() — batches orders sharing source files (optimize=True),
    │               ProcessPoolExecutor → generate_time_series() per batch
    ▼
@@ -113,8 +114,16 @@ Built by `update_ts_orders`, consumed by `execute` → `generate_time_series` �
   "ts_end_index": int | None,        #   time axis (None = whole range)
   # optional, added by modifiers:
   "complevel": int, "compression": str, "overwrite": bool, "append_attrs": dict,
+  "chunk_target_bytes": int,  # via apply_chunk_target_bytes; see conventions.md's 4 MiB rule
 }
 ```
+
+`ts_path_template` is derived inline in `update_ts_orders`, not by a helper: the group
+key has the input head dir split off its front, any `"[sorting_pivot]<years>"` suffix
+removed, the output dir prepended, and the group key's trailing `*` dropped with
+`[:-1]`. The whole filename prefix is kept (`model.cam.h0`), and `hist`→`tseries`
+renaming is *not* done here — that is `apply_path_swap`'s job, applied afterwards as a
+modifier.
 
 `execute(optimize=True)` groups orders by `(first hf_path, start, end)` key and merges
 up to `optimize_batch_n` (default 200) of them into one worker call so each HF group is
