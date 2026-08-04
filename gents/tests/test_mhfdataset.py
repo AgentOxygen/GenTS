@@ -266,3 +266,38 @@ def test_MHFDataset_repeated_reads_of_same_file_do_not_return_none(tmp_path):
         assert chunk2.tolist() == [2.0, 3.0]
     finally:
         ds.close()
+
+
+def test_MHFDataset_open_skips_secondary_var_missing_from_a_later_file(tmp_path):
+    """
+    open() decides once, from file 0's metadata, which secondary variables to
+    cache (see __plan_cacheable_vars), then reuses that same fixed list for
+    every file in the group. If a secondary/coordinate variable (e.g. CLM's
+    time-invariant ZSOI soil-depth field) is present in file 0 but absent
+    from a later file in the same group -- real CESM/CTSM history streams
+    can vary their variable set across a run -- open() must skip it for that
+    file rather than crash. The primary-variable loop already guards this
+    (`if var_name not in hf_meta.get_primary_variables(): continue`); the
+    secondary-variable loop is missing the equivalent guard, so it blindly
+    indexes hf_ds["ZSOI"] on a file that doesn't have it and netCDF4 raises
+    IndexError: ZSOI not found in /.
+    """
+    hf_paths = []
+    for f in range(2):
+        path = f"{tmp_path}/hf{f}.nc"
+        generate_history_file(path, [(f + 0.5) * 30], [[f * 30, (f + 1) * 30]], num_vars=1)
+        hf_paths.append(path)
+
+    with GenTSDataStore(hf_paths[0], "a") as ds:
+        ds.createDimension("levgrnd", 3)
+        zsoi = ds.createVariable("ZSOI", float, ("levgrnd",))
+        zsoi[:] = [0.1, 0.2, 0.3]
+    # file 1 (and every later file) deliberately does NOT have ZSOI.
+
+    with MHFDataset(hf_paths, preload_var_list=["VAR0"]) as agg_hf_ds:
+        # ZSOI has no time dimension, so get_var_vals only ever reads it from
+        # file 0 -- caching it there alone (and skipping the file that lacks
+        # it) is correct, not partial.
+        assert agg_hf_ds.get_var_vals("ZSOI").tolist() == [0.1, 0.2, 0.3]
+        var_vals = agg_hf_ds.get_var_vals("VAR0")
+        assert var_vals.shape[0] == 2

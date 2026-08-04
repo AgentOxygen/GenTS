@@ -184,6 +184,8 @@ class MHFDataset:
 
                 if self.__load_secondaries:
                     for var_name in vars_to_cache_secondary:
+                        if var_name not in hf_meta.get_secondary_variables():
+                            continue
                         if var_name in self.__data_secondary_var_cache:
                             self.__data_secondary_var_cache[var_name].append(hf_ds[var_name][:])
                         else:
