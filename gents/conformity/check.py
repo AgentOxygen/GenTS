@@ -3,13 +3,9 @@
 
 Conformity testing asks a different question from the unit tests: not "is this
 function correct" but "did GenTS handle *this model's* output the way this
-model's users need". It is therefore model-specific by design. A result is a
-claim about a named model and case, which is what makes the documented results
-table meaningful to a researcher deciding whether to trust GenTS with their run.
-
-This is the same command CI runs over shareable sample cases and that a
-researcher runs locally against a real case, so a documented result and a CI
-result mean exactly the same thing.
+model's users need". It is therefore model-specific by design, and a result is a
+claim about a named model and case. CI and researchers run this same command, so
+a documented result and a CI result mean the same thing.
 """
 
 import argparse
@@ -24,9 +20,8 @@ from gents.utils import get_version
 
 def parse_arguments():
     """
-    Parse command-line arguments for the ``gents_conform`` entry point.
+    Parses ``gents_conform`` command line arguments.
 
-    :returns: Namespace populated with parsed argument values.
     :rtype: argparse.Namespace
     """
     parser = argparse.ArgumentParser(
@@ -76,12 +71,12 @@ def parse_arguments():
 
 def main():
     """
-    Entry point for the ``gents_conform`` command-line interface.
+    Entry point for ``gents_conform``.
 
-    Applies the selected model's conformity specification to a generated time
-    series tree, prints a report, and exits non-zero if any check failed. A
-    failed check is a finding to investigate, not a crash: every check that can
-    be evaluated is evaluated, and the report shows the full picture.
+    Applies the selected model's specification to a generated time series tree,
+    prints a report and returns non-zero if any check failed. A failed check is a
+    finding, not a crash: every check that can be evaluated is, so the report
+    shows the full picture rather than the first problem.
     """
     args = parse_arguments()
 

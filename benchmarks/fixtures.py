@@ -1,14 +1,11 @@
 """
-Shared synthetic history-file case builder for ASV benchmarks and the
+Shared synthetic history-file case builder for the ASV benchmarks and the
 profiling driver (``pipeline_bench.py``).
 
-Both consumers need the same kind of on-disk case without paying to
-regenerate it every time they run: ASV's ``setup()`` methods rerun before
-every timed repeat, and py-spy has no "setup phase" it excludes from a
-profile, so inline generation shows up as noise in the flamegraph.
-``build_bench_case()`` is the one place that does the generation; it is
-idempotent, keyed off the parameters that determine the case's shape, so a
-second call with the same parameters against the same root is a no-op.
+Generation has to stay out of what is being measured: ASV reruns ``setup()``
+before every timed repeat, and py-spy has no setup phase to exclude from a
+profile. ``build_bench_case()`` is therefore idempotent, keyed off the
+parameters that determine the case's shape.
 """
 import json
 from pathlib import Path
@@ -32,13 +29,9 @@ def build_bench_case(root, n_files, n_steps, n_lat=3, n_lon=4, n_vars=1, step_da
     (``n_files == 1`` and large ``n_steps`` stresses a single big file;
     ``n_steps == 1`` and large ``n_files`` stresses many small ones).
 
-    Idempotent: if ``root`` already holds a manifest recording these exact
-    parameters, generation is skipped and the existing file list is
-    returned. Any other content under ``root`` -- a case built with
-    different parameters, or unrelated files -- is removed and rebuilt from
-    scratch; there is no partial-match or resume logic, matching the "every
-    run rebuilds everything it touches" convention used by
-    ``gents_conform_build`` (see docs/llm/workflows.md).
+    Idempotent: a ``root`` whose manifest records these exact parameters is
+    reused as-is. Anything else under ``root`` is wiped and rebuilt -- no
+    partial match, no resume, matching ``gents_conform_build``'s convention.
 
     :param root: Directory to build the case in. Created if missing.
     :type root: str or pathlib.Path
@@ -46,24 +39,18 @@ def build_bench_case(root, n_files, n_steps, n_lat=3, n_lon=4, n_vars=1, step_da
     :type n_files: int
     :param n_steps: Number of time steps per file.
     :type n_steps: int
-    :param n_lat: Size of the synthetic ``lat`` dimension. Defaults to ``3``.
+    :param n_lat: Size of the synthetic ``lat`` dimension.
     :type n_lat: int
-    :param n_lon: Size of the synthetic ``lon`` dimension. Defaults to ``4``.
+    :param n_lon: Size of the synthetic ``lon`` dimension.
     :type n_lon: int
-    :param n_vars: Number of primary variables per file. Defaults to ``1``.
+    :param n_vars: Number of primary variables per file.
     :type n_vars: int
-    :param step_days: Spacing between time steps, in days. Defaults to ``30``.
+    :param step_days: Spacing between time steps, in days.
     :type step_days: int
-    :param dtype: Primary/auxiliary variable dtype, forwarded to
-        :func:`~gents.tests.test_cases.generate_history_file`. Defaults to
-        ``float`` (float64); pass ``"float32"`` (or ``np.float32``) for
-        fixtures representative of typical model output.
+    :param dtype: Variable dtype; ``float32`` is representative of real output.
     :type dtype: type or numpy.dtype or str
-    :param fill: ``"constant"`` (default) or ``"random"``, forwarded to
-        :func:`~gents.tests.test_cases.generate_history_file`. Use
-        ``"random"`` for any benchmark measuring compression -- constant
-        data compresses to nearly nothing regardless of the compression
-        settings under test.
+    :param fill: ``"constant"`` or ``"random"``. Constant data compresses to
+        nearly nothing, so use ``"random"`` when measuring compression.
     :type fill: str
     :returns: Sorted list of generated (or reused) file paths.
     :rtype: list[pathlib.Path]

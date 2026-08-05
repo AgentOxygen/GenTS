@@ -1,21 +1,15 @@
 """
 Result collection for conformity runs.
 
-A conformity check is *not* an assertion: a run evaluates every check it can and
-reports how many passed, so a researcher pointing this at a real case sees the
-full picture rather than the first thing that went wrong. This module holds the
-small amount of machinery that makes that possible. Everything a researcher
-would want to read or edit lives in the per-model specifications under
-``gents/conformity/models/``.
+A conformity check is not an assertion: a run evaluates every check it can and
+reports how many passed. A check **passes** when it was evaluated and held,
+**fails** when it was evaluated and did not, and **skips** when it could not be
+evaluated at all (nothing in the case for it to look at, or no input directory
+given). Skips are excluded from the pass percentage rather than counted as
+passes, so a run over a narrow case cannot inflate its own score.
 
-Three outcomes are possible:
-
-- **pass** - the check was evaluated and held.
-- **fail** - the check was evaluated and did not hold.
-- **skip** - the check could not be evaluated (e.g. it needs the input case
-  directory and only the output tree was given, or there was nothing to check).
-  Skipped checks are excluded from the pass percentage and reported separately,
-  so a run over a partial case never inflates its own score.
+Everything a researcher would read or edit lives in the per-model specifications
+under ``gents/conformity/models/``; this module is only the machinery.
 """
 
 from dataclasses import dataclass, field
@@ -39,13 +33,15 @@ class Report:
     """
     Accumulates :class:`CheckResult` entries for one conformity run.
 
-    :param model: Name of the model specification applied (e.g. ``'CESM3'``).
-    :param spec_version: Version of that specification (see the model module's
-        ``SPEC_VERSION``). Recorded so a documented result stays meaningful as
-        the specification gains checks.
-    :param ts_dir: Time-series output directory that was inspected.
-    :param hf_dir: History file directory the output was generated from, or
-        ``None`` if it was not available.
+    :param model: Model specification applied, e.g. ``'CESM3'``.
+    :type model: str
+    :param spec_version: That specification's ``SPEC_VERSION``, recorded so a
+        result stays interpretable as the specification gains checks.
+    :type spec_version: int
+    :param ts_dir: Time series output directory that was inspected.
+    :type ts_dir: str
+    :param hf_dir: History file directory the output came from, if available.
+    :type hf_dir: str or None
     """
 
     model: str
@@ -56,14 +52,18 @@ class Report:
 
     def check(self, description, passed, detail=""):
         """
-        Record a single pass/fail check.
+        Records a single pass/fail check.
 
         :param description: One-line statement of what must be true, in the
-            model's own vocabulary. This text is the specification -- it appears
-            verbatim in the report and in the documentation table.
+            model's own vocabulary. This text *is* the specification: it appears
+            verbatim in the report.
+        :type description: str
         :param passed: Whether the condition held.
+        :type passed: bool
         :param detail: Optional context shown beneath the result.
+        :type detail: str
         :returns: ``passed``, so callers can branch on it.
+        :rtype: bool
         """
         self.results.append(
             CheckResult(description, PASS if passed else FAIL, detail)
@@ -72,19 +72,25 @@ class Report:
 
     def check_each(self, description, items, predicate, name=str, max_examples=5):
         """
-        Record one check covering many items, naming the ones that failed.
+        Records one check covering many items, naming the ones that failed.
 
-        Most conformity checks are of the form "every output file must X", and
-        the useful failure message is *which* files did not, not merely that
-        some did not. An empty ``items`` is reported as a skip rather than a
-        vacuous pass.
+        Most conformity checks read "every output file must X", where the useful
+        failure message is *which* files did not. One result per check, not per
+        file, keeps the pass percentage a measure of coverage rather than of case
+        size. Empty ``items`` skips rather than vacuously passing.
 
         :param description: One-line statement of what must be true of every item.
+        :type description: str
         :param items: Items to test (consumed into a list).
+        :type items: iterable
         :param predicate: Callable returning ``True`` if an item conforms.
+        :type predicate: callable
         :param name: Callable rendering an item for the failure message.
+        :type name: callable
         :param max_examples: Maximum offenders to name before summarising.
+        :type max_examples: int
         :returns: ``True`` if every item conformed.
+        :rtype: bool
         """
         items = list(items)
         if not items:
@@ -106,10 +112,12 @@ class Report:
 
     def skip(self, description, reason):
         """
-        Record a check that could not be evaluated.
+        Records a check that could not be evaluated.
 
         :param description: The check that was not run.
+        :type description: str
         :param reason: Why it could not be evaluated.
+        :type reason: str
         """
         self.results.append(CheckResult(description, SKIP, reason))
         return None
@@ -142,11 +150,10 @@ class Report:
 
     def to_dict(self):
         """
-        Render the run as a plain dictionary for JSON output.
+        Renders the run as a plain dictionary for JSON output.
 
-        This is the payload a researcher attaches to a documentation ledger
-        entry, so it carries enough provenance to interpret later: which model
-        specification, which version of it, and which GenTS produced the output.
+        Carries enough provenance to interpret later: which model specification,
+        which version of it, and which GenTS produced the output.
         """
         from gents.utils import get_version
 
@@ -172,7 +179,7 @@ class Report:
         }
 
     def format_text(self):
-        """Render the run as a human-readable console report."""
+        """Renders the run as a human-readable console report."""
         from gents.utils import get_version
 
         lines = [

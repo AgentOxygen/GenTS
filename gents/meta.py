@@ -1,10 +1,9 @@
 #!/usr/bin/env python
 """
-meta.py
+Per-file netCDF metadata: variable classification and cached header contents.
 
 Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
-Last Header Update: 07/03/25
 """
 import numpy as np
 from cftime import num2date
@@ -19,37 +18,24 @@ def is_var_secondary(variable,
     """
     Classifies a netCDF variable as secondary or primary.
 
-    Secondary variables (e.g. coordinate and auxiliary fields such as ``time``,
-    ``time_bnds``, ``lat``, ``lon``) are written unchanged into every time-series
-    output file.  Primary variables (multi-dimensional, time-varying scientific
-    fields) each warrant their own time-series output file.
+    Primary variables are multi-dimensional, time-varying scientific fields; each
+    gets its own time series file. Everything else (coordinates, bounds, metadata)
+    is secondary and is copied into every output file of the group.
 
-    Rules are evaluated in order:
-
-    1. Variable name is in ``secondary_vars`` → secondary.
-    2. Any dimension name is in ``secondary_dims`` → secondary.
-    3. Variable has more than ``max_num_dims`` dimensions and none are in
-       ``primary_dims`` → secondary.
-    4. Otherwise the variable is primary (has a ``time`` dimension and more
-       than one dimension total).
-
-    All name and dimension comparisons are case-insensitive, so a bounds
-    variable named ``Time_Bounds`` or a record dimension named ``Time`` / ``TIME``
-    (e.g. MOM6 output) is recognised the same as its lowercase form.
+    A variable is secondary if its name is in ``secondary_vars``, if any of its
+    dimensions is in ``secondary_dims``, or if it has at most ``max_num_dims``
+    dimensions or none of ``primary_dims``. All comparisons are case-insensitive,
+    so MOM6-style ``Time`` / ``Time_Bounds`` are recognised.
 
     :param variable: netCDF4 variable object to classify.
     :type variable: netCDF4._netCDF4.Variable
     :param secondary_vars: Variable names that are unconditionally secondary.
-        Defaults to ``['time_bnds', 'time_bnd', 'time_bounds', 'time_bound']``.
     :type secondary_vars: list
     :param secondary_dims: Dimension names whose presence makes a variable secondary.
-        Defaults to ``['nbnd', 'chars', 'string_length', 'hist_interval']``.
     :type secondary_dims: list
-    :param max_num_dims: Maximum number of dimensions a variable may have before
-        the ``primary_dims`` check is applied. Defaults to ``1``.
+    :param max_num_dims: Dimension count at or below which a variable is secondary.
     :type max_num_dims: int
     :param primary_dims: Dimension names whose presence keeps a variable primary.
-        Defaults to ``['time']``.
     :type primary_dims: list
     :returns: ``True`` if the variable is secondary, ``False`` if primary.
     :rtype: bool
@@ -74,8 +60,8 @@ def get_attributes(dataset):
     """
     Extracts all attributes from a netCDF4 dataset or variable into a dictionary.
 
-    :param dataset: A ``netCDF4.Dataset``, ``netCDF4.MFDataset``, or
-        ``netCDF4.Variable`` object from which to read attributes.
+    :param dataset: netCDF4 dataset or variable to read attributes from.
+    :type dataset: netCDF4.Dataset or netCDF4._netCDF4.Variable
     :returns: Dictionary mapping attribute names to their values.
     :rtype: dict
     """
@@ -89,15 +75,12 @@ def get_time_variables_names(ds):
     """
     Locates the time and time-bounds variable names in a netCDF dataset.
 
-    Performs a case-insensitive scan of all variable names and returns the
-    canonical name of the ``time`` variable and, if present, the name of the
-    corresponding time-bounds variable (``time_bnds``, ``time_bnd``,
-    ``time_bounds``, or ``time_bound``).
+    Matching is case-insensitive against ``time`` and, for bounds, ``time_bnds``,
+    ``time_bnd``, ``time_bounds`` or ``time_bound``.
 
     :param ds: Open netCDF4 dataset to inspect.
     :type ds: netCDF4.Dataset
-    :returns: Tuple of ``(time_name, time_bounds_name)``. Either element is
-        ``None`` if the corresponding variable is not found.
+    :returns: ``(time_name, time_bounds_name)``; either is ``None`` if not found.
     :rtype: tuple[str or None, str or None]
     """
     time_eqv = None
@@ -121,13 +104,10 @@ def get_time_variables_names(ds):
 
 class netCDFMeta:
     """
-    Stores metadata extracted from a single netCDF history file.
+    Metadata read once from a single netCDF history file and cached in memory.
 
-    Caches time values (as raw floats and as CFTime objects), optional
-    time-bounds values, global file attributes, variable lists partitioned into
-    primary vs. secondary sets, and per-dimension coordinate bounds.  Instances
-    are constructed by :func:`get_meta_from_path` and consumed throughout
-    :mod:`gents.hfcollection`.
+    Picklable, so it can be built in a worker process and returned to the parent
+    (see :func:`get_meta_from_path`).
     """
 
     def __init__(self, ds, path: str, decode_dates=True, load_time_bounds=True,
@@ -135,65 +115,30 @@ class netCDFMeta:
         """
         Reads and caches metadata from an open netCDF4 dataset.
 
-        Performs the following steps:
+        Caches global attributes, raw time values, optional time bounds, the
+        primary/secondary variable split with per-variable shape, dims and dtype,
+        and per-dimension coordinate bounds. The file need not stay open afterward.
 
-        1. Reads global attributes via :func:`get_attributes`.
-        2. Locates the time and time-bounds variables via
-           :func:`get_time_variables_names`.
-        3. Reads and normalises time values (handles scalar, 1-D, and
-           higher-dimensional arrays via ``numpy.squeeze``).
-        4. If ``decode_dates`` is true, converts float times to CFTime objects
-           via ``cftime.num2date``. Otherwise the ``units``/``calendar`` needed
-           to do so are still resolved and cached, and the conversion happens
-           lazily the first time :meth:`get_cftimes` or :meth:`get_cftime_bounds`
-           is called -- ``num2date`` is measurably expensive per file and many
-           consumers (:class:`~gents.mhfdataset.MHFDataset`) never call either.
-        5. If ``load_time_bounds`` is true and a time-bounds variable exists,
-           reads it (falling back to the time variable's units/calendar if the
-           bounds variable lacks its own).
-        6. Classifies every variable as primary or secondary via
-           :func:`is_var_secondary`. If ``load_variable_attrs`` is true, also
-           reads every variable's own attributes.
-        7. If ``compute_dim_bounds`` is true, records coordinate bounds for each
-           dimension that has an associated coordinate variable.
-
-        ``load_time_bounds``, ``load_variable_attrs``, and ``compute_dim_bounds``
-        exist because :class:`~gents.mhfdataset.MHFDataset` never needs any of
-        the three (it reads ``time_bnds`` data and coordinate bounds itself,
-        and only ever reads variable attributes from the first file in a
-        group) -- each was a real, measured, wholly-or-partly wasted per-file
-        cost otherwise. Opting out is intentionally strict: calling the
-        corresponding getter afterward raises rather than silently returning
-        stale or empty data.
+        The four load flags exist to skip per-file work a caller does not need;
+        :class:`~gents.mhfdataset.MHFDataset` needs none of them. Opting out is
+        strict: the corresponding getter raises rather than return empty data.
 
         :param ds: Open netCDF4 dataset for the history file.
         :type ds: netCDF4.Dataset
-        :param path: File-system path to the history file (stored for later retrieval).
+        :param path: File-system path to the history file.
         :type path: str
-        :param decode_dates: If ``True`` (default), decode CFTime values eagerly
-            here, matching prior behavior. If ``False``, defer the ``num2date``
-            call until :meth:`get_cftimes`/:meth:`get_cftime_bounds` is actually
-            called -- the file does not need to still be open for that, since
-            only the raw float values and the units/calendar strings are needed.
+        :param decode_dates: Decode CFTime values now instead of lazily on the
+            first :meth:`get_cftimes` / :meth:`get_cftime_bounds` call.
         :type decode_dates: bool
-        :param load_time_bounds: If ``True`` (default), read the raw ``time_bnds``
-            array (if present). If ``False``, skip that read entirely --
-            :meth:`get_float_time_bounds`/:meth:`get_cftime_bounds` raise
-            ``RuntimeError`` if called and a bounds variable actually exists in
-            the file (still return ``None`` if the file genuinely has none).
+        :param load_time_bounds: Read the raw time-bounds array, if present.
         :type load_time_bounds: bool
-        :param load_variable_attrs: If ``True`` (default), read every variable's
-            own attributes. If ``False``, skip it -- :meth:`get_variable_attrs`
-            raises ``RuntimeError`` if called.
+        :param load_variable_attrs: Read every variable's own attributes.
         :type load_variable_attrs: bool
-        :param compute_dim_bounds: If ``True`` (default), compute per-dimension
-            coordinate bounds. If ``False``, skip it -- :meth:`get_dim_bounds`
-            raises ``RuntimeError`` if called.
+        :param compute_dim_bounds: Compute per-dimension coordinate bounds.
         :type compute_dim_bounds: bool
-        :raises ValueError: If no time-equivalent variable is found, or if the
-            time-bounds variable is a scalar.
-        :raises AttributeError: If the time variable lacks ``units`` or ``calendar``
-            attributes.
+        :raises ValueError: If no time variable is found, or the time-bounds
+            variable is a scalar.
+        :raises AttributeError: If the time variable lacks ``units`` or ``calendar``.
         """
         self.__time_vals = None
         self.__cftime_vals = None
@@ -281,26 +226,34 @@ class netCDFMeta:
 
     def get_path(self):
         """
-        Returns the file-system path of the history file this object was built from.
+        Returns the path of the history file this object was built from.
 
-        :returns: Path to the source history file.
         :rtype: str
         """
         return self.__path
 
     def get_time_var_name(self):
+        """
+        Returns the name of the time variable in the history file.
+
+        :rtype: str
+        """
         return self.__time_eqv
 
     def get_timebnds_var_name(self):
+        """
+        Returns the name of the time-bounds variable, or ``None`` if there is none.
+
+        :rtype: str or None
+        """
         return self.__time_bnds_eqv
 
     def __decode_dates(self):
         """
-        Converts cached raw float time (and time-bounds, if present) values to
-        CFTime objects, if not already done. Idempotent -- safe to call
-        whether construction eagerly decoded already or not. Needs only the
-        raw values and units/calendar strings cached in ``__init__``, so the
-        source file does not need to still be open.
+        Converts the cached raw time (and bounds) values to CFTime objects.
+
+        Idempotent, and needs only the values cached in ``__init__``, so the
+        source file does not have to still be open.
         """
         if self.__cftime_vals is None:
             self.__cftime_vals = num2date(self.__time_vals, units=self.__time_units, calendar=self.__time_calendar)
@@ -318,13 +271,9 @@ class netCDFMeta:
 
     def get_cftime_bounds(self):
         """
-        Returns the time-bounds array as CFTime objects.
+        Returns the time-bounds array as CFTime pairs, or ``None`` if the file
+        has no time-bounds variable.
 
-        Decodes lazily on first call if the instance was constructed with
-        ``decode_dates=False``.
-
-        :returns: Array of CFTime bound pairs, or ``None`` if the history file
-            contains no time-bounds variable.
         :rtype: numpy.ndarray or None
         :raises RuntimeError: If constructed with ``load_time_bounds=False`` and
             the file actually has a time-bounds variable.
@@ -336,10 +285,9 @@ class netCDFMeta:
 
     def get_float_time_bounds(self):
         """
-        Returns the time-bounds array as raw float values.
+        Returns the time-bounds array as raw float pairs, or ``None`` if the file
+        has no time-bounds variable.
 
-        :returns: Array of float time-bound pairs, or ``None`` if the history file
-            contains no time-bounds variable.
         :rtype: numpy.ndarray or None
         :raises RuntimeError: If constructed with ``load_time_bounds=False`` and
             the file actually has a time-bounds variable.
@@ -349,21 +297,16 @@ class netCDFMeta:
 
     def get_float_times(self):
         """
-        Returns the raw float time values read from the ``time`` variable.
+        Returns the raw float time values read from the time variable.
 
-        :returns: 1-D array of float time values.
         :rtype: numpy.ndarray
         """
         return self.__time_vals
 
     def get_cftimes(self):
         """
-        Returns the time values converted to CFTime objects.
+        Returns the time values as CFTime objects, one per time step.
 
-        Decodes lazily on first call if the instance was constructed with
-        ``decode_dates=False``.
-
-        :returns: Array of CFTime datetime objects corresponding to each time step.
         :rtype: numpy.ndarray
         """
         if self.__cftime_vals is None:
@@ -372,78 +315,64 @@ class netCDFMeta:
 
     def get_variables(self):
         """
-        Returns the full list of variable names present in the history file.
+        Returns the names of every variable in the history file.
 
-        :returns: List of all variable name strings.
-        :rtype: list
+        :rtype: list[str]
         """
         return self.__var_names
 
     def get_primary_variables(self):
         """
-        Returns the names of primary variables in the history file.
+        Returns the names of the primary variables (see :func:`is_var_secondary`).
 
-        Primary variables are multi-dimensional, time-varying scientific fields
-        that each warrant their own time-series output file.
-
-        :returns: List of primary variable name strings.
-        :rtype: list
+        :rtype: list[str]
         """
         return self.__primary_var_names
 
     def get_secondary_variables(self):
         """
-        Returns the names of secondary variables in the history file.
+        Returns the names of the secondary variables (see :func:`is_var_secondary`).
 
-        Secondary variables are coordinate and auxiliary fields (e.g. ``time``,
-        ``time_bnds``, ``lat``, ``lon``) that are written unchanged into every
-        time-series output file.
-
-        :returns: List of secondary variable name strings.
-        :rtype: list
+        :rtype: list[str]
         """
         return self.__secondary_var_names
 
     def get_variable_dims(self, variable):
         """
-        Returns the dimension names for the given variable.
+        Returns the dimension names of the given variable.
 
         :param variable: Name of the variable to look up.
         :type variable: str
-        :returns: Tuple or list of dimension name strings for the variable.
-        :rtype: tuple
+        :rtype: tuple[str]
         """
         return self.__variable_dims[variable]
 
     def get_variable_shapes(self, variable):
         """
-        Returns the shape of the given variable.
+        Returns the shape of the given variable in this file.
 
         :param variable: Name of the variable to look up.
         :type variable: str
-        :returns: Tuple of integers describing the size of each dimension.
-        :rtype: tuple
+        :rtype: tuple[int]
         """
         return self.__variable_shapes[variable]
 
     def get_variable_dtype(self, variable):
         """
-        Returns the data type of the given variable.
+        Returns the NumPy dtype of the given variable.
 
         :param variable: Name of the variable to look up.
         :type variable: str
-        :returns: NumPy dtype describing the element type of the variable.
         :rtype: numpy.dtype
         """
         return self.__variable_dtypes[variable]
 
     def get_variable_attrs(self, variable):
         """
-        Returns the attribute dictionary for a single variable.
+        Returns the attribute dictionary of the given variable.
 
         :param variable: Name of the variable to look up.
         :type variable: str
-        :returns: Dictionary mapping attribute names to their values.
         :rtype: dict
         :raises RuntimeError: If constructed with ``load_variable_attrs=False``.
         """
@@ -456,26 +385,20 @@ class netCDFMeta:
 
     def get_attributes(self):
         """
-        Returns the global attributes dictionary cached from the history file.
+        Returns the global attributes cached from the history file.
 
-        :returns: Dictionary mapping global attribute names to their values.
         :rtype: dict
         """
         return self.__attrs
 
     def is_valid(self):
         """
-        Returns whether this history file is usable for time-series generation.
+        Returns whether this history file is usable for time series generation.
 
-        A file is considered invalid if any of the following are true:
+        A file is invalid if it has no usable time coordinate, holds no variables,
+        or carries a ``gents_version`` attribute (marking it as GenTS output
+        rather than raw model output).
 
-        - Both ``get_cftime_bounds()`` and ``get_cftimes()`` are ``None``
-          (no usable time coordinate).
-        - The file contains zero primary and zero secondary variables.
-        - A ``gents_version`` global attribute is present (the file is already
-          a GenTS-generated time-series output, not a raw history file).
-
-        :returns: ``True`` if the file is valid for processing, ``False`` otherwise.
         :rtype: bool
         """
         if self.get_cftime_bounds() is None and self.get_cftimes() is None:
@@ -488,15 +411,12 @@ class netCDFMeta:
 
     def get_dim_bounds(self):
         """
-        Returns coordinate bounds for each dimension in the history file.
+        Returns ``{dimension: [min]}`` or ``{dimension: [min, max]}`` for every
+        dimension that has a coordinate variable.
 
-        For each dimension that has an associated coordinate variable, maps the
-        dimension name to a list containing its minimum value (single-element list
-        for a scalar coordinate) or ``[min_value, max_value]`` for a range.  Used
-        by :func:`~gents.hfcollection.merge_fragmented_groups` to identify spatial
-        extent when merging tiled files.
+        Used by :func:`~gents.hfcollection.merge_fragmented_groups` to match the
+        spatial extent of tiled files.
 
-        :returns: Dictionary mapping dimension names to their coordinate bound lists.
         :rtype: dict
         :raises RuntimeError: If constructed with ``compute_dim_bounds=False``.
         """
@@ -507,21 +427,19 @@ class netCDFMeta:
             )
         return self.__dim_bounds
 
+
 def get_meta_from_path(path: str):
     """
-    Opens a netCDF file, constructs a :class:`netCDFMeta` object, and returns it.
+    Opens a netCDF file and returns a :class:`netCDFMeta` built from it.
 
-    Serves as a picklable factory wrapper around :class:`netCDFMeta` so that
-    instances can be created inside ``ProcessPoolExecutor`` worker processes.
-    Any exception raised during construction is re-raised with the file path
-    appended to the message for easier debugging.
+    Picklable factory, so metadata can be read inside ``ProcessPoolExecutor``
+    workers.
 
     :param path: Path to the netCDF history file.
     :type path: str
-    :returns: Metadata object populated from the specified file.
+    :returns: Metadata object populated from the file.
     :rtype: netCDFMeta
-    :raises Exception: Re-raises any exception from ``netCDFMeta.__init__``
-        with the file path appended to the message.
+    :raises Exception: Re-raises construction errors with the path appended.
     """
     ds_meta = None
     try:

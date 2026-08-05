@@ -1,3 +1,7 @@
+#!/usr/bin/env python
+"""
+``run_gents`` -- command line driver for the history file to time series pipeline.
+"""
 import argparse
 import sys
 import yaml
@@ -8,6 +12,13 @@ from pathlib import Path
 
 
 def check_config(config_dict):
+    """
+    Asserts that a model YAML config has the required top-level keys.
+
+    :param config_dict: Parsed contents of a ``gents/configs/*.yaml`` file.
+    :type config_dict: dict
+    :raises AssertionError: If any required key is missing.
+    """
     assert "version" in config_dict
     assert "model" in config_dict
     assert "input_hf" in config_dict
@@ -16,30 +27,12 @@ def check_config(config_dict):
 
 def parse_arguments():
     """
-    Parses command-line arguments for the ``gents`` CLI entry point.
+    Parses ``run_gents`` command line arguments.
 
-    Constructs an :class:`argparse.ArgumentParser` with all supported flags and
-    positional arguments, then parses ``sys.argv`` and returns the resulting
-    namespace.
+    Run ``run_gents --help`` for the full list; each flag's help text below is
+    its documentation.
 
-    Supported arguments:
-
-    - ``hf_head_dir`` *(positional)*: Path to the head directory containing history files.
-    - ``-o`` / ``--outputdir``: Output directory for time-series files (defaults to ``hf_head_dir`` if omitted).
-    - ``-v`` / ``--verbose``: Enable verbose console output.
-    - ``-V`` / ``--version``: Print the installed ``gents`` version and exit.
-    - ``-d`` / ``--dryrun``: Parse metadata only; do not write time-series files.
-    - ``-w`` / ``--overwrite``: Overwrite existing time-series output files.
-    - ``-sl`` / ``--slice``: Maximum length of individual time-series files in years (default ``10``).
-    - ``-hc`` / ``--hfcores``: Maximum number of cores for parallel metadata reads (default ``64``).
-    - ``-tc`` / ``--tscores``: Maximum number of cores for parallel time-series writes (default ``8``).
-    - ``--memory-limit``: Maximum memory (in GB) each ``MHFDataset`` may use to cache variable data (default unbounded).
-    - ``-m`` / ``--model``: Model default configuration to apply (``'CESM3'``, ``'CESM2'``, or ``'E3SM'``; default ``'none'``).
-    - ``--exclude``: Glob pattern to exclude; may be specified multiple times. Overrides the model default unless ``--append`` is also set.
-    - ``--include``: Glob pattern to include; may be specified multiple times. Overrides the model default unless ``--append`` is also set.
-    - ``--append``: Append ``--exclude``/``--include`` filters to the model default configuration instead of replacing them.
-
-    :returns: Namespace object populated with parsed argument values.
+    :returns: Namespace populated with the parsed argument values.
     :rtype: argparse.Namespace
     """
     parser = argparse.ArgumentParser(
@@ -162,19 +155,16 @@ def parse_arguments():
 
 def main():
     """
-    Entry point for the ``gents`` command-line interface.
+    Entry point for ``run_gents``.
 
-    Performs the following steps:
+    Loads the YAML config for ``--model`` from ``gents/configs/``, builds an
+    :class:`~gents.hfcollection.HFCollection` and
+    :class:`~gents.timeseries.TSCollection` from it (with command line flags
+    replacing the config's filters and slicing, or extending them under
+    ``--append``), and executes the result unless ``--dryrun`` was given.
 
-    1. Calls :func:`parse_arguments` to obtain the parsed CLI namespace.
-    2. Defaults ``outputdir`` to ``hf_head_dir`` when ``-o`` is not supplied.
-    3. Selects the appropriate model configuration:
-
-       - ``--model e3sm`` flag → imports :func:`~gents.configs.gents_e3sm.run_config` (E3SM).
-       - ``--model cesm3`` → imports :func:`~gents.configs.gents_cesm3.run_config` (CESM3).
-
-    4. If ``--verbose`` is set, prints a summary of all active settings to stdout.
-    5. Delegates execution to the selected ``run_config(args)`` function.
+    :raises ValueError: If ``--model`` names an unknown model, or ``--compression``
+        is given without ``--level``.
     """
     args = parse_arguments()
 

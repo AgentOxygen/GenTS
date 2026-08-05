@@ -47,21 +47,15 @@ def generate_history_file(
         fill="constant"
     ):
     """
-    Creates a synthetic netCDF history file with configurable time values, bounds, dimensions, and variables.
+    Creates a synthetic netCDF history file with configurable time values,
+    bounds, dimensions and variables.
 
-    :param dtype: NumPy/netCDF4 dtype for primary and auxiliary variables.
-        Defaults to ``float`` (float64), matching prior behavior. Real model
-        output is commonly float32; pass ``np.float32`` for fixtures meant
-        to represent that.
+    :param dtype: Dtype for the primary and auxiliary variables. Real model
+        output is commonly float32.
     :type dtype: type or numpy.dtype
-    :param fill: ``"constant"`` (default, matches prior behavior) fills each
-        primary variable with a single repeated value (``index``) across
-        every time/space point -- cheap to generate but compresses to
-        nearly nothing and cannot distinguish one time step's data from
-        another. ``"random"`` fills with ``numpy.random.random``, useful
-        for benchmarks measuring compression or wanting per-step data that
-        isn't degenerate. Only affects the primary variable; the auxiliary
-        variable (when ``auxiliary=True``) already uses random data.
+    :param fill: ``"constant"`` repeats one value across the primary variable;
+        ``"random"`` fills it with random data, which is what a benchmark
+        measuring compression needs. Auxiliary variables are always random.
     :type fill: str
     """
     if dim_shapes is None: 

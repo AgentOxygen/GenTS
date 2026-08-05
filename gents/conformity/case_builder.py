@@ -1,3 +1,11 @@
+"""
+``gents_conform_build`` -- mirror a real case directory as tiny missing-value clones.
+
+Primary (scientific) variables are created but never written, so HDF5 stores
+nothing for them and returns their fill value on read. A multi-GB case therefore
+mirrors down to KB while staying structurally identical, which is what makes
+end-to-end conformity testing against real cases affordable.
+"""
 from gents.hfcollection import find_files, sort_hf_groups
 from gents.meta import is_var_secondary, get_time_variables_names
 from gents.datastore import GenTSDataStore
@@ -17,19 +25,19 @@ import sys
 
 logger = logging.getLogger(__name__)
 
-# Name of the file recording how a clone directory was built, written at the top
-# of the clone. Matches the convention already used by existing clone bundles.
+# Records how a clone directory was built; written at the top of the clone.
 CLONE_COMMAND_FILENAME = "cmd.txt"
 
-# Multi-dimensional variables whose logical (uncompressed) size exceeds this are
-# never copied verbatim, even if classified as secondary. See the size-guard
-# note in ``clone_netcdf_with_missing``. Kept below 1 MiB so that ~1 MiB static
-# grid-geometry arrays (e.g. CICE's per-grid TLON/TLAT/tarea/tmask sets) are
+# Size guard threshold (see ``clone_netcdf_with_missing``). Kept below 1 MiB so
+# that ~1 MiB static grid-geometry arrays (e.g. CICE's TLON/TLAT/tarea/tmask) are
 # filled rather than copied.
 DEFAULT_MAX_COPY_MIB = 0.5
 
 
 def parse_arguments():
+    """
+    Parses ``gents_conform_build`` command line arguments.
+    """
     parser = argparse.ArgumentParser(
         description="GenTS Conformity Case Builder Tool"
     )
@@ -104,26 +112,20 @@ def parse_arguments():
 
 def _copy_variable_creation_kwargs(src_var) -> dict:
     """
-    Collect the ``createVariable`` keyword arguments that mirror a source
-    variable's on-disk layout — its compression / checksum filters, chunking,
-    endianness and fill value.
+    Collects the ``createVariable`` arguments that mirror a source variable's
+    on-disk layout: filters, chunking, endianness and fill value.
 
-    The clone applies no compression of its own: the size savings come from
-    leaving primary variables unwritten (see :func:`clone_netcdf_with_missing`),
-    not from compressing them. Mirroring the source exactly keeps the clone's
-    metadata and structure as faithful to the original as possible — a
-    compressed source stays compressed, an uncompressed source stays
-    uncompressed.
+    The clone adds no compression of its own, so mirroring the source keeps the
+    clone as faithful to the original as possible.
 
     :param src_var: Source netCDF4 variable to mirror.
     :type src_var: netCDF4._netCDF4.Variable
-    :returns: Keyword arguments to pass to ``Dataset.createVariable``.
+    :returns: Keyword arguments for ``Dataset.createVariable``.
     :rtype: dict
     """
     kwargs = {}
 
-    # Mirror the source's compression / checksum filters. ``filters()`` returns
-    # None for variable types that cannot carry filters (e.g. VLEN).
+    # ``filters()`` returns None for types that cannot carry filters (e.g. VLEN).
     filters = src_var.filters()
     if filters:
         for key in ("zlib", "complevel", "shuffle", "fletcher32"):
@@ -143,9 +145,8 @@ def _copy_variable_creation_kwargs(src_var) -> dict:
     except Exception:
         pass
 
-    # ``_FillValue`` must be set at creation time; it cannot be assigned as a
-    # regular attribute afterwards, so route it through the kwarg here and skip
-    # it when copying the remaining attributes.
+    # ``_FillValue`` cannot be assigned after creation, so it goes through the
+    # kwarg here and is skipped when the remaining attributes are copied.
     fill_value = getattr(src_var, "_FillValue", None)
     if fill_value is not None:
         kwargs["fill_value"] = fill_value
@@ -157,62 +158,38 @@ def clone_netcdf_with_missing(src_path: str, dst_path: str,
                               max_copy_bytes: int = int(DEFAULT_MAX_COPY_MIB * 1024**2),
                               upgrade_netcdf3: bool = True):
     """
-    Create a structurally identical netCDF file with the primary (scientific)
-    variables replaced by missing values so the clone is cheap to store.
+    Writes a structurally identical copy of a netCDF file holding no primary data.
 
-    Primary variables (multi-dimensional, time-varying fields, as classified by
-    :func:`gents.meta.is_var_secondary`) are never written: they are created with
-    a fill value (``NaN`` for floating point types, the source ``_FillValue`` or
-    the dtype minimum for integer types) and left empty. HDF5 (the netCDF4
-    backend) allocates no storage for an unwritten variable and returns the fill
-    value on read, so the primaries occupy essentially nothing on disk while
-    still reading back at full shape as missing data. A consequence is that a
-    floating point primary always carries ``_FillValue = NaN`` in the clone, even
-    if the source used a different fill (or none). Secondary variables
-    (coordinates, time, bounds) are copied verbatim so the clone remains a valid,
-    self-describing history file.
+    Primary variables (per :func:`gents.meta.is_var_secondary`) are created with a
+    fill value and never written; HDF5 allocates nothing for them and returns the
+    fill on read, so they read back at full shape while occupying no space. One
+    consequence: a floating point primary always carries ``_FillValue = NaN`` in
+    the clone, whatever the source used. Secondary variables (coordinates, time,
+    bounds) are copied verbatim so the clone stays self-describing, as are
+    dimensions, attributes, endianness and groups.
 
-    No compression is applied: the size savings come entirely from leaving the
-    primaries unwritten, not from compressing them. Each variable's compression
-    filters, chunking, endianness and fill value are mirrored from the source, so
-    the clone's metadata and structure stay as faithful to the original as
-    possible (a compressed source stays compressed; an uncompressed one does
-    not).
+    Size comes purely from what is left unwritten -- no compression is added; each
+    variable's source filters and chunking are mirrored instead.
 
-    **Size guard:** as a backstop against variables the classifier misses (for
-    example a large field on an unrecognised record dimension), any *multi-
-    dimensional* variable whose logical size exceeds ``max_copy_bytes`` is filled
-    rather than copied, even if classified secondary. One-dimensional variables
-    (coordinates) are always copied verbatim regardless of size. Note this can
-    fill large multi-dimensional coordinate variables (e.g. 2-D curvilinear
-    lat/lon); raise the threshold or pass ``0`` to disable the guard if that
-    matters for a given case.
+    **Size guard.** Any *multi-dimensional* variable larger than
+    ``max_copy_bytes`` is filled rather than copied even if classified secondary,
+    which catches large fields on unrecognised record dimensions. One-dimensional
+    coordinates are always copied. This can fill 2-D curvilinear lat/lon; raise
+    the threshold or pass ``0`` if a case needs them.
 
-    **File format:** the "unwritten variable costs nothing" behaviour relies on
-    HDF5's lazy allocation, which only the netCDF4 formats provide. A
-    netCDF3-model source (classic, 64-bit offset, or CDF-5 / 64-bit data) stores
-    every variable at full size regardless of whether it is written, so by
-    default such a source is written as ``NETCDF4`` so the clone can shrink.
-    ``NETCDF4`` (not ``NETCDF4_CLASSIC``) is used because CDF-5 permits extended
-    integer types the classic data model cannot hold. Set ``upgrade_netcdf3`` to
-    ``False`` to preserve the original format exactly, at the cost of the clone
-    not shrinking for netCDF3 sources.
+    **File format.** Lazy allocation is an HDF5 feature, so a netCDF3-model source
+    (classic, 64-bit offset, CDF-5) would not shrink at all and is rewritten as
+    ``NETCDF4`` by default -- not ``NETCDF4_CLASSIC``, which cannot hold CDF-5's
+    extended integer types.
 
-    Preserves dimensions (including unlimited), global and per-variable
-    attributes, endianness, fill values and groups.
-
-    :param src_path: Path to the source netCDF file to clone.
+    :param src_path: Source netCDF file to clone.
     :type src_path: str
-    :param dst_path: Path to write the missing-value clone to. Parent
-        directories are created as needed.
+    :param dst_path: Where to write the clone; parent directories are created.
     :type dst_path: str
-    :param max_copy_bytes: Logical-size threshold, in bytes, above which a
-        multi-dimensional variable is filled instead of copied verbatim. ``0``
-        disables the guard. Defaults to ``DEFAULT_MAX_COPY_MIB`` MiB.
+    :param max_copy_bytes: Size guard threshold in bytes; ``0`` disables it.
     :type max_copy_bytes: int
-    :param upgrade_netcdf3: Rewrite netCDF3-model sources as ``NETCDF4`` so they
-        can shrink. When ``False`` the source format is preserved exactly.
-        Defaults to ``True``.
+    :param upgrade_netcdf3: Rewrite netCDF3 sources as ``NETCDF4`` so they can
+        shrink, rather than preserving their format exactly.
     :type upgrade_netcdf3: bool
     """
     Path(dst_path).parent.mkdir(parents=True, exist_ok=True)
@@ -246,9 +223,8 @@ def _copy_group(src_grp, dst_grp, max_copy_bytes: int):
     for name, src_var in src_grp.variables.items():
         secondary = is_var_secondary(src_var)
 
-        # Size guard: never copy a large multi-dimensional field verbatim, even
-        # if the classifier calls it secondary (e.g. an unrecognised record-
-        # dimension name). Such a field is filled like a primary instead.
+        # Size guard: a large multi-dimensional field is filled like a primary
+        # even when the classifier calls it secondary.
         if secondary and max_copy_bytes and len(src_var.dimensions) > 1:
             itemsize = getattr(src_var.dtype, "itemsize", 0)
             logical_bytes = int(np.prod(src_var.shape, dtype=np.int64)) * itemsize
@@ -257,8 +233,8 @@ def _copy_group(src_grp, dst_grp, max_copy_bytes: int):
 
         kwargs = _copy_variable_creation_kwargs(src_var)
 
-        # For primary fields the missing value is written implicitly via the
-        # variable's fill value (see below), which overrides any source fill.
+        # A primary's missing value comes from its fill value, overriding the
+        # source's own fill.
         missing = None if secondary else _missing_value(src_var)
         if missing is not None:
             kwargs["fill_value"] = missing
@@ -275,15 +251,11 @@ def _copy_group(src_grp, dst_grp, max_copy_bytes: int):
             continue
 
         if secondary:
-            # Coordinates, time and bounds are copied unchanged so the clone
-            # stays self-describing.
             dst_var[:] = src_var[:]
         elif missing is None:
             # Char/compound dtype we cannot express as a fill value: copy it.
             dst_var[:] = src_var[:]
-        # Otherwise leave the primary field unwritten: HDF5 allocates no storage
-        # for it and returns ``missing`` (the fill value) on read, which is what
-        # keeps the clone small.
+        # Otherwise the primary is left unwritten -- that is the whole trick.
 
     for name, subgroup in src_grp.groups.items():
         _copy_group(subgroup, dst_grp.createGroup(name), max_copy_bytes)
@@ -291,16 +263,16 @@ def _copy_group(src_grp, dst_grp, max_copy_bytes: int):
 
 def _missing_value(src_var):
     """
-    Return the value an unwritten primary variable should read back as, or
-    ``None`` if the dtype cannot be represented by a fill value (in which case
-    the variable is copied verbatim instead).
+    Returns the value an unwritten primary variable should read back as.
 
-    Floating point fields read back as ``NaN``; integer fields read back as the
-    source ``_FillValue`` if present, otherwise the smallest value of the dtype.
+    Floating point fields read back as ``NaN``; integer fields as the source
+    ``_FillValue``, or the dtype minimum if it has none.
 
     :param src_var: Source netCDF4 variable being cloned.
     :type src_var: netCDF4._netCDF4.Variable
-    :returns: The fill value for the clone, or ``None`` for unsupported dtypes.
+    :returns: The clone's fill value, or ``None`` for a dtype that cannot carry
+        one (such a variable is copied verbatim instead).
+    :rtype: numpy.generic or None
     """
     if np.issubdtype(src_var.dtype, np.floating):
         return src_var.dtype.type(np.nan)
@@ -314,11 +286,18 @@ def _missing_value(src_var):
 
 def _passes_filters(path: str, include: list, exclude: list) -> bool:
     """
-    Apply GenTS-style ``fnmatch`` include/exclude globs to an absolute path.
+    Applies ``fnmatch`` include/exclude globs to an absolute path.
+
+    Note the empty-list convention differs from
+    :meth:`~gents.hfcollection.HFCollection.include`: here an empty ``include``
+    means "no filter", there it means "match nothing".
 
     :param path: Absolute path string to test.
+    :type path: str
     :param include: Globs; if non-empty, the path must match at least one.
+    :type include: list[str]
     :param exclude: Globs; the path must match none of them.
+    :type exclude: list[str]
     :returns: ``True`` if the path should be cloned.
     :rtype: bool
     """
@@ -331,47 +310,29 @@ def _passes_filters(path: str, include: list, exclude: list) -> bool:
 
 def record_clone_command(out_dir: Path):
     """
-    Append the current invocation to the clone directory's command log.
+    Appends this invocation to the clone directory's ``cmd.txt``.
 
-    ``run_gents`` records the command that produced each time series in that
-    file's ``gents_command`` attribute. A clone directory has no equivalent place
-    to put that, so the command is written to a plain text file at the top of the
-    clone instead, preserving how the clone was generated and making it
-    reproducible from a real case later.
-
-    Each invocation contributes two lines: a comment carrying the date, host and
-    GenTS version, followed by the command itself::
+    It is the clone-tree equivalent of the ``gents_command`` attribute
+    ``run_gents`` stamps into each output file: a record of how the clone was
+    built, so it can be rebuilt from the real case later. Each invocation writes
+    a provenance comment and the command itself::
 
         # 2026-07-30 14:55 | host: derecho01 | GenTS 1.1.3
         gents_conform_build /glade/.../my_case -o . -n 126 --include '*.0001-*.nc'
 
-    The provenance goes on its own ``#`` comment line rather than onto the command
-    line so the command stays directly pasteable and the whole file remains valid
-    shell. The host is worth recording because a clone's source path is usually
-    specific to the machine it was built on, and the GenTS version because
-    ``is_var_secondary`` decides which variables get emptied — a clone built by a
-    different version may have classified them differently.
-
-    A clone is normally built by a single command and so holds exactly one entry.
-    Entries are nonetheless appended rather than overwritten: a run only touches
-    the files its filters select, so pointing a second command with different
-    filters at the same directory adds to it, and overwriting would discard the
-    command that produced everything already there. Building a variant is
-    ordinarily cheaper and clearer than layering onto an existing clone.
-
-    Arguments are quoted with :func:`shlex.join` so a recorded command can be
-    pasted back into a shell unchanged. Without it, glob patterns passed to
-    ``--include``/``--exclude`` would be recorded bare (the shell having already
-    stripped their quotes) and would expand against the working directory if the
-    line were re-run.
+    The version matters because :func:`~gents.meta.is_var_secondary` decides which
+    variables get emptied, and the host because a source path is usually specific
+    to the machine that had the case. Arguments are :func:`shlex.join`-quoted so
+    the line stays pasteable without its globs expanding. Lines are appended, not
+    replaced, because a second run with different filters adds to a clone rather
+    than rebuilding it.
 
     :param out_dir: Head directory of the clone being written.
     :type out_dir: pathlib.Path
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # sys.argv[0] is the full path to the installed entry point; only its name is
-    # meaningful to someone reading or re-running the recorded line.
+    # Only the entry point's name is meaningful in a recorded command line.
     argv = [Path(sys.argv[0]).name] + sys.argv[1:]
 
     provenance = (
@@ -388,32 +349,26 @@ def record_clone_command(out_dir: Path):
 
 def _summarize_case_file(path):
     """
-    Reduce one file to its contribution to the case summary.
+    Reduces one file to its contribution to the case summary.
 
-    Mirrors how :class:`~gents.meta.netCDFMeta` locates a time coordinate, but
-    reads through :class:`~gents.datastore.GenTSDataStore` directly and
-    *returns* rather than raises when a file has no usable time axis. That
-    difference is the point: the clone deliberately mirrors the whole raw case
-    tree, including restart, static, grid and log files that carry no time
-    coordinate at all, and those must be summarised rather than rejected.
+    Locates a time coordinate as :class:`~gents.meta.netCDFMeta` does, but
+    *returns* empty-handed instead of raising when a file has none: the clone
+    mirrors the whole raw tree, restart and grid files included, and those have
+    to be summarised rather than rejected.
 
-    Runs in a worker process and decodes nothing: ``num2date`` is monotonic for
-    a fixed units and calendar, so raw values order exactly as the dates they
-    denote and the extremes can be picked without converting anything. The
-    caller decodes only the few values that survive aggregation.
-
-    The file's *second* latest value rides along with its latest because a
-    group's output frequency is the gap between two consecutive time steps. For
-    a file holding many steps that gap lies inside the file, and the earliest
-    value is a whole file-span away from the latest, not one step.
+    Decodes nothing. ``num2date`` is monotonic for a fixed units and calendar, so
+    raw values order exactly as the dates they denote and only the few that
+    survive aggregation need converting. The second-latest value rides along with
+    the latest because a frequency is the gap between *consecutive* steps, which
+    for a multi-step file lies inside the file.
 
     :param path: netCDF file to inspect.
     :type path: pathlib.Path
     :returns: ``(variable_names, earliest, latest_values, reference)``, where
-        ``latest_values`` holds the up-to-two latest raw time values in
-        ascending order and ``reference`` is the ``(units, calendar)`` they are
-        expressed in. For a file with no decodable time coordinate ``earliest``
-        and ``reference`` are ``None`` and ``latest_values`` is empty.
+        ``latest_values`` holds the up-to-two latest raw time values ascending and
+        ``reference`` is the ``(units, calendar)`` they are expressed in. A file
+        with no usable time coordinate returns ``None`` for both the earliest
+        value and the reference.
     :rtype: tuple[list[str], float or None, list[float], tuple or None]
     """
     with GenTSDataStore(str(path), "r") as ds:
@@ -424,8 +379,8 @@ def _summarize_case_file(path):
             return variable_names, None, [], None
 
         time_var = ds[time_name]
-        # Undecodable without both attributes; netCDFMeta raises here, but a
-        # non-history file legitimately lacks them.
+        # netCDFMeta raises without both attributes, but a non-history file
+        # legitimately lacks them.
         if "units" not in time_var.ncattrs() or "calendar" not in time_var.ncattrs():
             return variable_names, None, [], None
 
@@ -437,42 +392,31 @@ def _summarize_case_file(path):
 
 def log_case_summary(src_paths, num_processes=1):
     """
-    Prints a summary of what a case covers once the clone filters are applied.
+    Prints what a case covers once the clone filters are applied.
 
-    Describes what a conformity case actually exercises, which is what decides
-    how much a conformity run over it can prove: a case with only monthly streams
-    spanning six years cannot exercise daily output or ten-year slicing, however
-    many files it holds.
+    The coverage is what decides how much a conformity run over the case can
+    prove: monthly streams spanning six years cannot exercise daily output or
+    ten-year slicing, however many files they amount to.
 
-    Every file the clone will copy is inspected, not just the ones GenTS would
-    accept as history files. Files are grouped by
-    :func:`~gents.hfcollection.sort_hf_groups`, which works on paths alone, and
-    read with :func:`_summarize_case_file`, which skips GenTS's metadata
-    validation. Building an ``HFCollection`` here instead would drop every file
-    without a time coordinate and abort outright on a group holding a single
-    time step -- both routine in a raw case tree, and both files the clone still
-    has to copy.
+    Every file the clone will copy is inspected, not only those GenTS accepts as
+    history files, so grouping uses the path-only
+    :func:`~gents.hfcollection.sort_hf_groups` and reading uses
+    :func:`_summarize_case_file`. An ``HFCollection`` would drop every file
+    lacking a time coordinate and abort on a single-timestep group, both routine
+    in a raw case tree.
 
-    Reads every file header, so it is only invoked under ``--verbose``. Those
-    reads are the whole cost of the summary and are independent of one another,
-    so they are spread over ``num_processes`` worker processes exactly as the
-    clone itself is. Group membership is decided from paths alone, before any
-    file is opened, so results can be folded back into their group in whatever
-    order they arrive; the printed summary does not depend on that order.
+    Files are pooled by ``(group, units, calendar)``: component models within one
+    case do not reliably share a time reference, and raw values only mean anything
+    against their own. Pooling also keeps calendars apart, which ``cftime`` will
+    not compare across. One ``num2date`` per pool then yields both its span and
+    its frequency, so the whole case costs a handful of conversions.
 
-    Each group's files are pooled under the ``(units, calendar)`` they were
-    written with, because raw values only mean anything against their own
-    reference and component models within one case do *not* reliably share one
-    -- an ocean stream written against a different start date is routine. That
-    also keeps mismatched calendars apart, which matters because ``cftime``
-    raises rather than compares across them. One ``num2date`` call per pool then
-    yields both the years it spans and its output frequency, so the whole case
-    costs a handful of conversions rather than one per time step.
+    Reads every file header, which is the entire cost of the summary and why it
+    is only invoked under ``--verbose``.
 
     :param src_paths: Filtered source files the clone will mirror.
     :type src_paths: list[pathlib.Path]
-    :param num_processes: Number of worker processes used to read file headers
-        in parallel. Defaults to ``1``.
+    :param num_processes: Worker processes used to read headers in parallel.
     :type num_processes: int
     """
     hf_groups = sort_hf_groups(src_paths)
@@ -517,8 +461,8 @@ def log_case_summary(src_paths, num_processes=1):
     for (_, units, calendar), (earliest, latest_values) in pools.items():
         latest_pair = sorted(latest_values)[-2:]
         dates = num2date([earliest] + latest_pair, units=units, calendar=calendar)
-        # Years are plain integers and so compare across calendars; the dates
-        # they came from do not, which is why each pool decodes with its own.
+        # Years are plain integers and compare across calendars; the dates they
+        # came from do not, which is why each pool decodes with its own.
         years += [dates[0].year, dates[-1].year]
         frequencies.add(
             get_timestep_label(dates[2] - dates[1]) if len(latest_pair) == 2 else "unsorted"
@@ -531,6 +475,15 @@ def log_case_summary(src_paths, num_processes=1):
 
 
 def main():
+    """
+    Entry point for ``gents_conform_build``.
+
+    Every run rebuilds every file its filters select: there is deliberately no
+    resume, skip-existing or overwrite flag, since clones are cheap and a fresh
+    variant beats reasoning about what a directory already holds. Files outside
+    the current filters are left untouched, so a second run with different
+    filters adds to a clone.
+    """
     args = parse_arguments()
     verbose = args.verbose or args.dryrun
 

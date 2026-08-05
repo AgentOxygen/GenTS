@@ -1,3 +1,10 @@
+#!/usr/bin/env python
+"""
+Virtual dataset presenting a group of history files as one aggregated whole.
+
+Developer: Cameron Cummins
+Contact: cameron.cummins@utexas.edu
+"""
 from gents.datastore import GenTSDataStore
 from pathlib import Path
 from gents.meta import netCDFMeta
@@ -6,18 +13,17 @@ import numpy as np
 
 def extend_coords(ds, dim_coords={}):
     """
-    Builds a combined coordinate map across all datasets in a spatially fragmented group.
+    Folds one dataset's coordinates into a combined coordinate map.
 
-    For each dimension across all open datasets:
+    Called once per file to build the group's full extent: coordinate values are
+    merged and de-duplicated across files, and a dimension with no coordinate
+    variable gets a 0-indexed integer range instead.
 
-    - If the dimension has a coordinate variable, its values are merged and
-      de-duplicated with ``numpy.unique`` across all files.
-    - If there is no coordinate variable, a 0-indexed integer range matching
-      the dimension size is used.
-
-    :param hf_datasets: List of open ``netCDF4.Dataset`` objects from the group.
-    :type hf_datasets: list[netCDF4.Dataset]
-    :returns: Dictionary mapping dimension names to their combined coordinate arrays.
+    :param ds: Open dataset to merge in.
+    :type ds: gents.datastore.GenTSDataStore or netCDF4.Dataset
+    :param dim_coords: Coordinate map accumulated from earlier files.
+    :type dim_coords: dict
+    :returns: The updated ``{dimension: coordinate array}`` map.
     :rtype: dict
     """
     for dim in ds.dimensions:
@@ -35,21 +41,33 @@ class MHFDataset:
     """
     Aggregating dataset interface over a group of related history files.
 
-    Presents multiple history files — covering the same time range and/or
-    different spatial tiles — as a single virtual dataset.  All file handles
-    are opened together on :meth:`open` (or ``__enter__``) and closed together
-    on :meth:`close` (or ``__exit__``).
+    Presents files covering successive time steps and/or different spatial tiles
+    as one virtual dataset. Files are opened one at a time -- on :meth:`open` (or
+    ``__enter__``) to read metadata and fill the cache, and again on demand for
+    data that did not fit -- so the number of open handles never scales with the
+    size of the group.
+
+    Data is served from an in-memory cache keyed by variable. :meth:`open` fills
+    it with the secondary variables and as many of ``preload_var_list`` as fit
+    under ``memory_limit_bytes``; anything else is read (and cached, if it fits)
+    on first use. A variable's cache is dropped when reads move on to the next
+    variable.
     """
 
     def __init__(self, hf_paths, preload_var_list=None, memory_limit_bytes=np.inf, load_secondaries=True):
         """
-        Stores the history file paths and initialises empty internal state.
-
-        No files are opened at construction time; call :meth:`open` or use the
-        instance as a context manager.
+        Stores the group's paths; opens nothing until :meth:`open` is called.
 
         :param hf_paths: Paths to the history files that form this group.
         :type hf_paths: list[str or pathlib.Path]
+        :param preload_var_list: Primary variables to cache during :meth:`open`,
+            in priority order. Remaining primaries are appended after them.
+        :type preload_var_list: list[str] or None
+        :param memory_limit_bytes: Ceiling on cached variable data. Unbounded by
+            default.
+        :type memory_limit_bytes: float
+        :param load_secondaries: Cache secondary variable data during :meth:`open`.
+        :type load_secondaries: bool
         """
         self.__hf_files = [Path(path) for path in hf_paths]
         self.__hf_metas = []
@@ -67,13 +85,12 @@ class MHFDataset:
 
     def __estimate_var_bytes(self, var_name, hf_meta):
         """
-        Estimates a variable's full aggregated size (every file in the group)
-        from a single file's shape, scaled by file count.
+        Estimates a variable's aggregated size across the group by scaling one
+        file's shape by the file count.
 
-        Exact when every file in the group has the same number of time steps
-        (the common case); an over- or under-estimate otherwise (e.g. a
-        shorter final file in a run). Used only to plan preload caching
-        before the group has been fully scanned -- see :meth:`open`.
+        Exact when every file holds the same number of time steps; approximate
+        otherwise. Used only to plan the preload cache before the group has been
+        scanned.
         """
         shape = hf_meta.get_variable_shapes(var_name)
         itemsize = hf_meta.get_variable_dtype(var_name).itemsize
@@ -81,19 +98,12 @@ class MHFDataset:
 
     def __plan_cacheable_vars(self, candidate_names, hf_meta, running_total=0):
         """
-        Decides, once, which of ``candidate_names`` (in priority order) fit
-        in their entirety under ``memory_limit_bytes``, given bytes already
-        committed elsewhere (``running_total``).
+        Decides which of ``candidate_names`` (in priority order) fit under
+        ``memory_limit_bytes``, given the bytes already committed elsewhere.
 
-        All-or-nothing per variable: a variable is only included if its full
-        estimated size fits, never partially. This is what keeps
-        ``self.__data_var_cache``/``self.__data_secondary_var_cache`` lists
-        either complete (one entry per file) or entirely absent -- code
-        downstream (:meth:`__get_hf_data`, :meth:`__cache_variable`) assumes
-        exactly that; a partial (prefix-only) cache list silently returns a
-        different file's data once the reactive fallback re-caches on top of
-        it, or crashes outright for secondary variables, which have no
-        fallback at all.
+        All-or-nothing per variable: a variable is cached for the whole group or
+        not at all. Downstream code assumes a cache entry holds one array per
+        file, so a partial entry would serve the wrong file's data.
         """
         fit = []
         for var_name in candidate_names:
@@ -106,29 +116,17 @@ class MHFDataset:
 
     def open(self):
         """
-        Opens all history file handles and builds the internal time mapping.
+        Reads every file in the group once, building the time mapping and cache.
 
-        Constructs ``__time_mapping``: a dictionary from each unique float time
-        value to the list of ``(file_index, sub_time_index)`` pairs that
-        contain it -- ``sub_time_index`` is the position of that time value
-        within *its own file's* time array (``0`` for single-step files),
-        precomputed here so :meth:`get_var_vals` never has to re-scan a
-        file's time array to find it. Raises an exception if the number of
-        files per time step is not consistent across all time values (i.e.
-        fragmentation is inconsistent).
+        ``__time_mapping`` maps each unique float time value to the
+        ``(file_index, sub_time_index)`` pairs holding it, where
+        ``sub_time_index`` is that value's position within its own file's time
+        array -- precomputed so :meth:`get_var_vals` never rescans a time array.
 
-        Secondary-variable data (``time``, ``time_bnds``, and -- for a
-        fragmented group -- per-tile ``lat``/``lon``) can differ from file to
-        file, so it is accumulated per file here rather than read once from
-        the first file and reused; these arrays are small compared to primary
-        variable data, so the extra reads are cheap. Primary variables named
-        in ``preload_var_list`` are read in this same per-file pass too, so
-        :meth:`get_var_vals` can serve them straight from cache instead of
-        reopening every file a second time -- which ones actually get cached
-        is decided once, right after the first file is read (see
-        :meth:`__plan_cacheable_vars`), and applied identically to every
-        file in the group: a variable is either cached for the whole group
-        or not cached at all, never partially.
+        Secondary variables are cached per file rather than read once from the
+        first file, since time, bounds and per-tile coordinates differ between
+        files; they are small enough for that to be cheap. Preloaded primaries
+        ride along in the same pass so no file has to be reopened for them.
 
         :raises Exception: If the spatial fragmentation is not consistent over time.
         """
@@ -143,21 +141,19 @@ class MHFDataset:
                     load_variable_attrs=(hf_index == 0),
                 )
                 if hf_index == 0:
+                    # Drop secondaries (cached separately) and reject names the
+                    # group does not actually have.
                     checked_preload_list = []
-                    # Make sure that all variables actually exist in this group
                     for var_name in self.__preload_var_list:
-                        # To ensure we dont duplicate in the primary cache
                         if self.__load_secondaries and var_name in hf_meta.get_secondary_variables():
                             continue
-                        # Check that variable actually exists in group
                         if var_name not in hf_meta.get_variables():
                             raise KeyError(f"Attempted to cache non-existent variable '{var_name}'.")
                         checked_preload_list.append(var_name)
                     self.__preload_var_list = checked_preload_list
 
-                    # if the preload list doesnt cover the full history file
-                    # and cache_ahead is still enabled, then we need to fetch
-                    # everything else ahead in the history file
+                    # Anything the caller did not name is still worth caching if
+                    # it fits, so queue the rest of the group's primaries behind it.
                     for var_name in hf_meta.get_primary_variables():
                         if var_name not in self.__preload_var_list:
                             self.__preload_var_list.append(var_name)
@@ -212,6 +208,11 @@ class MHFDataset:
         self.__data_secondary_var_cache = {}
 
     def __get_cache_dsize(self):
+        """
+        Returns the total number of bytes currently held in the caches.
+
+        :rtype: int
+        """
         cache_size_b = 0
         for var_name in self.__data_var_cache:
             for data in self.__data_var_cache[var_name]:
@@ -224,8 +225,13 @@ class MHFDataset:
         return cache_size_b
 
     def __cache_variable(self, target_var_name, cache_ahead=True):
+        """
+        Reads ``target_var_name`` across the group into the cache, filling any
+        remaining headroom with other not-yet-read variables.
+
+        :raises MemoryError: If the target variable does not fit under the limit.
+        """
         vars_to_cache = [target_var_name]
-        # Check memory size of cache + the target variable to cache
         cache_size_b = self.__get_cache_dsize() + self.get_var_dsize(target_var_name)
 
         if cache_size_b > self.__memory_limit_bytes:
@@ -239,8 +245,8 @@ class MHFDataset:
                     cache_size_b += self.get_var_dsize(nvar_name)
                     vars_to_cache.append(nvar_name)
 
-        # if the variable has no time dimension, no reason to iterate over all of the history files
-        # we tackle those first (if they exist)
+        # A variable without a time dimension is identical in every file, so it
+        # is read once from the first rather than once per file.
         notime_vars_to_cache = []
         time_vars_to_cache = []
         for var_name in vars_to_cache:
@@ -249,7 +255,6 @@ class MHFDataset:
             else:
                 notime_vars_to_cache.append(var_name)
 
-        # Iterate over history files
         for index, path in enumerate(self.__hf_files):
             with GenTSDataStore(path, 'r') as hf_ds:
                 if index == 0:
@@ -263,46 +268,50 @@ class MHFDataset:
                         self.__data_var_cache[var_name] = [hf_ds[var_name][:]]
 
     def __get_hf_data(self, index, var_name):
+        """
+        Returns one file's data for a variable, from cache where possible.
+
+        :rtype: numpy.ndarray
+        """
         if var_name in self.__data_secondary_var_cache:
             return self.__data_secondary_var_cache[var_name][index]
 
-        # Check if done reading last variable and delete if so
+        # Reads move through one variable at a time, so a switch means the
+        # previous variable is finished with and its cache can be released.
         if self.__last_var_read != var_name:
             if self.__last_var_read is not None and self.__last_var_read in self.__data_var_cache:
                 self.__data_var_cache[self.__last_var_read] = []
             self.__past_vars_read.append(self.__last_var_read)
             self.__last_var_read = var_name
         
-        # Check cache, if its in the cache, return it. A single file's cached
-        # entry may legitimately be read more than once per variable (e.g.
-        # write_timeseries_file's byte-sized write chunks don't align with
-        # source file boundaries), so it is not freed here -- whole-variable
-        # eviction on switch (above) and close() already bound cache growth.
+        # An entry is not freed after a read: write chunks do not align with
+        # source file boundaries, so the same file may be read more than once
+        # for one variable. Eviction on variable switch (above) bounds growth.
         if var_name in self.__data_var_cache and index < len(self.__data_var_cache[var_name]):
             return self.__data_var_cache[var_name][index]
-        # If its not in the cache, this is likely a new block of variables
-        # so, check if the entire timeseries for variable fits in cache and if possible put it there
-        # also put the other variables that will fit.
+        elif self.__get_cache_dsize() + self.get_var_dsize(var_name) < self.__memory_limit_bytes:
+            self.__cache_variable(var_name)
+            return self.__data_var_cache[var_name][index]
         else:
-            if self.__get_cache_dsize() + self.get_var_dsize(var_name) < self.__memory_limit_bytes:
-                # cache this variable + others to fill it, then return from cache
-                self.__cache_variable(var_name)
-                return self.__data_var_cache[var_name][index]
-            else:
-                # doesnt fit in memory, so don't cache
-                # we could partially cache the timeseries, but for now, I will just skip caching the variable all together
-                # note that parial caching can happen in open()
-                with GenTSDataStore(self.__hf_files[index], 'r') as hf_ds:
-                    return hf_ds[var_name][:]
+            # Too big to cache whole. Caching it in part is possible but is left
+            # to open()'s planning pass; here the file is simply reread.
+            with GenTSDataStore(self.__hf_files[index], 'r') as hf_ds:
+                return hf_ds[var_name][:]
 
     def get_var_dsize(self, var_name):
+        """
+        Returns the size in bytes of a variable aggregated across the group.
+
+        :param var_name: Name of the variable to size.
+        :type var_name: str
+        :rtype: int
+        """
         return np.prod(self.get_var_data_shape(var_name))*self.get_var_dtype(var_name).itemsize
 
     def get_time_vals(self):
         """
-        Returns the sorted array of unique float time values across the group.
+        Returns the sorted, unique float time values across the group.
 
-        :returns: 1-D array of sorted, unique float time values.
         :rtype: numpy.ndarray
         """
         vals = list(self.__time_mapping.keys())
@@ -310,13 +319,9 @@ class MHFDataset:
 
     def is_time_consistent(self):
         """
-        Checks that every time step is covered by the same number of files.
+        Returns whether every time step is covered by the same number of files,
+        i.e. no spatial tile is missing from any step.
 
-        Required for spatially fragmented groups to ensure every tile is present
-        for every time step.
-
-        :returns: ``True`` if all time values have the same fragment count,
-            ``False`` otherwise.
         :rtype: bool
         """
         n_time_files = len(self.__time_mapping[self.get_time_vals()[0]])
@@ -327,10 +332,9 @@ class MHFDataset:
 
     def is_fragmented(self):
         """
-        Returns whether the group consists of spatially fragmented (tiled) files.
+        Returns whether the group is spatially fragmented, i.e. whether its first
+        time value is covered by more than one file.
 
-        :returns: ``True`` if the first time value is covered by more than one file,
-            ``False`` otherwise.
         :rtype: bool
         """
         init_time = self.get_time_vals()[0]
@@ -340,48 +344,44 @@ class MHFDataset:
 
     def get_var_dimensions(self, var_name):
         """
-        Returns the dimension names for a variable, read from the first file in the group.
+        Returns a variable's dimension names, taken from the first file in the group.
 
         :param var_name: Name of the variable to inspect.
         :type var_name: str
-        :returns: List of dimension name strings in the order they appear on the variable.
-        :rtype: list[str]
+        :rtype: tuple[str]
         """
         return self.__hf_metas[0].get_variable_dims(var_name)
 
     def get_var_dtype(self, var_name):
         """
-        Returns the NumPy dtype of a variable, read from the first file in the group.
+        Returns a variable's NumPy dtype, taken from the first file in the group.
 
         :param var_name: Name of the variable to inspect.
         :type var_name: str
-        :returns: NumPy dtype of the variable.
         :rtype: numpy.dtype
         """
         return self.__hf_metas[0].get_variable_dtype(var_name)
 
     def get_var_attrs(self, var_name):
         """
-        Returns the attribute dictionary for a variable from the first file in the group.
+        Returns a variable's attributes, taken from the first file in the group.
 
         :param var_name: Name of the variable to inspect.
         :type var_name: str
-        :returns: Dictionary mapping attribute names to their values.
         :rtype: dict
         """
         return self.__hf_metas[0].get_variable_attrs(var_name)
 
     def get_var_data_shape(self, var_name):
         """
-        Returns the full expected output shape of a variable across the entire group.
+        Returns a variable's aggregated shape across the whole group.
 
-        Accounts for the total number of aggregated time steps and, for fragmented
-        groups, the combined spatial extents.  Returns a single-element list for
-        coordinate variables.
+        Accounts for the total number of time steps and, for fragmented groups,
+        the combined spatial extent. Coordinate variables get a single-element
+        shape.
 
         :param var_name: Name of the variable to inspect.
         :type var_name: str
-        :returns: List of dimension sizes representing the aggregated output shape.
         :rtype: list[int]
         """
         init_meta = self.__hf_metas[0]
@@ -396,27 +396,21 @@ class MHFDataset:
 
     def get_var_vals(self, var_name, time_index_start=0, time_index_end=None):
         """
-        Reads and returns a variable's data across the group for a time slice.
+        Reads a variable's data across the group for a slice of the time axis.
 
-        Two execution paths are used depending on fragmentation:
-
-        - **Non-fragmented:** reads maximal runs of consecutive requested time
-          steps that land in the same file at consecutive positions in one
-          slice read each, rather than one read per time step.
-        - **Fragmented:** for each time step, reads from all spatial-tile files
-          and inserts each tile into the correct slice of a pre-allocated output
-          array by matching tile coordinate values against the combined coordinate
-          map.
+        Non-fragmented groups are read in maximal runs of consecutive time steps
+        that fall in the same file, one slice read per run. Fragmented groups are
+        assembled step by step, each tile placed into a pre-allocated array by
+        matching its coordinates against the group's combined coordinate map.
 
         :param var_name: Name of the variable to read.
         :type var_name: str
-        :param time_index_start: Index of the first time step to include (inclusive).
-            Defaults to ``0``.
+        :param time_index_start: First time step to include (inclusive).
         :type time_index_start: int
-        :param time_index_end: Index of the last time step to include (exclusive).
-            Defaults to ``None`` (all remaining time steps).
+        :param time_index_end: Last time step to include (exclusive); ``None``
+            reads to the end.
         :type time_index_end: int or None
-        :returns: Array containing the variable data for the requested time slice.
+        :returns: Array of the variable's data over the requested slice.
         :rtype: numpy.ndarray
         """
         if var_name in self.__data_coords:
@@ -475,12 +469,9 @@ class MHFDataset:
 
     def get_global_attrs(self):
         """
-        Returns a merged dictionary of global attributes from all files in the group.
+        Returns the global attributes of every file in the group, merged with
+        later files winning on conflicting keys.
 
-        Attributes from later files overwrite those from earlier files when keys
-        conflict.
-
-        :returns: Dictionary mapping global attribute names to their values.
         :rtype: dict
         """
         assert self.__hf_metas is not None
