@@ -2,7 +2,7 @@
 
 > Rules the codebase relies on that are easy to violate, plus known stale spots.
 > Verify a gotcha still exists before acting on it — this file describes the code as of
-> July 2026 (branch `tscollection-interface`).
+> August 2026 (branch `validation`).
 
 ## API invariants — do not break
 
@@ -21,14 +21,21 @@
 - **Worker picklability.** Anything submitted to `ProcessPoolExecutor` must be a
   module-level function with picklable args. `get_meta_from_path` exists precisely as
   the picklable factory for `netCDFMeta`; keep that pattern.
+- **`num_processes <= 1` means no pool at all.** Both `pull_metadata` and `execute`
+  branch to a plain serial loop rather than a one-worker pool. Profiling depends on it
+  (see [workflows.md](workflows.md)); keep both branches in step, including their error
+  handling — they have historically drifted.
 - **`gents_version` stamp semantics.** Written last in `write_timeseries_file`, so its
   presence ⇒ complete file. It is simultaneously the input-exclusion marker
   (`netCDFMeta.is_valid` returns `False` for files that have it). Changing when/where
   it is written breaks resume-after-crash *and* input filtering.
-- **4 MiB chunking rule.** `write_timeseries_file` and `check_timeseries_conform`
-  implement the same convention (contiguous below 4 MiB, ~4 MiB time-chunks above).
-  Change them together or `test_conform_check`-style tests will catch you. (`check_timeseries_conform`
-  currently mis-implements the contiguous half of this rule — see gotchas below.)
+- **4 MiB chunking rule.** `CHUNK_TARGET_BYTES` in `gents/timeseries.py` is the single
+  source of the constant, but the *rule* is still implemented twice: `compute_chunksizes`
+  (contiguous below the target, time-chunks above) and `check_timeseries_conform`
+  (verifying the same). Change them together. Note `check_timeseries_conform` always
+  checks against `CHUNK_TARGET_BYTES`, so output written with a custom
+  `chunk_target_bytes` will not conform by construction. (It also mis-implements the
+  contiguous half of the rule — see gotchas below.)
 - **Fill value at creation + skip-empty writes.** `write_timeseries_file` passes the
   source `_FillValue` to `createVariable` (and omits it from the `setncatts` copy — it
   can't be set twice) and skips writing any slice that is entirely the fill value, via
@@ -55,6 +62,29 @@
 - **Scope guard.** GenTS reads data values only to copy them. Any feature that computes
   on, regrids, or renames data is out of scope per the developer guide.
 
+### `MHFDataset` cache invariants
+
+- **A cache entry is all-or-nothing.** `__data_var_cache[var]` is a list with exactly one
+  array per file in the group, or the variable is absent from the cache entirely. A
+  partial (prefix-only) list makes `__get_hf_data` return a *different file's* data by
+  index, silently.
+- **One file open at a time.** `open()` and `__cache_variable` both use
+  `with GenTSDataStore(path)` per file. Nothing in the class holds a handle open across
+  files, and nothing should — that property is what retired the `EMFILE` gotcha.
+- **Eviction is per-variable, on switch.** Do not free a file's entry after reading it:
+  write chunks don't align with source file boundaries, so the same entry is legitimately
+  read more than once per variable.
+- **`memory_limit_bytes` is per `MHFDataset`**, i.e. per worker process. The pipeline-wide
+  ceiling is roughly `tscores × memory_limit`.
+
+### `netCDFMeta` load flags
+
+`decode_dates`, `load_time_bounds`, `load_variable_attrs`, `compute_dim_bounds` exist to
+skip measured per-file cost for callers that don't need the result (`MHFDataset` needs
+none of them). Opting out must stay **strict**: the corresponding getter raises
+`RuntimeError` rather than returning empty or stale data. Don't "helpfully" soften that —
+silent empties would surface as wrong output, not an error.
+
 ## Conformity conventions (`gents/conformity/`) — do not break
 
 `gents/conformity/README.md` is authoritative; these are the rules most likely to be
@@ -73,7 +103,9 @@ violated by a well-meaning refactor.
 - **Don't "modernise" the plain style.** Explicit `for`/`if`, no lambdas, comprehensions, or
   lookup tables driving logic. These files are audited by researchers, not just developers.
   Checks needing file I/O share one pass; cheap string checks each keep their own loop
-  (measured: merging the cheap loops saved 0.6 ms against 1442 ms of file opening).
+  (measured: merging the cheap loops saved 0.6 ms against 1442 ms of file opening). This
+  includes the docstrings and comments in `models/cesm3.py`: they are didactic on purpose
+  and are exempt from the lean-docstring convention below.
 - **One result per check, not per file.** Report offenders inside a single result. Emitting
   a result per file makes the pass percentage scale with case size instead of spec coverage.
 - **Bump `SPEC_VERSION`** whenever checks change — recorded results reference it.
@@ -87,13 +119,28 @@ violated by a well-meaning refactor.
 
 - **Test-driven development** is the stated project process: new features and bug fixes
   start with new failing tests in `gents/tests/`, then code changes make them pass.
-- Docstrings are Sphinx/reST style (`:param:`/`:returns:`) and are rendered into the
-  API docs — keep them current; they are the primary API reference.
+- **Docstring style (as of August 2026):** Sphinx/reST, rendered into the API docs by
+  `docs/api.rst` (`automodule ... :members:`). Keep the *prose* lean — a one-sentence
+  summary, then only the detail a caller cannot infer — but keep the *fields* complete:
+  every `:param:` carries a matching `:type:`, and anything that returns a value carries
+  `:rtype:`, because the code is unannotated and autodoc has no other source for types on
+  the published documentation pages. A short getter can be a summary line plus a bare
+  `:rtype:`. Don't restate defaults the signature already shows. Rationale that belongs
+  to the design rather than to the call site (why a mechanism exists, what would break if
+  it changed) belongs in this `docs/llm/` set, not in the docstring.
 - Private attributes use double-underscore name mangling (`self.__hf_to_meta_map`).
 - Loggers are `logging.getLogger(__name__)` under the `"gents"` hierarchy.
 
-## Known gotchas / stale spots (verified 2026-07)
+## Known gotchas / stale spots (verified 2026-08)
 
+- **`gents/conformity/` is not packaged.** `pyproject.toml` sets
+  `packages = ["gents", "gents.configs"]`, an explicit list, so a built wheel/sdist
+  contains no `gents.conformity` — while `[project.scripts]` still registers
+  `gents_conform_build` and `gents_conform` against it. Both entry points therefore fail
+  with `ModuleNotFoundError` on a non-editable install; they work in the repo and in the
+  Docker images only because the source tree is present. Fix by adding
+  `gents.conformity` and `gents.conformity.models` to `packages` (or switching to
+  automatic discovery with an exclude for `gents.tests`).
 - **`build/lib/` is a stale copy** of the whole package tree. Never read, edit, or grep
   it as if it were source. Same for `GenTS.egg-info/` and `__pycache__/`.
 - **`check_timeseries_conform` is broken for contiguous/scalar variables.** It does
@@ -103,26 +150,24 @@ violated by a well-meaning refactor.
   Its own docstring says contiguous storage should pass, so this is a bug, not a
   convention. Any time series carrying a scalar (CAM's `ndbase`/`nsbase`/`nbdate`/`nbsec`/
   `mdt`) is wrongly reported non-conforming — 188 of 1224 files on the CESM3 conformity
-  sample. Fixing it means handling the `"contiguous"` sentinel *and* scalar/1-D variables.
-- **`append_timestep_dirs` is dead config in the CLI.** `gents_cesm3.yaml` sets
-  `output_ts.append_timestep_dirs: true`, but `cli.main` only reads `path_swaps` and
-  `compression` from `output_ts` — `TSCollection.append_timestep_dirs()` is never called
-  anywhere outside its own definition. So CLI output has no `month_1/`-style frequency
-  directories despite the config asking for them, and any CLI-driven output fails the
-  conformity check for it. Either wire the key up in `cli.main` or drop it from the YAML.
-- **`EMFILE` on wide streams.** A group with very many files (e.g. ~1800 daily
-  `cpl.hx.*.nc` in the CESM3 sample) opens them all at once via `MHFDataset` and dies with
-  `OSError: [Errno 24] Too many open files`; `execute` logs the worker failure and still
-  prints "GenTS done!", so the loss is silent. Workaround is `ulimit -n 65536` /
-  `docker run --ulimit nofile=65536:65536`. Note those `cpl` files reach the pipeline via
-  the trailing catch-all `*.nc` in `gents_cesm3.yaml`'s `input_hf.include`, not via any of
-  the six component globs above it.
+  sample. Reproduced again 2026-08. Fixing it means handling the `"contiguous"` sentinel
+  *and* scalar/1-D variables.
+- **`append_timestep_dirs` drops orders that don't match `var_glob`.** Its `new_orders.append`
+  sits *inside* the `fnmatch` branch, so `tsc.append_timestep_dirs(var_glob="TREFHT")`
+  returns a collection containing only `TREFHT` — every other order is silently discarded
+  rather than left un-prefixed. Harmless at the default `"*"`, which is the only way it is
+  currently called.
+- **`append_timestep_dirs` is dead config in the CLI.** `gents_cesm3.yaml` and
+  `gents_example.yaml` both set `output_ts.append_timestep_dirs: true`, but `cli.main`
+  only reads `path_swaps` and `compression` from `output_ts` — `TSCollection.append_timestep_dirs()`
+  is never called anywhere outside its own definition and its tests. So CLI output has no
+  `month_1/`-style frequency directories despite the config asking for them, and any
+  CLI-driven output fails the conformity check for it. Either wire the key up in
+  `cli.main` or drop it from the YAML.
 - **CLI references missing configs.** `cli.main` maps `--model cesm2` →
   `gents_cesm2.yaml` and `--model e3sm` → `gents_e3sm.yaml`, but only
   `gents_example.yaml` and `gents_cesm3.yaml` exist in `gents/configs/`. Selecting
   cesm2/e3sm currently dies with `FileNotFoundError` at `open()`, not a friendly error.
-- **`cli.main`'s docstring is outdated** — it describes the old `run_config` import
-  mechanism; the code now loads YAML configs (yaml-refactor, PR #92).
 - **`calculate_year_slices` quirks:** the guard's error message is inverted
   ("Maximum year cannot exceed minimum year" fires when max < min), and the early
   return triggers when `slice_size_years >= max_year - min_year`, so a span exactly
@@ -155,9 +200,7 @@ violated by a well-meaning refactor.
   quadratic in the number of streams per directory.
 - **A filename with no delimiter groups under its whole name.** `sort_hf_groups` strips
   only the tokens that are actually there, so `README` groups under `README*` and
-  `gridfile.nc` under `gridfile*`. (Before July 2026 such a name raised `IndexError`;
-  `substring_index=0` likewise stripped everything after the *first* delimiter instead of
-  stripping nothing.) Every caller uses the default `substring_index=2`.
+  `gridfile.nc` under `gridfile*`. Every caller uses the default `substring_index=2`.
 - **`pull_metadata` hard-raises on single-timestep groups.** Per-file metadata failures are
   logged and the file dropped (`raise_errors=False`), but the *timestep delta* loop
   afterwards re-raises `ValueError` from `get_group_timestep_delta` for any group with
@@ -191,3 +234,17 @@ violated by a well-meaning refactor.
 - **Docs/README drift:** `docs/user.rst` shows `exclude(glob=[...])` but the parameter
   is positional `glob_patterns`; README's API example passes `include_years(0, 5)`
   which only works for simulations whose calendar years actually start near 0.
+
+## Resolved since the last revision (don't re-document as bugs)
+
+- **`EMFILE` on wide streams.** `MHFDataset` used to open every file of a group at once,
+  so a ~1800-file daily stream died with `OSError: [Errno 24] Too many open files`. It now
+  opens one file at a time and caches data instead of handles, so the ulimit workaround is
+  no longer needed. `gents/conformity/README.md` still carries the old warning.
+- **`hfcollection.check_config` / `get_default_config`.** Removed (2026-08): they asserted a
+  `{name, include, exclude}` config shape that no version of GenTS still uses, were called
+  from nowhere, and collided by name with the live `gents.cli.check_config`. The YAML
+  schema check is `gents.cli.check_config`, tested in `gents/tests/test_config.py`.
+- **Hardcoded chunk-size constant.** Now `gents.timeseries.CHUNK_TARGET_BYTES`, read by
+  both `compute_chunksizes` and `check_timeseries_conform`, and overridable per order via
+  `apply_chunk_target_bytes`.

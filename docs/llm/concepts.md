@@ -68,6 +68,21 @@
   fragment count to be identical at every time step ("time consistent").
 - **Order:** A plain dict describing one TS output file to generate — the unit of work
   of `TSCollection`. See [architecture.md](architecture.md) for the exact schema.
+- **Variable cache / memory limit:** `MHFDataset` reads a group's files one at a time and
+  keeps *data* in memory rather than keeping *handles* open. On `open()` it caches every
+  secondary variable plus as many primaries as fit under `memory_limit_bytes`
+  (`execute(memory_limit_bytes=...)`, CLI `--memory-limit`, in GB); the rest are read on
+  demand and cached if they fit. Caching is all-or-nothing per variable and per group, and
+  a variable's cache is released when reads move on to the next variable. The limit is
+  per worker process, so the pipeline-wide ceiling is roughly `tscores × limit`; the
+  default is unbounded, which is fine for small groups and is what a wide, high-resolution
+  stream will exhaust.
+- **Lazy date decoding:** `cftime.num2date` is measurably expensive per file, and
+  `MHFDataset` never needs decoded dates — it maps time steps by raw float value. So
+  `netCDFMeta(decode_dates=False)` caches the raw values plus `units`/`calendar` and
+  decodes only if `get_cftimes()`/`get_cftime_bounds()` is actually called. Sibling flags
+  (`load_time_bounds`, `load_variable_attrs`, `compute_dim_bounds`) skip other per-file
+  reads the same way; each getter raises rather than lying when its data was skipped.
 - **Integrity stamp:** Every completed TS file gets a `gents_version` global attribute.
   Dual use: (1) output files lacking it are considered corrupt/partial and are
   regenerated; (2) *input* files carrying it are recognized as GenTS output and
@@ -109,12 +124,10 @@
   (discovered via `find_files`, not an `HFCollection`) so they also exercise files GenTS's
   filters are meant to ignore. Running GenTS over the clones stays cheap only with
   **`--no-data`** (above): skip-empty alone keeps the output small but still pays to read
-  the fill data. The invocation that built a clone is recorded in a `cmd.txt` at the top of
-  the clone directory (`CLONE_COMMAND_FILENAME`), the clone-tree equivalent of the
-  `gents_command` attribute `run_gents` stamps into each output file. Lines are appended,
-  one per invocation that actually cloned files, because a clone is often built up over
-  several runs; arguments are `shlex.join`-quoted so a line can be pasted back into a shell
-  without its globs expanding.
+  the fill data. The invocation that built a clone is appended to a `cmd.txt` at the top of
+  the clone directory (`CLONE_COMMAND_FILENAME`) — the clone-tree equivalent of the
+  `gents_command` attribute `run_gents` stamps into each output file. See
+  [workflows.md](workflows.md) for the flags and the `--verbose` case summary.
 - **Conformity testing:** End-to-end verification that GenTS handled a *specific model's*
   case the way that model's users need. Distinct from unit testing, and deliberately kept
   in a separate tree (`gents/conformity/`, run by `gents_conform`, not `pytest`). Unit

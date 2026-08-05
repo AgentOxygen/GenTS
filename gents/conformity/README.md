@@ -46,7 +46,7 @@ gents_conform_build /glade/derecho/scratch/me/my_case -o ./my_case_clone -n 16
 Add `-d/--dryrun` to inspect a case before committing to the clone:
 ```
   Files to clone                  : 1383
-  History files (GenTS-visible)   : 1383
+  Files with time coordinates     : 1383
   Unique variables                : 820
   Output frequencies              : day_1, hour_3, month_1
   Years spanned                   : 1 - 7
@@ -69,7 +69,7 @@ run_gents ./my_case_clone -o ./my_case_output --model CESM3 --no-data
 
 `--no-data` is what makes `run_gents` fast enough to run in CI. It is safe here for the same reason the clone is: nothing in a conformity check reads scientific values.
 
-> On a case with many files per stream you may hit `OSError: [Errno 24] Too many open files`. To raise the limit, use either `ulimit -n 65536`, or `docker run --ulimit nofile=65536:65536`.
+> On a case with very wide streams, add `--memory-limit <GB>` to cap how much variable data each worker caches.
 
 ### 3. Check the output
 
