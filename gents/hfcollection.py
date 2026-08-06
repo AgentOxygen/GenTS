@@ -116,6 +116,35 @@ def sort_hf_groups(hf_paths, delimiter=".", substring_index=2):
     return hf_groups
 
 
+def get_year_boundary_num(year, units, calendar):
+    """
+    Returns the raw time value of midnight, January 1 of ``year`` under the
+    given time reference.
+
+    Comparing raw time values against these boundaries reproduces year-based
+    tests (``start <= time.year <= end``) without decoding every time step. A
+    year the calendar cannot represent (year 0 in a ``standard`` calendar)
+    steps forward to the nearest representable year, which selects the same set
+    of times: no time value can fall inside the missing year.
+
+    :param year: Calendar year of the boundary.
+    :type year: int
+    :param units: CF time units the result is expressed in.
+    :type units: str
+    :param calendar: CF calendar name.
+    :type calendar: str
+    :returns: Boundary expressed as a raw time value.
+    :rtype: float
+    """
+    for candidate_year in (year, year + 1):
+        try:
+            boundary = cftime.datetime(candidate_year, 1, 1, calendar=calendar)
+            return cftime.date2num(boundary, units, calendar=calendar)
+        except ValueError:
+            continue
+    raise ValueError(f"Cannot represent year {year} (or {year + 1}) in calendar '{calendar}'.")
+
+
 def get_year_bounds(hf_to_meta_map):
     """
     Returns the ``(min_year, max_year)`` covered by a set of history files.
@@ -129,23 +158,25 @@ def get_year_bounds(hf_to_meta_map):
     """
     min_year = np.inf
     max_year = -np.inf
-    
-    for path in list(hf_to_meta_map.keys()):
-        time_bounds = hf_to_meta_map[path].get_cftime_bounds()
-        if time_bounds is None:
-            time_bounds = []
-            for ts in hf_to_meta_map[path].get_cftimes():
-                time_bounds.append([ts, ts])
-        
-        for index in range(len(time_bounds)):
-            lower_bound, upper_bound = time_bounds[index]
-            
-            mid_time = lower_bound + ((upper_bound - lower_bound) / 2)
 
-            if mid_time.year > max_year:
-                max_year = mid_time.year
-            if mid_time.year < min_year:
-                min_year = mid_time.year
+    for path in list(hf_to_meta_map.keys()):
+        meta = hf_to_meta_map[path]
+        float_bounds = meta.get_float_time_bounds()
+        # Midpoints are computed on the raw values, which order identically to
+        # their decoded dates, so only the two extremes need decoding per file.
+        if float_bounds is None:
+            midpoints = np.ma.getdata(np.atleast_1d(meta.get_float_times()))
+            decode = meta.decode_time_values
+        else:
+            bounds = np.ma.getdata(float_bounds)
+            midpoints = bounds[:, 0] + (bounds[:, 1] - bounds[:, 0]) / 2
+            decode = meta.decode_time_bounds_values
+
+        extremes = np.atleast_1d(decode(np.array([np.min(midpoints), np.max(midpoints)])))
+        if extremes[-1].year > max_year:
+            max_year = extremes[-1].year
+        if extremes[0].year < min_year:
+            min_year = extremes[0].year
     return min_year, max_year
 
 
@@ -174,15 +205,14 @@ def get_group_timestep_delta(metas):
     for meta in metas:
         # Time coordinates are never masked; dropping the unused netCDF mask
         # keeps the partition routines on plain arrays and warning-free.
-        cftimes = np.ma.getdata(np.atleast_1d(meta.get_cftimes()))
         float_times = np.ma.getdata(np.atleast_1d(meta.get_float_times()))
-        total_steps += cftimes.shape[0]
+        total_steps += float_times.shape[0]
 
-        if cftimes.shape[0] <= 2:
-            latest_candidates.append(cftimes)
+        if float_times.shape[0] <= 2:
+            candidates = float_times
         else:
-            latest_two = np.argpartition(float_times, -2)[-2:]
-            latest_candidates.append(cftimes[latest_two])
+            candidates = float_times[np.argpartition(float_times, -2)[-2:]]
+        latest_candidates.append(np.atleast_1d(meta.decode_time_values(candidates)))
 
     if total_steps < 2:
         raise ValueError(f"Expected time array of size 2 or greater, got {total_steps}.")
@@ -276,21 +306,12 @@ def sort_metas_by_time(metas):
     :type metas: list[gents.meta.netCDFMeta]
     :rtype: list[gents.meta.netCDFMeta]
     """
-    time_sorted_metas = [metas[0]]
-
-    if len(metas) > 1:
-        for meta in metas[1:]:
-            meta_sorted = False
-            
-            for index in range(len(time_sorted_metas)):
-                if meta.get_cftimes()[0] < time_sorted_metas[index].get_cftimes()[0]:
-                    time_sorted_metas.insert(index, meta)
-                    meta_sorted = True
-                    break
-            if not meta_sorted:
-                time_sorted_metas.append(meta)
-
-    return time_sorted_metas
+    # One decoded value per file: CFTime keys keep cross-file comparisons valid
+    # even when files carry different time units.
+    return sorted(
+        metas,
+        key=lambda meta: meta.decode_time_values(np.ma.getdata(np.atleast_1d(meta.get_float_times()))[0]),
+    )
 
     
 def check_groups_by_variables(sliced_groups):
@@ -738,11 +759,13 @@ class HFCollection:
             for path in self.__hf_to_meta_map:
                 if fnmatch.fnmatch(path, pattern):
                     meta_ds = self.__hf_to_meta_map[path]
-                    if meta_ds.get_cftime_bounds() is not None:
-                        time_bnds = meta_ds.get_cftime_bounds()[0]
-                        time = time_bnds[0] + ((time_bnds[1] - time_bnds[0]) / 2)
+                    float_bounds = meta_ds.get_float_time_bounds()
+                    if float_bounds is not None:
+                        first_pair = np.ma.getdata(float_bounds)[0]
+                        midpoint = first_pair[0] + (first_pair[1] - first_pair[0]) / 2
+                        time = meta_ds.decode_time_bounds_values(midpoint)
                     else:
-                        time = meta_ds.get_cftimes()[0]
+                        time = meta_ds.decode_time_values(np.ma.getdata(np.atleast_1d(meta_ds.get_float_times()))[0])
                     
                     if start_year <= time.year <= end_year:
                         filtered_path_map[path] = self.__hf_to_meta_map[path]
@@ -821,47 +844,54 @@ class HFCollection:
             time_slices = calculate_year_slices(slice_size_years, min_year, max_year)
 
             hf_slices = {}
-            variable_set = None
+            boundary_cache = {}
             for hf_path in hf_paths:
                 meta_ds = self.__hf_to_meta_map[hf_path]
-
-                times = []
-                time_bnds = meta_ds.get_cftime_bounds()
-                if time_bnds is None or time_alignment_method == "direct_time":
-                    times = [meta_ds.get_cftimes()]
+                float_bnds = meta_ds.get_float_time_bounds()
+                if float_bnds is None or time_alignment_method == "direct_time":
+                    times = np.ma.getdata(np.atleast_1d(meta_ds.get_float_times()))
+                    ref_units = meta_ds.get_time_units()
+                    ref_calendar = meta_ds.get_time_calendar()
                 else:
-                    for ts in time_bnds:
-                        if time_alignment_method == "midpoint":
-                            times.append([ts[0] + (ts[1] - ts[0]) / 2])
-                        elif time_alignment_method == "start_bound":
-                            times.append([ts[0]])
-                        elif time_alignment_method == "end_bound":
-                            times.append([ts[1]])
-                        else:
-                            raise ValueError(f"'{time_alignment_method}' is an invalid time-alignment method. Valid methods are ['direct_time', 'midpoint', 'start_bound', 'end_bound']")
-                times = np.concatenate(times)
-                for time_slice in time_slices:
-                    slice_matched = False
-                    for start_index, time in enumerate(times):
-                        if time_slice[0] <= time.year <= time_slice[1]:
-                            slice_matched = True
-                            if time_slice in hf_slices:
-                                hf_slices[time_slice].append(hf_path)
-                            else:
-                                hf_slices[time_slice] = [hf_path]
-                            break
+                    bnds = np.ma.getdata(float_bnds)
+                    if time_alignment_method == "midpoint":
+                        times = bnds[:, 0] + (bnds[:, 1] - bnds[:, 0]) / 2
+                    elif time_alignment_method == "start_bound":
+                        times = bnds[:, 0]
+                    elif time_alignment_method == "end_bound":
+                        times = bnds[:, 1]
+                    else:
+                        raise ValueError(f"'{time_alignment_method}' is an invalid time-alignment method. Valid methods are ['direct_time', 'midpoint', 'start_bound', 'end_bound']")
+                    ref_units = meta_ds.get_time_bounds_units()
+                    ref_calendar = meta_ds.get_time_bounds_calendar()
 
-                    if slice_matched:
-                        if len(times) > 1:
-                            for end_index, time in enumerate(times):
-                                if time.year > time_slice[1]:
-                                    break
-                            if start_index != 0 or times[-1].year > time_slice[1]:
-                                if hf_path in self.__hf_multistep_slices:
-                                    assert f"{time_slice[0]}-{time_slice[1]}" not in self.__hf_multistep_slices[hf_path]
-                                    self.__hf_multistep_slices[hf_path][f"{time_slice[0]}-{time_slice[1]}"] = (start_index, end_index)
-                                else:
-                                    self.__hf_multistep_slices[hf_path] = {f"{time_slice[0]}-{time_slice[1]}": (start_index, end_index)}
+                for time_slice in time_slices:
+                    cache_key = (time_slice, ref_units, ref_calendar)
+                    if cache_key not in boundary_cache:
+                        boundary_cache[cache_key] = (
+                            get_year_boundary_num(time_slice[0], ref_units, ref_calendar),
+                            get_year_boundary_num(time_slice[1] + 1, ref_units, ref_calendar),
+                        )
+                    lower_num, upper_num = boundary_cache[cache_key]
+
+                    in_window = (times >= lower_num) & (times < upper_num)
+                    if not in_window.any():
+                        continue
+                    start_index = int(np.argmax(in_window))
+                    if time_slice in hf_slices:
+                        hf_slices[time_slice].append(hf_path)
+                    else:
+                        hf_slices[time_slice] = [hf_path]
+
+                    if len(times) > 1:
+                        past_window = times >= upper_num
+                        end_index = int(np.argmax(past_window)) if past_window.any() else len(times) - 1
+                        if start_index != 0 or times[-1] >= upper_num:
+                            if hf_path in self.__hf_multistep_slices:
+                                assert f"{time_slice[0]}-{time_slice[1]}" not in self.__hf_multistep_slices[hf_path]
+                                self.__hf_multistep_slices[hf_path][f"{time_slice[0]}-{time_slice[1]}"] = (start_index, end_index)
+                            else:
+                                self.__hf_multistep_slices[hf_path] = {f"{time_slice[0]}-{time_slice[1]}": (start_index, end_index)}
             for time_slice in hf_slices:
                 sliced_groups[f"{group}[sorting_pivot]{time_slice[0]}-{time_slice[1]}"] = hf_slices[time_slice]
         logger.debug(f"Slicing groups into {slice_size_years} year long slices for '{pattern}'.")
