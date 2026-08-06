@@ -313,6 +313,71 @@ class netCDFMeta:
             self.__decode_dates()
         return self.__cftime_vals
 
+    def get_time_units(self):
+        """
+        Returns the ``units`` attribute of the time variable.
+
+        :rtype: str
+        """
+        return self.__time_units
+
+    def get_time_calendar(self):
+        """
+        Returns the ``calendar`` attribute of the time variable.
+
+        :rtype: str
+        """
+        return self.__time_calendar
+
+    def decode_time_values(self, values):
+        """
+        Decodes raw time values into CFTime objects using this file's time
+        reference (``units`` and ``calendar``).
+
+        :param values: Raw time value(s) expressed in this file's time units.
+        :type values: numpy.ndarray or float
+        :returns: Decoded CFTime object(s) matching the input's shape.
+        :rtype: numpy.ndarray or cftime.datetime
+        """
+        return num2date(values, units=self.__time_units, calendar=self.__time_calendar)
+
+    def get_time_bounds_units(self):
+        """
+        Returns the ``units`` attribute of the time-bounds variable (falling back
+        to the time variable's at load time), or ``None`` if the file has none.
+
+        :rtype: str or None
+        """
+        return self.__time_bounds_units
+
+    def get_time_bounds_calendar(self):
+        """
+        Returns the ``calendar`` attribute of the time-bounds variable (falling
+        back to the time variable's at load time), or ``None`` if the file has none.
+
+        :rtype: str or None
+        """
+        return self.__time_bounds_calendar
+
+    def decode_time_bounds_values(self, values):
+        """
+        Decodes raw time-bounds values into CFTime objects using the time-bounds
+        variable's reference (``units`` and ``calendar``).
+
+        :param values: Raw time-bounds value(s) expressed in the bounds units.
+        :type values: numpy.ndarray or float
+        :returns: Decoded CFTime object(s) matching the input's shape.
+        :rtype: numpy.ndarray or cftime.datetime
+        :raises RuntimeError: If the file has no time-bounds variable, or it was
+            not loaded (``load_time_bounds=False``).
+        """
+        if self.__time_bnds_eqv is None:
+            raise RuntimeError(
+                f"No time-bounds variable exists to take a time reference from. Path: {self.__path}"
+            )
+        self.__check_time_bounds_loaded()
+        return num2date(values, units=self.__time_bounds_units, calendar=self.__time_bounds_calendar)
+
     def get_variables(self):
         """
         Returns the names of every variable in the history file.
@@ -401,7 +466,7 @@ class netCDFMeta:
 
         :rtype: bool
         """
-        if self.get_cftime_bounds() is None and self.get_cftimes() is None:
+        if self.get_float_time_bounds() is None and self.get_float_times() is None:
             return False
         elif len(self.get_primary_variables()) + len(self.get_secondary_variables()) == 0:
             return False
@@ -444,7 +509,7 @@ def get_meta_from_path(path: str):
     ds_meta = None
     try:
         with GenTSDataStore(path, 'r') as ds:
-            ds_meta = netCDFMeta(ds, path)
+            ds_meta = netCDFMeta(ds, path, decode_dates=False)
     except Exception as e:
         raise type(e)(f"{e} Path: {path}") from e
 
