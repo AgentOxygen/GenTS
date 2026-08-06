@@ -54,7 +54,7 @@ class MHFDataset:
     variable.
     """
 
-    def __init__(self, hf_paths, preload_var_list=None, memory_limit_bytes=np.inf, load_secondaries=True):
+    def __init__(self, hf_paths, preload_var_list=None, memory_limit_bytes=np.inf, load_secondaries=True, preload_primaries=True):
         """
         Stores the group's paths; opens nothing until :meth:`open` is called.
 
@@ -68,6 +68,11 @@ class MHFDataset:
         :type memory_limit_bytes: float
         :param load_secondaries: Cache secondary variable data during :meth:`open`.
         :type load_secondaries: bool
+        :param preload_primaries: Cache primary variable data during :meth:`open`.
+            ``False`` skips all primary reads up front (``preload_var_list`` is
+            ignored); primaries are still read on demand. Used by ``no_data``
+            runs, which never read primary data at all.
+        :type preload_primaries: bool
         """
         self.__hf_files = [Path(path) for path in hf_paths]
         self.__hf_metas = []
@@ -81,7 +86,10 @@ class MHFDataset:
         self.__memory_limit_bytes = memory_limit_bytes
         self.__past_vars_read = []
         self.__load_secondaries = load_secondaries
+        self.__preload_primaries = preload_primaries
         self.__preload_var_list = list(preload_var_list) if preload_var_list is not None else []
+        self.__sorted_time_vals = None
+        self.__fragmented = None
 
     def __estimate_var_bytes(self, var_name, hf_meta):
         """
@@ -154,9 +162,12 @@ class MHFDataset:
 
                     # Anything the caller did not name is still worth caching if
                     # it fits, so queue the rest of the group's primaries behind it.
-                    for var_name in hf_meta.get_primary_variables():
-                        if var_name not in self.__preload_var_list:
-                            self.__preload_var_list.append(var_name)
+                    if self.__preload_primaries:
+                        for var_name in hf_meta.get_primary_variables():
+                            if var_name not in self.__preload_var_list:
+                                self.__preload_var_list.append(var_name)
+                    else:
+                        self.__preload_var_list = []
 
                     secondary_names = list(hf_meta.get_secondary_variables()) if self.__load_secondaries else []
                     vars_to_cache_secondary = self.__plan_cacheable_vars(secondary_names, hf_meta)
@@ -171,8 +182,10 @@ class MHFDataset:
 
                 hf_ds.set_auto_maskandscale(False)
 
-                for sub_t_index, time in enumerate(hf_meta.get_float_times()):
-                    time = float(time)
+                # tolist() yields plain Python floats in one pass, instead of a
+                # per-element masked-array __getitem__ plus float() call.
+                float_times = np.ma.getdata(np.atleast_1d(hf_meta.get_float_times())).tolist()
+                for sub_t_index, time in enumerate(float_times):
                     if time in self.__time_mapping:
                         self.__time_mapping[time].append((hf_index, sub_t_index))
                     else:
@@ -196,6 +209,11 @@ class MHFDataset:
                         self.__data_var_cache[var_name] = [hf_ds[var_name][:]]
 
                 self.__hf_metas.append(hf_meta)
+
+        # The mapping is final now, so the sorted time axis and fragmentation
+        # flag are computed once here rather than re-derived on every call.
+        self.__sorted_time_vals = np.sort(np.array(list(self.__time_mapping.keys())))
+        self.__fragmented = len(self.__time_mapping[self.__sorted_time_vals[0]]) > 1
 
         if not self.is_time_consistent():
             raise Exception("Fragmentation is not consistent over time.")
@@ -267,14 +285,19 @@ class MHFDataset:
                     else:
                         self.__data_var_cache[var_name] = [hf_ds[var_name][:]]
 
-    def __get_hf_data(self, index, var_name):
+    def __get_hf_data(self, index, var_name, time_slice=None):
         """
         Returns one file's data for a variable, from cache where possible.
 
+        :param time_slice: Slice along the file's own time axis to return;
+            ``None`` returns the file's full array. Cached data returns a view;
+            uncacheable data reads only the sliced region from disk.
+        :type time_slice: slice or None
         :rtype: numpy.ndarray
         """
         if var_name in self.__data_secondary_var_cache:
-            return self.__data_secondary_var_cache[var_name][index]
+            data = self.__data_secondary_var_cache[var_name][index]
+            return data if time_slice is None else data[time_slice]
 
         # Reads move through one variable at a time, so a switch means the
         # previous variable is finished with and its cache can be released.
@@ -283,20 +306,23 @@ class MHFDataset:
                 self.__data_var_cache[self.__last_var_read] = []
             self.__past_vars_read.append(self.__last_var_read)
             self.__last_var_read = var_name
-        
+
         # An entry is not freed after a read: write chunks do not align with
         # source file boundaries, so the same file may be read more than once
         # for one variable. Eviction on variable switch (above) bounds growth.
         if var_name in self.__data_var_cache and index < len(self.__data_var_cache[var_name]):
-            return self.__data_var_cache[var_name][index]
+            data = self.__data_var_cache[var_name][index]
+            return data if time_slice is None else data[time_slice]
         elif self.__get_cache_dsize() + self.get_var_dsize(var_name) < self.__memory_limit_bytes:
             self.__cache_variable(var_name)
-            return self.__data_var_cache[var_name][index]
+            data = self.__data_var_cache[var_name][index]
+            return data if time_slice is None else data[time_slice]
         else:
-            # Too big to cache whole. Caching it in part is possible but is left
-            # to open()'s planning pass; here the file is simply reread.
+            # Too big to cache whole; reread just the requested region.
             with GenTSDataStore(self.__hf_files[index], 'r') as hf_ds:
-                return hf_ds[var_name][:]
+                if time_slice is None:
+                    return hf_ds[var_name][:]
+                return hf_ds[var_name][time_slice]
 
     def get_var_dsize(self, var_name):
         """
@@ -312,8 +338,13 @@ class MHFDataset:
         """
         Returns the sorted, unique float time values across the group.
 
+        Served from the copy computed at :meth:`open`; callers must not mutate
+        the returned array.
+
         :rtype: numpy.ndarray
         """
+        if self.__sorted_time_vals is not None:
+            return self.__sorted_time_vals
         vals = list(self.__time_mapping.keys())
         return np.sort(np.array(vals))
 
@@ -337,6 +368,8 @@ class MHFDataset:
 
         :rtype: bool
         """
+        if self.__fragmented is not None:
+            return self.__fragmented
         init_time = self.get_time_vals()[0]
         if len(self.__time_mapping[init_time]) > 1:
             return True
@@ -435,8 +468,9 @@ class MHFDataset:
                     if next_hf_index != hf_index or next_sub_t_index != sub_t_index + run_len:
                         break
                     run_len += 1
-                var_data = self.__get_hf_data(hf_index, var_name)
-                var_vals[index:index + run_len] = var_data[sub_t_index:sub_t_index + run_len]
+                var_vals[index:index + run_len] = self.__get_hf_data(
+                    hf_index, var_name, time_slice=slice(sub_t_index, sub_t_index + run_len)
+                )
                 index += run_len
         else:
             for time_index, time_val in enumerate(time_vals):
