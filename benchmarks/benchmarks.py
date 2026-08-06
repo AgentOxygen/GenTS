@@ -57,6 +57,54 @@ class LargeGroupSuite:
         hfc.pull_metadata()
 
 
+MULTISTEP_NUM_HIST_FILES = 20
+MULTISTEP_NUM_TIMESTEPS = 1000
+
+
+class MultistepSuite:
+    """Multi-step history files: stresses the time handling in TSCollection
+    order construction (endpoint decoding, slice-index arithmetic) and the
+    coalesced read path in execute()."""
+
+    def setup(self):
+        self.hf_head_dir = "hf_multistep/"
+        self.ts_head_dir = "ts_multistep/"
+        makedirs(self.ts_head_dir, exist_ok=True)
+        self.hf_paths = build_bench_case(
+            self.hf_head_dir, n_files=MULTISTEP_NUM_HIST_FILES, n_steps=MULTISTEP_NUM_TIMESTEPS
+        )
+
+    def time_tscollection_create(self):
+        hfc = HFCollection(self.hf_head_dir)
+        hfc.pull_metadata(show_progress=False)
+        tsc = TSCollection(hfc, self.ts_head_dir)
+
+    def time_tscollection_execute(self):
+        hfc = HFCollection(self.hf_head_dir)
+        hfc.pull_metadata(show_progress=False)
+        tsc = TSCollection(hfc, self.ts_head_dir).apply_overwrite("*")
+        tsc.execute(show_progress=False)
+
+
+CHUNKED_NUM_HIST_FILES = 6
+CHUNKED_NUM_TIMESTEPS = 24
+CHUNKED_NUM_LAT = 192
+CHUNKED_NUM_LON = 288
+
+
+class ChunkedWriteSuite:
+    """Variables large enough (24 x 192 x 288 float64 ~ 10.6 MiB per file) that
+    write_timeseries_file takes the 4 MiB time-chunking branch rather than the
+    contiguous one -- the path no other suite reaches."""
+
+    def setup(self):
+        self.hf_head_dir = "hf_chunked/"
+        self.ts_head_dir = "ts_chunked/"
+        makedirs(self.ts_head_dir, exist_ok=True)
+        tsc = TSCollection(hfc, self.ts_head_dir).apply_overwrite("*")
+        tsc.execute(show_progress=False)
+
+
 SORT_NUM_DIRS = 8
 SORT_STREAMS_PER_DIR = 24
 SORT_FILES_PER_STREAM = 250
