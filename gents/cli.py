@@ -7,7 +7,7 @@ import sys
 import yaml
 from gents.utils import get_version, log_hfcollection_info, log_tscollection_info, enable_logging
 from gents.hfcollection import HFCollection
-from gents.timeseries import TSCollection
+from gents.timeseries import TSCollection, DEFAULT_MEMORY_LIMIT_BYTES
 from pathlib import Path
 
 
@@ -106,7 +106,7 @@ def parse_arguments():
         type=float,
         default=None,
         help="Maximum memory (in GB) MHFDataset may use to cache variable data per worker "
-             "while generating time series. (Default: unbounded)"
+             "while generating time series. (Default: 4 GB per worker)"
     )
     parser.add_argument(
         "-m", "--model",
@@ -177,7 +177,7 @@ def main():
     if args.compression is not None and args.level is None:
         raise ValueError(f"Compression '{args.compression}' selected, please specifiy a level using `--level`")
 
-    memory_limit_bytes = args.memory_limit_gb * (1024**3) if args.memory_limit_gb is not None else float("inf")
+    memory_limit_bytes = args.memory_limit_gb * (1024**3) if args.memory_limit_gb is not None else DEFAULT_MEMORY_LIMIT_BYTES
 
     if args.verbose:
         print(f"  Input (HF) directory path    : {args.hf_head_dir}")
