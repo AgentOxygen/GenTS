@@ -432,3 +432,79 @@ def test_tscollection_add_attrs(simple_case):
 def test_get_timestep_label_unknown_delta():
     """An unknown timestep duration is labelled 'unsorted' rather than guessed at."""
     assert get_timestep_label(None) == "unsorted"
+
+
+def test_update_ts_orders_no_full_time_decoding(multistep_large_case):
+    """TSCollection construction (sorting + order building) decodes at most the
+    per-file endpoint candidates, never a full time array."""
+    from unittest.mock import patch
+    from cftime import num2date as real_num2date
+    import numpy as np
+    input_head_dir, output_head_dir = multistep_large_case
+
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection.pull_metadata(show_progress=False)
+    with patch("gents.meta.num2date", wraps=real_num2date) as mock_num2date:
+        ts_collection = TSCollection(hf_collection, str(output_head_dir))
+        for call in mock_num2date.call_args_list:
+            values = np.atleast_1d(np.asarray(call.args[0]))
+            assert values.size <= 2
+    assert len(ts_collection) > 0
+
+
+def test_execute_defaults_memory_limit(simple_case):
+    """execute() forwards DEFAULT_MEMORY_LIMIT_BYTES to every MHFDataset it opens
+    unless the caller overrides it."""
+    from unittest.mock import patch
+    from gents.mhfdataset import MHFDataset as real_MHFDataset
+    input_head_dir, output_head_dir = simple_case
+
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, str(output_head_dir))
+    with patch("gents.timeseries.MHFDataset", wraps=real_MHFDataset) as mock_ds:
+        ts_collection.execute(show_progress=False)
+    assert mock_ds.call_count > 0
+    for call in mock_ds.call_args_list:
+        assert call.kwargs["memory_limit_bytes"] == DEFAULT_MEMORY_LIMIT_BYTES
+    clear_output_dir(output_head_dir)
+
+
+def test_execute_no_data_skips_primary_preload(simple_case):
+    """execute(no_data=True) opens its MHFDatasets with primary preloading
+    disabled -- primary data is never read for structure-only output."""
+    from unittest.mock import patch
+    from gents.mhfdataset import MHFDataset as real_MHFDataset
+    input_head_dir, output_head_dir = simple_case
+
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, str(output_head_dir))
+    with patch("gents.timeseries.MHFDataset", wraps=real_MHFDataset) as mock_ds:
+        ts_paths = ts_collection.execute(no_data=True, show_progress=False)
+    assert mock_ds.call_count > 0
+    for call in mock_ds.call_args_list:
+        assert call.kwargs["preload_primaries"] is False
+    assert len(ts_paths) > 0
+    clear_output_dir(output_head_dir)
+
+
+def test_execute_no_data_never_reads_primary_data(simple_case):
+    """End-to-end: no primary variable data is read from any source file during a
+    no_data run."""
+    from unittest.mock import patch
+    from gents.datastore import GenTSDataStore
+    input_head_dir, output_head_dir = simple_case
+
+    from gents.tests.test_mhfdataset import _RecordingVariable
+
+    class RecordingDataStore(GenTSDataStore):
+        accessed = []
+
+        def __getitem__(self, key):
+            return _RecordingVariable(super().__getitem__(key), str(key), RecordingDataStore.accessed)
+
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, str(output_head_dir))
+    with patch("gents.mhfdataset.GenTSDataStore", RecordingDataStore):
+        ts_collection.execute(no_data=True, show_progress=False)
+    assert not any(name.startswith("VAR") for name in RecordingDataStore.accessed)
+    clear_output_dir(output_head_dir)

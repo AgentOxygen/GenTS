@@ -339,3 +339,69 @@ def test_get_meta_from_path_raises_with_path(tmp_path):
     generate_history_file(path, [15.0], None, time_name="nottime")
     with pytest.raises(ValueError, match=str(path)):
         get_meta_from_path(path)
+
+
+def test_netcdfmeta_get_time_units_and_calendar(simple_meta):
+    """get_time_units()/get_time_calendar() return the time variable's reference attributes."""
+    meta, _ = simple_meta
+    assert meta.get_time_units() == f"days since {CASE_START_YEAR}-01-01"
+    assert meta.get_time_calendar() == "360_day"
+
+
+def test_netcdfmeta_decode_time_values(simple_meta):
+    """decode_time_values() decodes raw floats identically to get_cftimes()."""
+    meta, _ = simple_meta
+    decoded = meta.decode_time_values(np.array([15.0]))
+    assert decoded[0] == meta.get_cftimes()[0]
+
+
+def test_netcdfmeta_decode_time_values_lazy(lazy_meta):
+    """decode_time_values() works on a decode_dates=False meta without triggering the full decode."""
+    from unittest.mock import patch
+    from cftime import num2date as real_num2date
+    meta, _ = lazy_meta
+    with patch("gents.meta.num2date", wraps=real_num2date) as mock_num2date:
+        decoded = meta.decode_time_values(np.array([15.0, 45.0]))
+        # One call for the two requested values -- not a full-array decode.
+        assert mock_num2date.call_count == 1
+    assert decoded[0].year == CASE_START_YEAR
+    assert decoded[1].month == 2
+
+
+def test_netcdfmeta_decode_time_bounds_values(simple_meta):
+    """decode_time_bounds_values() decodes raw floats identically to get_cftime_bounds()."""
+    meta, _ = simple_meta
+    decoded = meta.decode_time_bounds_values(np.array([0.0, 30.0]))
+    bounds = meta.get_cftime_bounds()
+    assert decoded[0] == bounds[0][0]
+    assert decoded[1] == bounds[0][1]
+
+
+def test_netcdfmeta_decode_time_bounds_values_no_bounds_raises(no_bounds_meta):
+    """decode_time_bounds_values() raises when the file has no time-bounds variable to take a reference from."""
+    meta, _ = no_bounds_meta
+    with pytest.raises(RuntimeError, match="time-bounds"):
+        meta.decode_time_bounds_values(np.array([0.0, 30.0]))
+
+
+def test_get_meta_from_path_defers_decoding(tmp_path):
+    """get_meta_from_path() builds the meta without decoding any dates; decoding still works on demand afterwards."""
+    from unittest.mock import patch
+    path = str(tmp_path / "test.nc")
+    generate_history_file(path, [15.0, 45.0], [[0.0, 30.0], [30.0, 60.0]])
+    with patch("gents.meta.num2date") as mock_num2date:
+        meta = get_meta_from_path(path)
+        mock_num2date.assert_not_called()
+    assert len(meta.get_cftimes()) == 2
+
+
+def test_netcdfmeta_is_valid_does_not_decode(tmp_path):
+    """is_valid() decides from raw values alone, never triggering a cftime decode."""
+    from unittest.mock import patch
+    path = str(tmp_path / "test.nc")
+    generate_history_file(path, [15.0], [[0.0, 30.0]])
+    with GenTSDataStore(path, "r") as ds:
+        meta = netCDFMeta(ds, path, decode_dates=False)
+    with patch("gents.meta.num2date") as mock_num2date:
+        assert meta.is_valid() is True
+        mock_num2date.assert_not_called()

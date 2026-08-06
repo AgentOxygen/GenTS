@@ -99,9 +99,9 @@ def test_dataset_opens(simple_case):
 
 
 def test_execute_memory_limit_bytes_threaded_to_MHFDataset(simple_case):
-    """execute(memory_limit_bytes=...) reaches every MHFDataset it constructs, and defaults to unbounded (inf) when not given."""
-    import numpy as np
+    """execute(memory_limit_bytes=...) reaches every MHFDataset it constructs, and defaults to DEFAULT_MEMORY_LIMIT_BYTES when not given."""
     from gents.mhfdataset import MHFDataset
+    from gents.timeseries import DEFAULT_MEMORY_LIMIT_BYTES
 
     input_head_dir, output_head_dir = simple_case
     hf_collection = HFCollection(input_head_dir, num_processes=1)
@@ -118,7 +118,7 @@ def test_execute_memory_limit_bytes_threaded_to_MHFDataset(simple_case):
         ts_collection.execute()
         assert mock_mhfdataset.call_count > 0
         for call in mock_mhfdataset.call_args_list:
-            assert call.kwargs["memory_limit_bytes"] == np.inf
+            assert call.kwargs["memory_limit_bytes"] == DEFAULT_MEMORY_LIMIT_BYTES
 
 
 def test_execute_memory_limit_bytes_not_yet_enforced_by_preload(simple_case):

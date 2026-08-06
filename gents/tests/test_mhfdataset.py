@@ -301,3 +301,107 @@ def test_MHFDataset_open_skips_secondary_var_missing_from_a_later_file(tmp_path)
         assert agg_hf_ds.get_var_vals("ZSOI").tolist() == [0.1, 0.2, 0.3]
         var_vals = agg_hf_ds.get_var_vals("VAR0")
         assert var_vals.shape[0] == 2
+
+class _RecordingVariable:
+    """Wraps a netCDF4 variable, recording the name whenever its data is read.
+
+    Attribute access (shape, dimensions, ncattrs, ...) passes through without
+    recording, so metadata inspection is not counted as a read."""
+
+    def __init__(self, variable, name, log):
+        self._variable = variable
+        self._name = name
+        self._log = log
+
+    def __getattr__(self, attr):
+        return getattr(self._variable, attr)
+
+    def __getitem__(self, key):
+        self._log.append(self._name)
+        return self._variable[key]
+
+
+class _RecordingDataStore(GenTSDataStore):
+    """GenTSDataStore that records every variable whose data is read through it."""
+    accessed = []
+
+    def __getitem__(self, key):
+        return _RecordingVariable(super().__getitem__(key), str(key), _RecordingDataStore.accessed)
+
+
+def test_MHFDataset_preload_primaries_false_skips_primary_reads(multistep_case):
+    """preload_primaries=False: open() never touches primary variable data, but
+    primaries are still readable on demand afterwards."""
+    input_head_dir, _ = multistep_case
+    hf_collection = HFCollection(input_head_dir)
+    hf_groups = hf_collection.get_groups()
+    group = next(iter(hf_groups))
+
+    _RecordingDataStore.accessed = []
+    with patch("gents.mhfdataset.GenTSDataStore", _RecordingDataStore):
+        ds = MHFDataset(hf_groups[group], preload_primaries=False)
+        ds.open()
+        accessed_during_open = list(_RecordingDataStore.accessed)
+        assert not any(name.startswith("VAR") for name in accessed_during_open)
+
+        var_vals = ds.get_var_vals("VAR0", time_index_start=0, time_index_end=3)
+        ds.close()
+    assert var_vals.shape[0] == 3
+    assert np.array_equal(var_vals, np.zeros(var_vals.shape))
+
+
+def test_MHFDataset_default_preloads_primaries(simple_case):
+    """Default behavior is unchanged: open() reads primary data into the cache."""
+    input_head_dir, _ = simple_case
+    hf_collection = HFCollection(input_head_dir)
+    hf_groups = hf_collection.get_groups()
+    group = next(iter(hf_groups))
+
+    _RecordingDataStore.accessed = []
+    with patch("gents.mhfdataset.GenTSDataStore", _RecordingDataStore):
+        with MHFDataset(hf_groups[group]):
+            pass
+    assert any(name.startswith("VAR") for name in _RecordingDataStore.accessed)
+
+
+def test_MHFDataset_get_time_vals_cached_and_sorted(multistep_case):
+    """get_time_vals() returns an ascending array and repeated calls reuse the
+    cached copy computed by open() instead of re-sorting."""
+    input_head_dir, _ = multistep_case
+    hf_collection = HFCollection(input_head_dir)
+    hf_groups = hf_collection.get_groups()
+    group = next(iter(hf_groups))
+
+    with MHFDataset(hf_groups[group]) as agg_hf_ds:
+        first = agg_hf_ds.get_time_vals()
+        second = agg_hf_ds.get_time_vals()
+        assert np.all(np.diff(first) > 0)
+        assert first is second
+
+
+def test_MHFDataset_memory_limited_reads_correct_slices(tmp_path):
+    """With a memory limit too small to cache anything, mid-range time slices read
+    directly from disk still return exactly the source data."""
+    hf_dir = tmp_path / "hf"
+    makedirs(hf_dir)
+    n_files, n_steps = 3, 5
+    step = 0
+    paths = []
+    for findex in range(n_files):
+        path = str(hf_dir / f"testing.hf.{findex:05d}.nc")
+        times = [(step + i) * 30.0 for i in range(n_steps)]
+        bounds = [[(step + i) * 30.0, (step + i + 1) * 30.0] for i in range(n_steps)]
+        generate_history_file(path, times, bounds, num_vars=1, fill="random")
+        paths.append(path)
+        step += n_steps
+
+    import netCDF4
+    source = np.concatenate([netCDF4.Dataset(p)["VAR0"][:] for p in paths], axis=0)
+
+    ds = MHFDataset(paths, memory_limit_bytes=1)
+    ds.open()
+    # Full range, a slice inside one file, and a slice crossing a file boundary.
+    for start, end in [(0, n_files * n_steps), (1, 4), (3, 12)]:
+        vals = ds.get_var_vals("VAR0", time_index_start=start, time_index_end=end)
+        assert np.array_equal(vals, source[start:end])
+    ds.close()

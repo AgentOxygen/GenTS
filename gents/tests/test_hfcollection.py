@@ -514,3 +514,47 @@ def test_extraneous_hfcollection(extraneous_file_case):
     hf_collection = HFCollection(input_head_dir)
     with pytest.raises(ValueError, match="extraneous.nc"):
         hf_collection.slice_groups()
+
+def test_pull_metadata_decodes_no_full_time_arrays(multistep_large_case):
+    """pull_metadata() (including the group timestep-delta computation) never decodes a
+    full per-file time array -- at most the two endpoint candidates per file."""
+    from unittest.mock import patch
+    from cftime import num2date as real_num2date
+    input_head_dir, _ = multistep_large_case
+
+    with patch("gents.meta.num2date", wraps=real_num2date) as mock_num2date:
+        hf_collection = HFCollection(input_head_dir)
+        hf_collection.pull_metadata(show_progress=False)
+        for call in mock_num2date.call_args_list:
+            values = np.atleast_1d(np.asarray(call.args[0]))
+            assert values.size <= 2
+
+
+def test_get_year_bounds_multistep(multistep_large_case):
+    """get_year_bounds() reports the midpoint-year span of a multi-step group."""
+    input_head_dir, _ = multistep_large_case
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection.pull_metadata(show_progress=False)
+    meta_map = {path: hf_collection[path] for path in hf_collection}
+    min_year, max_year = get_year_bounds(meta_map)
+    # 4 files x 15 monthly steps = 60 months = 5 years starting at CASE_START_YEAR.
+    assert min_year == CASE_START_YEAR
+    assert max_year == CASE_START_YEAR + 4
+
+
+def test_slice_groups_no_full_time_decoding(multistep_large_case):
+    """slice_groups() works in the raw float time domain -- no per-step cftime decode."""
+    from unittest.mock import patch
+    from cftime import num2date as real_num2date
+    input_head_dir, _ = multistep_large_case
+
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection.pull_metadata(show_progress=False)
+    with patch("gents.meta.num2date", wraps=real_num2date) as mock_num2date:
+        sliced = hf_collection.slice_groups(slice_size_years=2, start_year=None)
+        for call in mock_num2date.call_args_list:
+            values = np.atleast_1d(np.asarray(call.args[0]))
+            assert values.size <= 2
+    # The slicing itself must still produce multiple year windows.
+    sliced_keys = [key for key in sliced.get_groups() if "[sorting_pivot]" in key]
+    assert len(sliced_keys) >= 2

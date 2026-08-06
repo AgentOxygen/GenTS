@@ -174,14 +174,15 @@ def test_main_memory_limit_forwarded_to_execute(simple_case):
     assert mock_execute.call_args.kwargs["memory_limit_bytes"] == 2 * (1024**3)
 
 
-def test_main_no_memory_limit_forwards_infinite(simple_case):
-    """Without --memory-limit, TSCollection.execute() receives an unbounded (inf) limit."""
+def test_main_no_memory_limit_forwards_default(simple_case):
+    """Without --memory-limit, TSCollection.execute() receives the bounded per-worker default."""
+    from gents.timeseries import DEFAULT_MEMORY_LIMIT_BYTES
     input_head_dir, output_head_dir = simple_case
     with patch.object(TSCollection, "execute") as mock_execute:
         mock_execute.return_value = []
         with patch.object(sys, "argv", ["run_gents", str(input_head_dir), "-o", str(output_head_dir)]):
             main()
-    assert mock_execute.call_args.kwargs["memory_limit_bytes"] == float("inf")
+    assert mock_execute.call_args.kwargs["memory_limit_bytes"] == DEFAULT_MEMORY_LIMIT_BYTES
 
 
 def test_cli_compression_applied(simple_case):
