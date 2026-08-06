@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 CHUNK_TARGET_BYTES = 4 * (1024**2)
 
+DEFAULT_MEMORY_LIMIT_BYTES = 4 * (1024**3)
+
 
 def compute_chunksizes(var_shape, itemsize, target_bytes=CHUNK_TARGET_BYTES):
     """
@@ -286,7 +288,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
     return ts_out_path
 
 
-def generate_time_series(hf_paths, ts_path_template, secondary_vars, ts_args, no_data=False, memory_limit_bytes=np.inf):
+def generate_time_series(hf_paths, ts_path_template, secondary_vars, ts_args, no_data=False, memory_limit_bytes=DEFAULT_MEMORY_LIMIT_BYTES):
     """
     Generates every time series file for one group of history files.
 
@@ -313,8 +315,9 @@ def generate_time_series(hf_paths, ts_path_template, secondary_vars, ts_args, no
     :rtype: list[str]
     """
     ts_paths = []
-    preloads = [name for name in list(ts_args) if name != "auxiliary"]
-    with MHFDataset(hf_paths, preload_var_list=preloads, memory_limit_bytes=memory_limit_bytes) as agg_hf_ds:
+    preloads = [] if no_data else [name for name in list(ts_args) if name != "auxiliary"]
+    with MHFDataset(hf_paths, preload_var_list=preloads, memory_limit_bytes=memory_limit_bytes,
+                    preload_primaries=not no_data) as agg_hf_ds:
         secondary_vars_data = {}
 
         for variable in secondary_vars:
@@ -520,53 +523,59 @@ class TSCollection:
             secondary_vars = self.__hf_collection[hf_paths[0]].get_secondary_variables()
             time_format = get_timestamp_format(self.__hf_collection.get_timestep_delta(hf_paths[0]), **strfrmt_kwargs)
             
-            times = []
-            sliced_times = []
-            unsliced_times = []
+            start_time = None
+            end_time = None
+            total_steps = 0
+            first_cut_start = None
+            last_cut_end = None
+            any_cut = False
             for path in hf_paths:
+                meta_ds = self.__hf_collection[path]
+                float_times = np.ma.getdata(np.atleast_1d(meta_ds.get_float_times()))
+                n_steps = int(float_times.shape[0])
+
                 time_slice_bounds = self.__hf_collection.get_multistep_slices(path)
-                time_bnds = self.__hf_collection[path].get_cftime_bounds()
-                time_cfvals = self.__hf_collection[path].get_cftimes()
-                unsliced_times.append(copy.deepcopy(time_cfvals))
-
                 if time_slice_bounds is not None:
-                    time_slice_bounds = time_slice_bounds[slice_years]
-                    time_cfvals = time_cfvals[time_slice_bounds[0]:time_slice_bounds[1]]
-                    if time_bnds is not None:
-                        time_bnds = time_bnds[time_slice_bounds[0]:time_slice_bounds[1]]
-                sliced_times.append(time_cfvals)
-
-                hf_times = []
-                if time_bnds is None or time_alignment_method == "direct_time":
-                    hf_times = time_cfvals
+                    cut_start, cut_end = time_slice_bounds[slice_years]
                 else:
-                    for ts in time_bnds:
-                        if time_alignment_method == "midpoint":
-                            hf_times.append(ts[0] + (ts[1] - ts[0]) / 2)
-                        elif time_alignment_method == "start_bound":
-                            hf_times.append(ts[0])
-                        elif time_alignment_method == "end_bound":
-                            hf_times.append(ts[1])
-                        else:
-                            raise ValueError(f"'{time_alignment_method}' is an invalid time-alignment method. Valid methods are ['direct_time', 'midpoint', 'start_bound', 'end_bound']")
-                times.append(hf_times)
-            times = np.concatenate(times)
-            start_time = min(times)
-            end_time = max(times)
+                    cut_start, cut_end = 0, n_steps
+                effective_end = min(cut_end, n_steps)
+                if cut_start != 0 or effective_end != n_steps:
+                    any_cut = True
+                if first_cut_start is None:
+                    first_cut_start = cut_start
+                last_cut_end = total_steps + effective_end
+                total_steps += n_steps
+
+                float_bnds = meta_ds.get_float_time_bounds()
+                if float_bnds is None or time_alignment_method == "direct_time":
+                    aligned_times = float_times[cut_start:cut_end]
+                    decode = meta_ds.decode_time_values
+                else:
+                    bnds = np.ma.getdata(float_bnds)[cut_start:cut_end]
+                    if time_alignment_method == "midpoint":
+                        aligned_times = bnds[:, 0] + (bnds[:, 1] - bnds[:, 0]) / 2
+                    elif time_alignment_method == "start_bound":
+                        aligned_times = bnds[:, 0]
+                    elif time_alignment_method == "end_bound":
+                        aligned_times = bnds[:, 1]
+                    else:
+                        raise ValueError(f"'{time_alignment_method}' is an invalid time-alignment method. Valid methods are ['direct_time', 'midpoint', 'start_bound', 'end_bound']")
+                    decode = meta_ds.decode_time_bounds_values
+
+                if aligned_times.shape[0] > 0:
+                    endpoints = np.atleast_1d(decode(np.array([np.min(aligned_times), np.max(aligned_times)])))
+                    if start_time is None or endpoints[0] < start_time:
+                        start_time = endpoints[0]
+                    if end_time is None or endpoints[-1] > end_time:
+                        end_time = endpoints[-1]
 
             start_index = None
             end_index = None
-            sliced_times = np.concatenate(sliced_times)
-            unsliced_times = np.concatenate(unsliced_times)
-            if not np.array_equal(sliced_times, unsliced_times):
-                start_index = int(np.searchsorted(unsliced_times, sliced_times[0]))
-                end_index = int(np.searchsorted(unsliced_times, sliced_times[-1], side="right"))
-
-                if end_index is None:
-                    end_index = len(unsliced_times)
-
-                assert start_index is not None
-                assert start_index < end_index <= len(unsliced_times)
+            if any_cut:
+                start_index = int(first_cut_start)
+                end_index = int(last_cut_end)
+                assert start_index < end_index <= total_steps
 
             timestamp_str = f"{start_time.strftime(time_format)}-{end_time.strftime(time_format)}"
             if len(primary_vars) > 0:
@@ -835,7 +844,7 @@ class TSCollection:
         for order_dict in self.__orders:
             makedirs(Path(order_dict['ts_path_template']).parent, exist_ok=exist_ok)
 
-    def execute(self, optimize=True, optimize_batch_n=200, raise_errors=False, no_data=False, show_progress=True, memory_limit_bytes=np.inf):
+    def execute(self, optimize=True, optimize_batch_n=200, raise_errors=False, no_data=False, show_progress=True, memory_limit_bytes=DEFAULT_MEMORY_LIMIT_BYTES):
         """
         Runs every order, writing the time series files.
 
