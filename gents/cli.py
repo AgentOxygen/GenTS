@@ -267,6 +267,10 @@ def main():
         for swap_batch in yaml_config["output_ts"]["path_swaps"]:
             tsc = tsc.apply_path_swap(**swap_batch)
 
+    if "append_timestep_dirs" in yaml_config["output_ts"]:
+        if yaml_config["output_ts"]["append_timestep_dirs"]:
+            tsc = tsc.append_timestep_dirs()
+
     if "compression" in yaml_config["output_ts"]:
         for comp_batch in yaml_config["output_ts"]["compression"]:
             tsc = tsc.apply_compression(**comp_batch)
