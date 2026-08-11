@@ -75,14 +75,21 @@
   demand and cached if they fit. Caching is all-or-nothing per variable and per group, and
   a variable's cache is released when reads move on to the next variable. The limit is
   per worker process, so the pipeline-wide ceiling is roughly `tscores × limit`; the
-  default is unbounded, which is fine for small groups and is what a wide, high-resolution
-  stream will exhaust.
-- **Lazy date decoding:** `cftime.num2date` is measurably expensive per file, and
-  `MHFDataset` never needs decoded dates — it maps time steps by raw float value. So
-  `netCDFMeta(decode_dates=False)` caches the raw values plus `units`/`calendar` and
-  decodes only if `get_cftimes()`/`get_cftime_bounds()` is actually called. Sibling flags
-  (`load_time_bounds`, `load_variable_attrs`, `compute_dim_bounds`) skip other per-file
-  reads the same way; each getter raises rather than lying when its data was skipped.
+  default is `timeseries.DEFAULT_MEMORY_LIMIT_BYTES` (4 GiB per worker) — a bare
+  `MHFDataset` constructed directly is still unbounded. Data too big to cache is read
+  from disk per run of consecutive steps, fetching only the needed slice.
+- **Lazy date decoding:** `cftime.num2date` is measurably expensive per file, and the
+  pipeline works almost entirely on raw float time values, which order identically to
+  their decoded dates within one `(units, calendar)` reference. `get_meta_from_path`
+  therefore builds every `netCDFMeta` with `decode_dates=False`; per-step work (sorting,
+  grouping, slicing, timestamp ranges) stays in the float domain and only endpoint
+  values are decoded, via `netCDFMeta.decode_time_values` /
+  `decode_time_bounds_values`. Year-window membership is tested against per-reference
+  float boundaries from `hfcollection.get_year_boundary_num`. Cross-file comparisons use
+  the decoded CFTime endpoints, so mixed time references between files stay correct.
+  Sibling flags (`load_time_bounds`, `load_variable_attrs`, `compute_dim_bounds`) skip
+  other per-file reads; each of those getters raises rather than lying when its data was
+  skipped, while `get_cftimes()`/`get_cftime_bounds()` simply decode on first call.
 - **Integrity stamp:** Every completed TS file gets a `gents_version` global attribute.
   Dual use: (1) output files lacking it are considered corrupt/partial and are
   regenerated; (2) *input* files carrying it are recognized as GenTS output and

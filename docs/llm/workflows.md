@@ -15,7 +15,7 @@ pip install -r requirements.txt && pip install -e .
 ## Testing
 
 ```bash
-pytest gents/tests/                         # full suite (224 tests, ~25 s)
+pytest gents/tests/                         # full suite (242 tests, ~25 s)
 pytest gents/tests/test_workflow.py         # one file
 ```
 
@@ -70,18 +70,20 @@ asv publish && asv preview
 
 ASV suites: `SimpleSuite` (100 history files through create/pull/TS-execute/MHFDataset),
 `LargeGroupSuite` (one group of many multi-step files, stressing the timestep-delta loop
-in `pull_metadata`), `GroupSortSuite` (48k synthetic *paths* through `sort_hf_groups` —
+in `pull_metadata`), `MultistepSuite` (20 files × 1000 steps through TSCollection
+create + execute — the order-construction time handling and the coalesced read path),
+`ChunkedWriteSuite` (6 files of `(24, 192, 288)` float64, ~10.6 MiB per variable per
+file, so `write_timeseries_file` takes the 4 MiB time-chunking branch no other suite
+reaches), `GroupSortSuite` (48k synthetic *paths* through `sort_hf_groups` —
 pure string work, writes no files, and guards against the grouping going quadratic in
-streams-per-directory again). All three build their cases through
+streams-per-directory again). The file-writing suites build their cases through
 `benchmarks/fixtures.build_bench_case()`, which is idempotent against a manifest file so
-repeated `setup()` calls don't regenerate.
+repeated `setup()` calls don't regenerate; the execute benchmarks apply
+`apply_overwrite("*")` so persisted outputs from a previous repeat aren't skipped as
+already-complete.
 
-**What ASV does not cover:** no suite exercises the chunked write path. `SimpleSuite`'s
-variables are `(1, 3, 4)` float64 — 96 bytes — so `write_timeseries_file` always takes
-the *contiguous* branch and the 4 MiB time-chunking branch is never reached.
-`LargeGroupSuite` benchmarks only `pull_metadata` (headers, no data), and `GroupSortSuite`
-touches no filesystem at all. Treat ASV as the commit-to-commit ratchet, not as the
-instrument for I/O work — use `pipeline_bench.py` for that (below).
+ASV remains the commit-to-commit ratchet, not the instrument for I/O work — use
+`pipeline_bench.py` for that (below).
 
 ### Running ASV inside a container
 
@@ -200,7 +202,8 @@ py-spy flag notes:
    that benchmarks well and corrupts output; the 4 MiB rule is implemented in two places
    (see [conventions.md](conventions.md)).
 5. Add or extend an ASV benchmark covering the improved path so it cannot regress —
-   still the outstanding gap, since no ASV suite reaches the chunked write path.
+   `ChunkedWriteSuite` reaches the chunked write path and `MultistepSuite` the
+   coalesced-read/order-construction path.
 
 ## Running GenTS
 
@@ -226,7 +229,7 @@ batches; with `--append`, they are added on top. `--compression` requires `--lev
 `--model` is case-insensitive; omitted → `gents_example.yaml`. Output dir defaults to
 the input dir (path swaps like `/hist/` → `/proc/tseries/` come from the YAML config).
 `--memory-limit` is in GB and applies **per TS worker**, so the process-wide ceiling is
-about `tscores ×` that; unbounded by default. `-nd/--no-data` (→ `execute(no_data=True)`)
+about `tscores ×` that; defaults to 4 GB per worker (`DEFAULT_MEMORY_LIMIT_BYTES`). `-nd/--no-data` (→ `execute(no_data=True)`)
 builds the full directory/file structure but skips reading/writing primary-variable data
 — primaries read back as their fill value; the fast path for conformity runs over
 missing-value clones (see the `--no-data` concept in [concepts.md](concepts.md)). Don't

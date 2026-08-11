@@ -142,7 +142,7 @@ Four constructor flags skip work a caller does not need. `MHFDataset` uses all f
 
 | Flag | Default | Effect when off |
 |---|---|---|
-| `decode_dates` | `True` | `num2date` is deferred to the first `get_cftimes()`/`get_cftime_bounds()` call (needs only cached values, not an open file) |
+| `decode_dates` | `True` | `num2date` is deferred to the first `get_cftimes()`/`get_cftime_bounds()` call (needs only cached values, not an open file). `get_meta_from_path` — i.e. the whole pipeline — opts out; pipeline code decodes endpoints only, via `decode_time_values()`/`decode_time_bounds_values()` |
 | `load_time_bounds` | `True` | the bounds array is never read; the bounds getters raise if the file actually has one |
 | `load_variable_attrs` | `True` | per-variable attrs are not read; `get_variable_attrs` raises |
 | `compute_dim_bounds` | `True` | coordinate bounds are not computed; `get_dim_bounds` raises |
@@ -164,20 +164,24 @@ number of simultaneously open handles is therefore 1, independent of group size.
   `preload_var_list` as fit under `memory_limit_bytes` (`__plan_cacheable_vars`, sized
   from one file's shape × file count). All-or-nothing per variable — a partial entry
   would serve the wrong file's data. Anything left over is cached on first use if it
-  fits, otherwise read straight from disk each time.
+  fits, otherwise only the requested time slice is read from disk per access.
+  `preload_primaries=False` (used by `no_data` runs) skips all primary preloading —
+  primaries stay readable on demand.
 - **Eviction:** reads move through one variable at a time, so switching variables frees
   the previous one's cache. A single file's entry is *not* freed after one read, since
   write chunks don't align with source file boundaries.
 - **Reads:** `get_var_vals(var, start, end)` reads maximal runs of consecutive steps that
   land in the same file in one slice read (non-fragmented), or places each tile into a
-  pre-allocated array by coordinate matching (fragmented).
+  pre-allocated array by coordinate matching (fragmented). The sorted time axis and the
+  fragmentation flag are computed once at `open()` and cached.
 
 ## Timestamp / output naming
 
 `get_timestamp_format` picks a strftime format from the group's time-step delta:
 sub-minute `%Y%m%d%H%M%S`, hourly `%Y%m%d%H`, daily `%Y%m%d`, monthly `%Y%m`,
 yearly `%Y`. `ts_string` is `f"{start.strftime(fmt)}-{end.strftime(fmt)}"` using the
-chosen time-alignment method. `get_timestep_label` maps the same delta to a frequency
+chosen time-alignment method; `update_ts_orders` finds the range on raw float times
+(alignment applied vectorized) and decodes only each file's two endpoint candidates. `get_timestep_label` maps the same delta to a frequency
 label (`hour_6`, `day_1`, `month_1`, `year_1`, or `unsorted`), used by
 `append_timestep_dirs` and by `case_builder.log_case_summary`.
 
@@ -203,7 +207,9 @@ deprecation shims.
 
 Memory is bounded per worker, not globally: `execute(memory_limit_bytes=...)` (CLI
 `--memory-limit`, in GB) is forwarded to every `MHFDataset` a worker opens, so the
-process-wide ceiling is roughly `tscores × memory_limit`. The default is unbounded.
+process-wide ceiling is roughly `tscores × memory_limit`. The default is
+`DEFAULT_MEMORY_LIMIT_BYTES` (4 GiB per worker); constructing an `MHFDataset` directly
+is still unbounded by default.
 
 ## Error-handling philosophy
 

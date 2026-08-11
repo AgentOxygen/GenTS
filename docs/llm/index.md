@@ -56,7 +56,7 @@ gents/                  Package source (7 pipeline modules ~3,100 lines, + confo
     check.py              gents_conform — run a model spec against generated output
     report.py             pass/fail/skip collector; text + JSON rendering
     models/cesm3.py       what correct CESM3 output looks like (the file that matters)
-  tests/                pytest suite (224 tests); test_cases.py generates synthetic fixtures
+  tests/                pytest suite (242 tests); test_cases.py generates synthetic fixtures
 docs/                   Sphinx docs (index/install/user/dev/api .rst)
 benchmarks/             ASV performance benchmarks + fixtures.build_bench_case()
 pipeline_bench.py       Standalone py-spy profiling driver (repo root, not an ASV suite)
@@ -81,7 +81,7 @@ group once into a memory-bounded cache) and writing one netCDF file per variable
 
 ```bash
 pip install -e ".[dev]"          # editable install with test/docs/bench extras
-pytest gents/tests/              # full test suite (224 tests, ~25 s)
+pytest gents/tests/              # full test suite (242 tests, ~25 s)
 docker build --target test -t gents-tests . && docker run --rm gents-tests   # CI-equivalent
 run_gents <hf_dir> --model CESM3 --dryrun   # CLI dry run (read-only validation)
 ```

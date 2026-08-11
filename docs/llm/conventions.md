@@ -75,15 +75,34 @@
   write chunks don't align with source file boundaries, so the same entry is legitimately
   read more than once per variable.
 - **`memory_limit_bytes` is per `MHFDataset`**, i.e. per worker process. The pipeline-wide
-  ceiling is roughly `tscores × memory_limit`.
+  ceiling is roughly `tscores × memory_limit`. `execute()` and the CLI default to
+  `timeseries.DEFAULT_MEMORY_LIMIT_BYTES` (4 GiB); only a directly-constructed
+  `MHFDataset` is unbounded by default.
 
 ### `netCDFMeta` load flags
 
 `decode_dates`, `load_time_bounds`, `load_variable_attrs`, `compute_dim_bounds` exist to
 skip measured per-file cost for callers that don't need the result (`MHFDataset` needs
-none of them). Opting out must stay **strict**: the corresponding getter raises
+none of them; `get_meta_from_path` — the whole pipeline — opts out of `decode_dates`).
+Opting out of the latter three must stay **strict**: the corresponding getter raises
 `RuntimeError` rather than returning empty or stale data. Don't "helpfully" soften that —
-silent empties would surface as wrong output, not an error.
+silent empties would surface as wrong output, not an error. `decode_dates=False` is the
+exception by design: `get_cftimes()`/`get_cftime_bounds()` decode lazily from the cached
+raw values on first call.
+
+### Float-domain time handling — do not reintroduce per-step decoding
+
+Pipeline code does all per-step time work (sorting, grouping, slicing, timestamp
+ranges) on **raw float time values**, which order identically to their decoded dates
+within one `(units, calendar)` reference. Only endpoint values are decoded, via
+`netCDFMeta.decode_time_values()`/`decode_time_bounds_values()`, and anything compared
+*across* files is compared as decoded CFTime objects, so files with different time
+references still order correctly (mixed *calendars* raise in `cftime`, as they always
+did). Year-window membership is tested against per-reference boundaries from
+`get_year_boundary_num`, never by decoding each step and reading `.year`. Calling
+`get_cftimes()`/`get_cftime_bounds()` in pipeline code reintroduces an O(total steps)
+`num2date` — the regression is guarded by size-capped `num2date` assertions in
+`test_hfcollection.py` and `test_tscollection.py`.
 
 ## Conformity conventions (`gents/conformity/`) — do not break
 
