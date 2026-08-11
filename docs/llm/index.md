@@ -18,10 +18,17 @@ verified against the source; when docs and code disagree, trust the code and fix
 | Understand the pipeline, modules, and key data structures | [architecture.md](architecture.md) |
 | Modify code without breaking invariants; known gotchas and stale spots | [conventions.md](conventions.md) |
 | Run tests/CLI/docs/benchmarks; common dev recipes | [workflows.md](workflows.md) |
+| Build tiny missing-value clones of a case dir for testing (`gents_conform_build`) | [concepts.md](concepts.md), [workflows.md](workflows.md) |
+| Add/edit a conformity check or model specification (`gents_conform`) | `gents/conformity/README.md` (authoritative), then [concepts.md](concepts.md) |
 
 ## Package identity
 
-- **PyPI name:** `GenTS`, import name `gents`, CLI entry point `run_gents` (→ `gents.cli:main`).
+- **PyPI name:** `GenTS`, import name `gents`. CLI entry points: `run_gents`
+  (→ `gents.cli:main`, the HF→TS pipeline), `gents_conform_build`
+  (→ `gents.conformity.case_builder:main`, the test-fixture clone tool), and
+  `gents_conform` (→ `gents.conformity.check:main`, the conformity checker).
+  Note that the latter two are currently **not packaged** — see the packaging
+  gotcha in [conventions.md](conventions.md).
 - **Python:** ≥ 3.10. **Dependencies (only these):** `numpy`, `netCDF4`, `cftime`, `pyyaml`.
   Minimal dependency stack is a stated design principle — do not add dependencies casually.
 - **Version:** derived from git tags via `setuptools-scm` (`gents.utils.get_version()` reads
@@ -34,18 +41,25 @@ verified against the source; when docs and code disagree, trust the code and fix
 ## Repository map
 
 ```
-gents/                  Package source (8 modules, ~3,200 lines)
+gents/                  Package source (7 pipeline modules ~3,100 lines, + conformity/)
   hfcollection.py       HFCollection: discover/filter/group/slice history files
   timeseries.py         TSCollection: build + execute time-series "orders"; file writing
   meta.py               netCDFMeta: cached per-file metadata; primary/secondary classification
-  mhfdataset.py         MHFDataset: virtual aggregated dataset over a file group
+  mhfdataset.py         MHFDataset: virtual aggregated dataset over a file group, with cache
   datastore.py          GenTSDataStore: thin context-manager wrapper around netCDF4.Dataset
   cli.py                argparse CLI + YAML-config-driven main()
   utils.py              logging setup, ProgressBar, version, collection info loggers
   configs/              Bundled YAML model configs (gents_example.yaml, gents_cesm3.yaml)
-  tests/                pytest suite; test_cases.py generates synthetic netCDF fixtures
+  conformity/           End-to-end verification against real model cases. Outside the
+                        pipeline; separate from unit tests. See its own README.md.
+    case_builder.py       gents_conform_build — mirror a case dir as tiny clones
+    check.py              gents_conform — run a model spec against generated output
+    report.py             pass/fail/skip collector; text + JSON rendering
+    models/cesm3.py       what correct CESM3 output looks like (the file that matters)
+  tests/                pytest suite (242 tests); test_cases.py generates synthetic fixtures
 docs/                   Sphinx docs (index/install/user/dev/api .rst)
-benchmarks/             ASV performance benchmarks
+benchmarks/             ASV performance benchmarks + fixtures.build_bench_case()
+pipeline_bench.py       Standalone py-spy profiling driver (repo root, not an ASV suite)
 Dockerfile              Multi-stage: runtime / test / bench / dev / deptest-floor / deptest-latest
 .github/workflows/      tests.yml (docker --target test), dependency_checks, release
 build/lib/              STALE build artifact copy of the package — never read or edit
@@ -59,14 +73,15 @@ filters (cheap, path-only) → `pull_metadata()` reads netCDF headers in paralle
 `slice_groups()` partitions each group into N-year windows → `TSCollection(hfc, out_dir)`
 expands groups into one "order" dict per primary variable → optional order modifiers
 (`apply_compression`, `apply_path_swap`, `add_attrs`, ...) → `execute()` runs
-`generate_time_series` per group in a process pool, each opening an `MHFDataset` and
-writing one netCDF file per variable via `write_timeseries_file`.
+`generate_time_series` per group batch, each opening an `MHFDataset` (which reads the
+group once into a memory-bounded cache) and writing one netCDF file per variable via
+`write_timeseries_file`.
 
 ## Quick commands
 
 ```bash
 pip install -e ".[dev]"          # editable install with test/docs/bench extras
-pytest gents/tests/              # full test suite
+pytest gents/tests/              # full test suite (242 tests, ~25 s)
 docker build --target test -t gents-tests . && docker run --rm gents-tests   # CI-equivalent
 run_gents <hf_dir> --model CESM3 --dryrun   # CLI dry run (read-only validation)
 ```

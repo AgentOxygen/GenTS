@@ -2,8 +2,11 @@ from gents.utils import get_version
 from gents.hfcollection import HFCollection
 from gents.timeseries import TSCollection
 from gents.tests.test_cases import *
+from gents.conformity.case_builder import clone_netcdf_with_missing
 from gents.datastore import GenTSDataStore
+from netCDF4 import default_fillvals
 from os import listdir, makedirs, rename
+from os.path import getsize
 import pytest
 import numpy as np
 import random
@@ -60,6 +63,37 @@ def test_simple_workflow(simple_case):
                         assert ts_ds[var_name].getncattr(key) == hf_ds[var_name].getncattr(key)
 
 
+def test_no_data_workflow(simple_case):
+    """
+    execute(no_data=True) produces the full TS structure but leaves primary data
+    unwritten: correct file count, shapes, populated time axis, and integrity
+    stamp, with primaries reading back as their fill value rather than real data.
+    """
+    input_head_dir, output_head_dir = simple_case
+    hf_collection = HFCollection(input_head_dir)
+    ts_collection = TSCollection(hf_collection, output_head_dir)
+    ts_paths = ts_collection.execute(no_data=True)
+
+    assert len(ts_paths) == SIMPLE_NUM_VARS
+
+    for path in ts_paths:
+        var_name = path.split(".")[-3]
+        with GenTSDataStore(path, 'r') as ts_ds:
+            # Structure is intact: time axis, secondary data, integrity stamp.
+            assert ts_ds["time"].size == SIMPLE_NUM_TEST_HIST_FILES
+            assert ts_ds["time_bounds"].shape[0] == SIMPLE_NUM_TEST_HIST_FILES
+            assert ts_ds.getncattr("gents_version") == get_version()
+
+            # Primary variable exists at full shape but carries no real data:
+            # it reads back as its fill value (default fill here, since the
+            # synthetic source has no _FillValue), not the source's values.
+            var = ts_ds[var_name]
+            var.set_auto_mask(False)
+            assert var.shape[0] == SIMPLE_NUM_TEST_HIST_FILES
+            expected_fill = getattr(var, "_FillValue", default_fillvals[var.dtype.str[1:]])
+            assert np.all(np.asarray(var[:]) == expected_fill)
+
+
 def test_simple_workflow_slicing(simple_case):
     """Sliced workflow produces one TS per variable per year slice with no sorting_pivot tokens in output paths."""
     input_head_dir, output_head_dir = simple_case
@@ -105,6 +139,40 @@ def test_time_bounds_workflow(time_bounds_case):
             assert "Time_Bounds" in ts_ds.variables
             assert "Time" in ts_ds.variables
             assert "Time" in ts_ds.dimensions
+
+
+def test_missing_value_clone_workflow(tmp_path):
+    """
+    Time series built from missing-value clones stay tiny: GenTS leaves the
+    all-fill primary unwritten instead of materialising NaN chunks, while the
+    time coordinate and full shape are preserved.
+    """
+    real_dir = tmp_path / "real"
+    clone_dir = tmp_path / "clone"
+    real_dir.mkdir()
+    clone_dir.mkdir()
+
+    dims = {"time": None, "bnds": 2, "lat": 100, "lon": 100}
+    for i in range(6):
+        name = f"case.cam.h0.{i:04d}.nc"
+        generate_history_file(str(real_dir / name), [(i + 0.5) * 30], [[i * 30, (i + 1) * 30]],
+                              num_vars=1, dim_shapes=dims, var_dims=("time", "lat", "lon"),
+                              var_shape=(1, 100, 100))
+        clone_netcdf_with_missing(str(real_dir / name), str(clone_dir / name))
+
+    real_ts = TSCollection(HFCollection(str(real_dir)), str(tmp_path / "ts_real")).execute()
+    clone_ts = TSCollection(HFCollection(str(clone_dir)), str(tmp_path / "ts_clone")).execute()
+
+    # The clone's TS output is a small fraction of the real one (unwritten primary).
+    assert getsize(clone_ts[0]) < getsize(real_ts[0]) / 10
+
+    with GenTSDataStore(clone_ts[0], "r") as ts_ds:
+        var = ts_ds["VAR0"]
+        var.set_auto_mask(False)
+        assert var.shape == (6, 100, 100)                 # full shape preserved
+        assert np.all(np.isnan(np.asarray(var[:])))       # reads back as missing
+        assert ts_ds["time"].size == 6                    # time coordinate intact
+        assert not np.any(np.isnan(np.asarray(ts_ds["time"][:])))
 
 
 def test_no_time_bounds_workflow(no_time_bounds_case):

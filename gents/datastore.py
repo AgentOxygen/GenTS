@@ -1,15 +1,22 @@
 #!/usr/bin/env python
 """
-datastore.py
+Single point where netCDF files are opened by the pipeline.
 
 Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
-Last Header Update: 04/08/26
 """
 import netCDF4 as nc
 
 
 class GenTSDataStore:
+    """
+    Context-managed wrapper delegating to a ``netCDF4.Dataset``.
+
+    Pipeline code opens netCDF files only through this class, so the backend can
+    be swapped or instrumented in one place. Takes the same arguments as
+    ``netCDF4.Dataset``.
+    """
+
     def __init__(self, *args, **kwargs):
         self._ds = nc.Dataset(*args, **kwargs)
  

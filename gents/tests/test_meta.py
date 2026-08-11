@@ -121,6 +121,24 @@ def test_netcdfmeta_get_cftime_bounds_none(no_bounds_meta):
     assert meta.get_cftime_bounds() is None
 
 
+def test_is_var_secondary_case_insensitive(tmp_path):
+    """Capitalised time dim / bounds names are classified like their lowercase forms."""
+    path = str(tmp_path / "mom.nc")
+    with GenTSDataStore(path, "w", format="NETCDF4") as ds:
+        ds.createDimension("Time", None)
+        ds.createDimension("Layer", 3)
+        ds.createDimension("lath", 4)
+        ds.createDimension("lonh", 5)
+        ds.createDimension("nbnd", 2)
+        ds.createVariable("Temp", np.double, ("Time", "Layer", "lath", "lonh"))
+        ds.createVariable("lath", np.double, ("lath",))
+        ds.createVariable("Time_Bounds", np.double, ("Time", "nbnd"))
+    with GenTSDataStore(path, "r") as ds:
+        assert is_var_secondary(ds["Temp"]) is False        # primary despite 'Time'
+        assert is_var_secondary(ds["lath"]) is True          # 1-D coordinate
+        assert is_var_secondary(ds["Time_Bounds"]) is True   # bounds name, capitalised
+
+
 def test_netcdfmeta_get_variables(simple_meta):
     """get_variables() lists all variable names including time, bounds, and primary fields."""
     meta, _ = simple_meta
@@ -223,6 +241,89 @@ def test_netcdfmeta_raises_on_no_time(tmp_path):
             netCDFMeta(ds, path)
 
 
+@pytest.fixture
+def lazy_meta(tmp_path):
+    path = str(tmp_path / "test.nc")
+    generate_history_file(path, [15.0], [[0.0, 30.0]])
+    with GenTSDataStore(path, "r") as ds:
+        return netCDFMeta(ds, path, decode_dates=False), path
+
+
+def test_netcdfmeta_decode_dates_false_defers_and_still_decodes(lazy_meta):
+    """decode_dates=False defers CFTime conversion, but get_cftimes()/get_cftime_bounds() still decode correctly on demand, after the source file has closed."""
+    meta, _ = lazy_meta
+    cftimes = meta.get_cftimes()
+    assert len(cftimes) == 1
+    bounds = meta.get_cftime_bounds()
+    assert bounds is not None
+    assert bounds.shape == (1, 2)
+
+
+def test_netcdfmeta_decode_dates_false_no_bounds(tmp_path):
+    """decode_dates=False with no time-bounds variable: get_cftime_bounds() still returns None rather than raising."""
+    path = str(tmp_path / "test.nc")
+    generate_history_file(path, [15.0], None)
+    with GenTSDataStore(path, "r") as ds:
+        meta = netCDFMeta(ds, path, decode_dates=False)
+    assert meta.get_cftime_bounds() is None
+
+
+def test_netcdfmeta_decode_dates_false_is_valid(lazy_meta):
+    """is_valid() still works correctly (triggering the lazy decode internally) when constructed with decode_dates=False."""
+    meta, _ = lazy_meta
+    assert meta.is_valid() is True
+
+
+def test_netcdfmeta_load_time_bounds_false_raises(tmp_path):
+    """load_time_bounds=False raises on get_float_time_bounds()/get_cftime_bounds() if the file actually has a time-bounds variable."""
+    path = str(tmp_path / "test.nc")
+    generate_history_file(path, [15.0], [[0.0, 30.0]])
+    with GenTSDataStore(path, "r") as ds:
+        meta = netCDFMeta(ds, path, load_time_bounds=False)
+    with pytest.raises(RuntimeError, match="load_time_bounds"):
+        meta.get_float_time_bounds()
+    with pytest.raises(RuntimeError, match="load_time_bounds"):
+        meta.get_cftime_bounds()
+
+
+def test_netcdfmeta_load_time_bounds_false_no_bounds_in_file(tmp_path):
+    """load_time_bounds=False on a file with no time-bounds variable at all still returns None, not a raise -- nothing was actually skipped."""
+    path = str(tmp_path / "test.nc")
+    generate_history_file(path, [15.0], None)
+    with GenTSDataStore(path, "r") as ds:
+        meta = netCDFMeta(ds, path, load_time_bounds=False)
+    assert meta.get_float_time_bounds() is None
+    assert meta.get_cftime_bounds() is None
+
+
+def test_netcdfmeta_load_variable_attrs_false_raises(simple_meta):
+    """load_variable_attrs=False raises on get_variable_attrs()."""
+    path = str(simple_meta[1])
+    with GenTSDataStore(path, "r") as ds:
+        meta = netCDFMeta(ds, path, load_variable_attrs=False)
+    with pytest.raises(RuntimeError, match="load_variable_attrs"):
+        meta.get_variable_attrs("VAR0")
+
+
+def test_netcdfmeta_load_variable_attrs_true_default(simple_meta):
+    """load_variable_attrs defaults to True, matching prior behavior."""
+    meta, _ = simple_meta
+    attrs = meta.get_variable_attrs("VAR0")
+    assert attrs.get("standard_name") == "VAR0"
+
+
+def test_netcdfmeta_compute_dim_bounds_false_raises(tmp_path):
+    """compute_dim_bounds=False raises on get_dim_bounds()."""
+    path = str(tmp_path / "test.nc")
+    lat_vals = np.linspace(-90, 90, 3)
+    lon_vals = np.linspace(-180, 180, 4)
+    generate_history_file(path, [15.0], [[0.0, 30.0]], dim_vals={"lat": lat_vals, "lon": lon_vals})
+    with GenTSDataStore(path, "r") as ds:
+        meta = netCDFMeta(ds, path, compute_dim_bounds=False)
+    with pytest.raises(RuntimeError, match="compute_dim_bounds"):
+        meta.get_dim_bounds()
+
+
 def test_get_meta_from_path(tmp_path):
     """get_meta_from_path() returns a populated netCDFMeta with the correct path."""
     path = str(tmp_path / "test.nc")
@@ -238,3 +339,69 @@ def test_get_meta_from_path_raises_with_path(tmp_path):
     generate_history_file(path, [15.0], None, time_name="nottime")
     with pytest.raises(ValueError, match=str(path)):
         get_meta_from_path(path)
+
+
+def test_netcdfmeta_get_time_units_and_calendar(simple_meta):
+    """get_time_units()/get_time_calendar() return the time variable's reference attributes."""
+    meta, _ = simple_meta
+    assert meta.get_time_units() == f"days since {CASE_START_YEAR}-01-01"
+    assert meta.get_time_calendar() == "360_day"
+
+
+def test_netcdfmeta_decode_time_values(simple_meta):
+    """decode_time_values() decodes raw floats identically to get_cftimes()."""
+    meta, _ = simple_meta
+    decoded = meta.decode_time_values(np.array([15.0]))
+    assert decoded[0] == meta.get_cftimes()[0]
+
+
+def test_netcdfmeta_decode_time_values_lazy(lazy_meta):
+    """decode_time_values() works on a decode_dates=False meta without triggering the full decode."""
+    from unittest.mock import patch
+    from cftime import num2date as real_num2date
+    meta, _ = lazy_meta
+    with patch("gents.meta.num2date", wraps=real_num2date) as mock_num2date:
+        decoded = meta.decode_time_values(np.array([15.0, 45.0]))
+        # One call for the two requested values -- not a full-array decode.
+        assert mock_num2date.call_count == 1
+    assert decoded[0].year == CASE_START_YEAR
+    assert decoded[1].month == 2
+
+
+def test_netcdfmeta_decode_time_bounds_values(simple_meta):
+    """decode_time_bounds_values() decodes raw floats identically to get_cftime_bounds()."""
+    meta, _ = simple_meta
+    decoded = meta.decode_time_bounds_values(np.array([0.0, 30.0]))
+    bounds = meta.get_cftime_bounds()
+    assert decoded[0] == bounds[0][0]
+    assert decoded[1] == bounds[0][1]
+
+
+def test_netcdfmeta_decode_time_bounds_values_no_bounds_raises(no_bounds_meta):
+    """decode_time_bounds_values() raises when the file has no time-bounds variable to take a reference from."""
+    meta, _ = no_bounds_meta
+    with pytest.raises(RuntimeError, match="time-bounds"):
+        meta.decode_time_bounds_values(np.array([0.0, 30.0]))
+
+
+def test_get_meta_from_path_defers_decoding(tmp_path):
+    """get_meta_from_path() builds the meta without decoding any dates; decoding still works on demand afterwards."""
+    from unittest.mock import patch
+    path = str(tmp_path / "test.nc")
+    generate_history_file(path, [15.0, 45.0], [[0.0, 30.0], [30.0, 60.0]])
+    with patch("gents.meta.num2date") as mock_num2date:
+        meta = get_meta_from_path(path)
+        mock_num2date.assert_not_called()
+    assert len(meta.get_cftimes()) == 2
+
+
+def test_netcdfmeta_is_valid_does_not_decode(tmp_path):
+    """is_valid() decides from raw values alone, never triggering a cftime decode."""
+    from unittest.mock import patch
+    path = str(tmp_path / "test.nc")
+    generate_history_file(path, [15.0], [[0.0, 30.0]])
+    with GenTSDataStore(path, "r") as ds:
+        meta = netCDFMeta(ds, path, decode_dates=False)
+    with patch("gents.meta.num2date") as mock_num2date:
+        assert meta.is_valid() is True
+        mock_num2date.assert_not_called()

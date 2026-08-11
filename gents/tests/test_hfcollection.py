@@ -53,6 +53,58 @@ def test_hf_sorting(structured_case):
     assert num_files == 2*len(hf_paths)
 
 
+def test_hf_sorting_semantics():
+    """sort_hf_groups() pins the group key, prefix derivation, and ordering contract."""
+    paths = [
+        PosixPath("/case/atm/hist/model.cam.h0.0001-01.nc"),
+        PosixPath("/case/atm/hist/model.cam.h0.0001-02.nc"),
+        PosixPath("/case/atm/hist/model.cam.h1.0001-01.nc"),
+        PosixPath("/case/ocn/hist/model.pop.h.0001-01.nc"),
+    ]
+    groups = sort_hf_groups(paths)
+
+    assert groups == {
+        "/case/atm/hist/model.cam.h0*": paths[0:2],
+        "/case/atm/hist/model.cam.h1*": [paths[2]],
+        "/case/ocn/hist/model.pop.h*": [paths[3]],
+    }
+    # Keys are ordered by parent directory (first appearance), then prefix.
+    assert list(groups) == [
+        "/case/atm/hist/model.cam.h0*",
+        "/case/atm/hist/model.cam.h1*",
+        "/case/ocn/hist/model.pop.h*",
+    ]
+    # Identical names in different directories never share a group.
+    split_dirs = sort_hf_groups([PosixPath("/d1/f.h0.001.nc"), PosixPath("/d2/f.h0.001.nc")])
+    assert list(split_dirs) == ["/d1/f.h0*", "/d2/f.h0*"]
+
+    # substring_index controls how many trailing tokens are dropped.
+    deep = [PosixPath("/d/a.b.c.d.e.nc")]
+    assert list(sort_hf_groups(deep, substring_index=1)) == ["/d/a.b.c.d.e*"]
+    assert list(sort_hf_groups(deep, substring_index=3)) == ["/d/a.b.c*"]
+    assert list(sort_hf_groups(deep, delimiter="_")) == ["/d/a.b.c.d.e.nc*"]
+
+    # Fewer delimiters than substring_index: strip what is there, no more.
+    assert list(sort_hf_groups([PosixPath("/d/single.nc")])) == ["/d/single*"]
+    assert list(sort_hf_groups([PosixPath("/d/nodelimiter")])) == ["/d/nodelimiter*"]
+    assert list(sort_hf_groups([PosixPath("/d/.nc")])) == ["/d/*"]
+
+    assert sort_hf_groups([]) == {}
+
+
+def test_hf_sorting_preserves_path_order(structured_case):
+    """Every input path lands in exactly one group, in its original relative order."""
+    input_head_dir, output_head_dir = structured_case
+    hf_paths = find_files(input_head_dir, "*.nc")
+    groups = sort_hf_groups(hf_paths)
+
+    regrouped = [path for group_paths in groups.values() for path in group_paths]
+    assert sorted(regrouped) == sorted(hf_paths)
+    assert len(regrouped) == len(set(regrouped))
+    for group_paths in groups.values():
+        assert group_paths == sorted(group_paths, key=hf_paths.index)
+
+
 def test_get_year_bounds(simple_case, scrambled_case, structured_case, multistep_large_case):
     """get_year_bounds() returns correct min/max years for simple, scrambled, and structured cases."""
     input_head_dir, output_head_dir = simple_case
@@ -396,6 +448,60 @@ def test_spatially_fragmented_handling(spatial_fragment_case):
     assert len(hf_collection.get_groups(check_fragmented=True)) == 1
 
 
+def _reference_timestep_delta_map(hf_collection):
+    """Original (pre-optimization) timestep-delta computation, kept as a
+    behavioral oracle: for each group, sort every cftime value in the group and
+    take the gap between the two latest steps."""
+    groups = hf_collection.get_groups()
+    reference = {}
+    for group in groups:
+        times = []
+        for path in groups[group]:
+            cftimes = hf_collection[path].get_cftimes()
+            if isinstance(cftimes, (list, np.ndarray)):
+                for ts in cftimes:
+                    times.append(ts)
+            else:
+                times.append(cftimes)
+        times = np.sort(times)
+        for path in groups[group]:
+            reference[path] = times[-1] - times[-2]
+    return reference
+
+
+def test_get_timestep_delta_matches_reference(simple_case, multistep_large_case,
+                                              spatial_fragment_case, mixed_timestep_case):
+    """The optimized timestep-delta computation reproduces the original full-sort
+    result exactly across single-step, multi-step, spatially-fragmented (duplicate
+    timesteps), and mixed-frequency groups."""
+    from datetime import timedelta
+
+    for case in (simple_case, multistep_large_case, spatial_fragment_case, mixed_timestep_case):
+        input_head_dir, _ = case
+        hf_collection = HFCollection(input_head_dir)
+        hf_collection.pull_metadata()
+
+        reference = _reference_timestep_delta_map(hf_collection)
+        assert len(reference) > 0
+        for path in reference:
+            assert hf_collection.get_timestep_delta(path) == reference[path]
+
+    # Concrete anchor: 49 consecutive monthly (30-day) files -> 30-day step.
+    input_head_dir, _ = simple_case
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection.pull_metadata()
+    for path in hf_collection:
+        assert hf_collection.get_timestep_delta(path) == timedelta(days=30)
+
+    # Spatially fragmented tiles share every timestep, so the two latest values
+    # are identical -> a zero-length step (a property the optimization preserves).
+    input_head_dir, _ = spatial_fragment_case
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection.pull_metadata()
+    for path in hf_collection:
+        assert hf_collection.get_timestep_delta(path) == timedelta(0)
+
+
 def test_no_history_files():
     """No history files found should raise an error."""
     with pytest.raises(FileNotFoundError) as exc:
@@ -408,3 +514,47 @@ def test_extraneous_hfcollection(extraneous_file_case):
     hf_collection = HFCollection(input_head_dir)
     with pytest.raises(ValueError, match="extraneous.nc"):
         hf_collection.slice_groups()
+
+def test_pull_metadata_decodes_no_full_time_arrays(multistep_large_case):
+    """pull_metadata() (including the group timestep-delta computation) never decodes a
+    full per-file time array -- at most the two endpoint candidates per file."""
+    from unittest.mock import patch
+    from cftime import num2date as real_num2date
+    input_head_dir, _ = multistep_large_case
+
+    with patch("gents.meta.num2date", wraps=real_num2date) as mock_num2date:
+        hf_collection = HFCollection(input_head_dir)
+        hf_collection.pull_metadata(show_progress=False)
+        for call in mock_num2date.call_args_list:
+            values = np.atleast_1d(np.asarray(call.args[0]))
+            assert values.size <= 2
+
+
+def test_get_year_bounds_multistep(multistep_large_case):
+    """get_year_bounds() reports the midpoint-year span of a multi-step group."""
+    input_head_dir, _ = multistep_large_case
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection.pull_metadata(show_progress=False)
+    meta_map = {path: hf_collection[path] for path in hf_collection}
+    min_year, max_year = get_year_bounds(meta_map)
+    # 4 files x 15 monthly steps = 60 months = 5 years starting at CASE_START_YEAR.
+    assert min_year == CASE_START_YEAR
+    assert max_year == CASE_START_YEAR + 4
+
+
+def test_slice_groups_no_full_time_decoding(multistep_large_case):
+    """slice_groups() works in the raw float time domain -- no per-step cftime decode."""
+    from unittest.mock import patch
+    from cftime import num2date as real_num2date
+    input_head_dir, _ = multistep_large_case
+
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection.pull_metadata(show_progress=False)
+    with patch("gents.meta.num2date", wraps=real_num2date) as mock_num2date:
+        sliced = hf_collection.slice_groups(slice_size_years=2, start_year=None)
+        for call in mock_num2date.call_args_list:
+            values = np.atleast_1d(np.asarray(call.args[0]))
+            assert values.size <= 2
+    # The slicing itself must still produce multiple year windows.
+    sliced_keys = [key for key in sliced.get_groups() if "[sorting_pivot]" in key]
+    assert len(sliced_keys) >= 2

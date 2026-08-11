@@ -42,9 +42,22 @@ def generate_history_file(
         dim_vals={},
         var_dims=None,
         var_shape=None,
-        disable_primary_var=False
+        disable_primary_var=False,
+        dtype=float,
+        fill="constant"
     ):
-    """Creates a synthetic netCDF history file with configurable time values, bounds, dimensions, and variables."""
+    """
+    Creates a synthetic netCDF history file with configurable time values,
+    bounds, dimensions and variables.
+
+    :param dtype: Dtype for the primary and auxiliary variables. Real model
+        output is commonly float32.
+    :type dtype: type or numpy.dtype
+    :param fill: ``"constant"`` repeats one value across the primary variable;
+        ``"random"`` fills it with random data, which is what a benchmark
+        measuring compression needs. Auxiliary variables are always random.
+    :type fill: str
+    """
     if dim_shapes is None: 
         dim_shapes = {
             time_name: None,
@@ -69,19 +82,22 @@ def generate_history_file(
 
         for index in range(num_vars):
             if auxiliary:
-                var_data = ds.createVariable(f"VAR_AUX_{index}", float, (aux_dim))
+                var_data = ds.createVariable(f"VAR_AUX_{index}", dtype, (aux_dim))
                 aux_shape = 1
                 if dim_shapes[aux_dim] is not None:
                     aux_shape = dim_shapes[aux_dim]
-                var_data[:] = np.random.random((aux_shape)).astype(float)
+                var_data[:] = np.random.random((aux_shape)).astype(dtype)
                 var_data.setncatts({
                     "units": "kg/g/m^2/K",
                     "standard_name": f"VAR{index}",
                     "long_name": f"variable_{index}"
                 })
             if not disable_primary_var:
-                var_data = ds.createVariable(f"VAR{index}", float, var_dims)
-                var_data[:] = index*np.ones(var_shape).astype(float)
+                var_data = ds.createVariable(f"VAR{index}", dtype, var_dims)
+                if fill == "random":
+                    var_data[:] = np.random.random(var_shape).astype(dtype)
+                else:
+                    var_data[:] = (index*np.ones(var_shape)).astype(dtype)
                 var_data.setncatts({
                     "units": "kg/g/m^2/K",
                     "standard_name": f"VAR{index}",

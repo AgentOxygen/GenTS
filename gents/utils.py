@@ -1,10 +1,9 @@
 #!/usr/bin/env python
 """
-utils.py
+Logging setup, progress reporting, versioning, and collection summaries.
 
 Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
-Last Header Update: 07/03/25
 """
 from time import time
 from importlib.metadata import version
@@ -18,9 +17,8 @@ LOG_LEVEL_IO_WARNING = 5
 
 def get_time_stamp():
     """
-    Returns the current system date and time as a formatted string.
+    Returns the current date and time as a ``'YYYY-MM-DD HH:MM'`` string.
 
-    :returns: Date-time string formatted as ``'YYYY-MM-DD HH:MM'``.
     :rtype: str
     """
     return datetime.datetime.fromtimestamp(time()).strftime('%Y-%m-%d %H:%M')
@@ -28,9 +26,8 @@ def get_time_stamp():
 
 def get_version():
     """
-    Returns the version string of the installed ``gents`` package.
+    Returns the version of the installed ``gents`` package.
 
-    :returns: Package version string (e.g. ``'1.0.0'``).
     :rtype: str
     """
     return version('gents')
@@ -38,18 +35,12 @@ def get_version():
 
 def enable_logging(verbose=False, output_path=None):
     """
-    Configures the ``gents`` package logger and begins emitting log messages.
+    Configures the ``gents`` logger to emit to stdout, and optionally to a file.
 
-    At ``verbose=True``, the log level is set to ``LOG_LEVEL_IO_WARNING`` (5), enabling
-    per-file I/O trace messages. At the default ``verbose=False``, the level is ``DEBUG``
-    (10), suppressing those low-level traces. The installed GenTS version is logged
-    immediately on initialisation.
-
-    :param verbose: If ``True``, enable per-file I/O trace messages at
-        ``LOG_LEVEL_IO_WARNING`` level. Defaults to ``False``.
+    :param verbose: Log at ``LOG_LEVEL_IO_WARNING`` (5), which adds per-file I/O
+        traces, instead of ``DEBUG``. There is no quieter setting.
     :type verbose: bool
-    :param output_path: Optional file path to additionally write log output to.
-        Defaults to ``None`` (stdout only).
+    :param output_path: File to write log output to in addition to stdout.
     :type output_path: str or None
     """
     logger = logging.getLogger("gents")
@@ -76,38 +67,36 @@ def enable_logging(verbose=False, output_path=None):
 
 class ProgressBar:
     """
-    Terminal progress bar for visualising long-running loops.
-
-    Displays a continuously-updated bar, percentage, item count, and elapsed
-    time by overwriting a single terminal line in place.
+    Terminal progress bar drawn by overwriting a single stdout line in place.
     """
 
-    def __init__(self, total, length=40, label=""):
+    def __init__(self, total, length=40, label="", quiet=False):
         """
-        Initialises the progress bar state.
-
         :param total: Total number of expected iterations.
         :type total: int
-        :param length: Width of the rendered bar in characters. Defaults to ``40``.
+        :param length: Width of the rendered bar in characters.
         :type length: int
-        :param label: Short text label displayed beside the progress counter.
-            Defaults to an empty string.
+        :param label: Short text label shown beside the counter.
         :type label: str
+        :param quiet: Count steps but write nothing to stdout.
+        :type quiet: bool
         """
         self.total = total
         self.length = length
         self.start_time = time()
         self.count = -1
         self.label = label
+        self.quiet = quiet
         self.step()
 
     def step(self):
         """
-        Advances the progress bar by one iteration and redraws the terminal line.
-
-        Writes a newline once the counter reaches ``total``.
+        Advances the bar by one iteration and redraws it, writing a trailing
+        newline once the counter reaches ``total``.
         """
         self.count += 1
+        if self.quiet:
+            return
         percent = self.count / self.total
         filled_length = int(self.length * percent)
         bar = "█" * filled_length + "-" * (self.length - filled_length)
@@ -121,27 +110,19 @@ class ProgressBar:
             sys.stdout.write("\n")
 
 
-def log_hfcollection_info(hfc):
+def log_hfcollection_info(hfc, show_progress=True):
     """
     Logs summary statistics for an ``HFCollection`` at INFO level.
 
-    Iterates over all groups in the collection to compute aggregate metrics and
-    identify outliers. Requires metadata to have been pulled (calls
-    ``hfc.check_pulled()``). A progress bar is displayed on stdout during
-    the scan.
+    Reports the input directory, file and group counts, total mapped data volume,
+    the largest groups by variable and file count, and the largest single-timestep
+    variable. Sizes are approximations (per-file variable sizes times file counts),
+    not exact totals. Pulls metadata if it has not been pulled already.
 
-    Statistics logged:
-
-    - Input directory and total number of history files found.
-    - Number of output groups formed.
-    - Total mapped data volume in TB and GB.
-    - Group with the most variables.
-    - Group with the most history files.
-    - Variable with the largest single-timestep memory footprint (shape,
-      dimensions, and size in MB).
-
-    :param hfc: A pulled ``HFCollection`` instance to inspect.
+    :param hfc: Collection to inspect.
     :type hfc: gents.hfcollection.HFCollection
+    :param show_progress: If ``False``, suppress the stdout progress bar.
+    :type show_progress: bool
     """
     logger = logging.getLogger("gents")
 
@@ -155,7 +136,7 @@ def log_hfcollection_info(hfc):
     hf_groups = hfc.get_groups()
     logger.info(f"Output Groups formed: {len(hf_groups)}")
 
-    prog_bar = ProgressBar(total=len(hf_groups), label="Calculating HFCollection Statistics")
+    prog_bar = ProgressBar(total=len(hf_groups), label="Calculating HFCollection Statistics", quiet=not show_progress)
     total_data_tb = 0
     largest_num_vars = 0
     largest_group_num_vars = None
@@ -206,23 +187,18 @@ def log_hfcollection_info(hfc):
     )
 
 
-def log_tscollection_info(tsc):
+def log_tscollection_info(tsc, show_progress=True):
     """
     Logs summary statistics for a ``TSCollection`` at INFO level.
 
-    Iterates over all time series orders in the collection to compute aggregate
-    metrics and identify the largest output file. Auxiliary-only orders are
-    skipped. A progress bar is displayed on stdout during the scan.
+    Reports the output directory, the number of time series files to generate, and
+    the largest of them (source variable, shape, dimensions, projected size).
+    Auxiliary-only orders are skipped and sizes are estimates, not exact totals.
 
-    Statistics logged:
-
-    - Output directory and total number of time series files to generate.
-    - Largest time series file by estimated total size, including the sample
-      history file path, variable name, shape, dimensions, number of source
-      history files, and projected size in GB.
-
-    :param tsc: A ``TSCollection`` instance to inspect.
+    :param tsc: Collection to inspect.
     :type tsc: gents.timeseries.TSCollection
+    :param show_progress: If ``False``, suppress the stdout progress bar.
+    :type show_progress: bool
     """
     logger = logging.getLogger("gents")
 
@@ -241,7 +217,7 @@ def log_tscollection_info(tsc):
     largest_ts_dims = None
     largest_ts_num_files = None
 
-    prog_bar = ProgressBar(total=len(tsc), label="Calculating TSCollection Statistics")
+    prog_bar = ProgressBar(total=len(tsc), label="Calculating TSCollection Statistics", quiet=not show_progress)
     for order in tsc:
         prog_bar.step()
         if order["primary_var"] != "auxiliary":
