@@ -28,8 +28,6 @@ curl -fSL "$URL" -o "$ARCHIVE"
 echo "Extracting to $SAMPLE_DIR"
 tar -xf "$ARCHIVE" -C "$SAMPLE_DIR"
 
-# gents_conform_build always writes cmd.txt at the top of the clone directory
-# it built, so that is the case's head directory, whatever the archive names it.
 CMD_TXT=$(find "$SAMPLE_DIR" -maxdepth 3 -name cmd.txt -print -quit)
 if [ -z "$CMD_TXT" ]; then
     echo "error: no cmd.txt found under $SAMPLE_DIR; '$URL' does not look like a gents_conform_build case clone" >&2
@@ -41,4 +39,4 @@ echo "Case directory : $CASE_DIR"
 echo "Model          : $MODEL"
 
 run_gents "$CASE_DIR" -o "$OUTPUT_DIR" -nd -hc "${HFCORES:-4}" -tc "${TSCORES:-4}" -m "$MODEL"
-gents_conform "$OUTPUT_DIR" -i "$CASE_DIR" -m "$MODEL"
+gents_conform "$OUTPUT_DIR" -i "$CASE_DIR" -m "$MODEL" --json "$OUTPUT_DIR/report.json"

@@ -1,0 +1,142 @@
+name: Run Conformity Cases
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'gents/configs/**'
+      - 'gents/conformity/**'
+      - '!gents/conformity/README.md'
+      - '.github/workflows/conformity.yml'
+
+concurrency:
+  group: conformity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  manifest:
+    runs-on: ubuntu-latest
+    outputs:
+      cases: ${{ steps.read.outputs.cases }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read case manifest
+        id: read
+        run: echo "cases=$(jq -c . gents/conformity/cases.json)" >> "$GITHUB_OUTPUT"
+
+  cases:
+    needs: manifest
+    name: ${{ matrix.case.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        case: ${{ fromJson(needs.manifest.outputs.cases) }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build image
+        run: docker build -f gents/conformity/Dockerfile -t gents-conformity .
+
+      - name: Run conformity case
+        id: run
+        env:
+          CASE_URL: ${{ matrix.case.url }}
+          CASE_MODEL: ${{ matrix.case.model }}
+        run: |
+          mkdir -p out
+          code=0
+          docker run --rm -v "$PWD/out:/output" gents-conformity "$CASE_URL" "$CASE_MODEL" || code=$?
+          echo "Case exited with $code"
+
+      - name: Stamp report with case and job
+        if: always()
+        env:
+          CASE_NAME: ${{ matrix.case.name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # An empty report still carries the job link, which is where someone
+          # looks when the case failed before gents_conform could run.
+          [ -f out/report.json ] || { mkdir -p out; echo '{}' > out/report.json; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" > jobs.json || echo '{"jobs":[]}' > jobs.json
+          job_url=$(jq -r --arg name "$CASE_NAME" '.jobs[] | select(.name == $name) | .html_url' jobs.json | head -n 1)
+          [ -n "$job_url" ] || job_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          jq --arg case "$CASE_NAME" --arg url "$job_url" --arg date "$(date -u +%Y-%m-%d)" \
+             '. + {case: $case, job_url: $url, run_date: $date}' out/report.json > out/stamped.json
+          mv out/stamped.json out/report.json
+          echo "Job link: $job_url"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformity-${{ matrix.case.name }}
+          path: out/report.json
+
+      - name: Summarise result
+        if: always()
+        env:
+          CASE_NAME: ${{ matrix.case.name }}
+        run: |
+          percent=$(jq -r 'if .pass_rate == null then "" else (100 * .pass_rate | round | tostring) end' out/report.json)
+          if [ -z "$percent" ]; then
+            {
+              echo "## $CASE_NAME"
+              echo
+              echo "No report was produced: the case failed before \`gents_conform\` could run."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          passed=$(jq -r '.passed' out/report.json)
+          failed=$(jq -r '.failed' out/report.json)
+          evaluated=$(jq -r '.passed + .failed' out/report.json)
+          skipped=$(jq -r '.skipped' out/report.json)
+          model=$(jq -r '.model' out/report.json)
+          spec=$(jq -r '.spec_version' out/report.json)
+          version=$(jq -r '.gents_version' out/report.json)
+          date=$(jq -r '.run_date' out/report.json)
+          url=$(jq -r '.job_url' out/report.json)
+
+          score="$percent% ($passed/$evaluated)"
+          [ "$skipped" -eq 0 ] || score="$percent% ($passed/$evaluated, $skipped skipped)"
+
+          {
+            echo "## $CASE_NAME"
+            echo
+            echo "**$score** against the $model specification v$spec, GenTS \`$version\`."
+            if [ "$failed" -ne 0 ]; then
+              echo
+              echo "$failed check(s) did not hold. That is a finding about how this case was"
+              echo "handled, not a failure of this job: see the log above for which, and the"
+              echo "uploaded report for the full detail."
+            fi
+            echo
+            echo "To publish this result, paste the row below into the results table in"
+            echo "\`docs/conformity.rst\`:"
+            echo
+            # Four-space indent, matching the list-table in docs/conformity.rst so
+            # the row pastes in without being re-indented.
+            echo '```rst'
+            echo "    * - $CASE_NAME"
+            echo "      - $model (spec v$spec)"
+            echo "      - $score"
+            echo "      - $version"
+            echo "      - \`$date <$url>\`__"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Fail if the checks did not run
+        run: |
+          if ! jq -e '.pass_rate != null' out/report.json > /dev/null; then
+            echo "::error::No conformity report was produced. The case did not run to completion; see the log above." >&2
+            exit 1
+          fi
+          echo "Conformity checks ran and produced a report."

@@ -26,4 +26,5 @@ The GenTS framework is "model agnostic" to avoid fragile, "hard-coded" implement
     install
     user
     dev
+    conformity
     api

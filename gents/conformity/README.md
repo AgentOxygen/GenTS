@@ -103,6 +103,38 @@ GenTS Conformity Report
 Three outcomes are possible. **PASS** and **FAIL** mean the check ran.
 **SKIP** means it could not run. A skip is useful information in itself: the four skips above indicate that this case has no daily, hourly, yearly or sub-hourly streams.
 
+## Running a case archive in Docker
+
+`Dockerfile` wraps all three steps above into a single image:
+
+```bash
+docker build -f gents/conformity/Dockerfile -t gents-conformity .
+docker run --rm gents-conformity <case-archive-url> <model>
+```
+
+The build context must be the repository root, since the image installs GenTS
+from source and reads `.git` to resolve its version.
+
+The case archives that CI runs are listed in `cases.json`.
+
+To keep the generated time series or the JSON report, bind-mount a directory:
+
+```bash
+docker run --rm -v "$PWD/out:/output" gents-conformity \
+  https://pub-32310187d5784979970f4bf1871d10b2.r2.dev/b.e30_alpha09d_m.B1850C_MTso_Gris.ne30_t233_wgx3.369.tar.xz \
+  CESM3
+```
+
+`run_case.sh` always writes the JSON report to `/output/report.json`, so the
+bind-mount above is the only thing needed to keep it. `HFCORES` and `TSCORES`
+environment variables override the worker counts passed to `run_gents` (default
+4 each). Build with `--build-arg DEFAULT_PYTHON=3.11` to check a different
+interpreter.
+
+The results table in `docs/conformity.rst` is maintained by hand. Each job prints
+a paste-ready table row in its summary, carrying the score, the specification
+version, the GenTS version and a link back to that job. 
+
 ## Auditing and changing a model specification
 
 `models/cesm3.py` is written to be read by researchers who may not write Python often. Every check is a plain loop, an `if` statement, and a comment explaining why CESM3 requires it. If a check is not clear from reading it, that is a bug in the check.
