@@ -65,9 +65,30 @@ def enable_logging(verbose=False, output_path=None):
     logger.info(f"Logging enabled (verbose={verbose}, output_path={output_path})")
 
 
+def is_terminal(stream):
+    """
+    Returns whether a stream is an interactive terminal.
+
+    Streams that stand in for stdout do not all implement ``isatty``, so a
+    stream that cannot answer is treated as not a terminal.
+
+    :param stream: Stream to test, usually ``sys.stdout``.
+    :type stream: io.IOBase
+    :rtype: bool
+    """
+    try:
+        return stream.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
 class ProgressBar:
     """
     Terminal progress bar drawn by overwriting a single stdout line in place.
+
+    Drawing is skipped entirely when stdout is not a terminal. Overwriting in
+    place only works on one, so in a log file, a CI job or a pipe every redraw
+    would land as another line and bury the output worth reading.
     """
 
     def __init__(self, total, length=40, label="", quiet=False):
@@ -78,7 +99,8 @@ class ProgressBar:
         :type length: int
         :param label: Short text label shown beside the counter.
         :type label: str
-        :param quiet: Count steps but write nothing to stdout.
+        :param quiet: Count steps but write nothing to stdout. Forced on when
+            stdout is not a terminal.
         :type quiet: bool
         """
         self.total = total
@@ -86,7 +108,7 @@ class ProgressBar:
         self.start_time = time()
         self.count = -1
         self.label = label
-        self.quiet = quiet
+        self.quiet = quiet or not is_terminal(sys.stdout)
         self.step()
 
     def step(self):

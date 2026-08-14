@@ -17,6 +17,54 @@ def test_version():
     assert type(get_version()) == str
 
 
+class FakeStdout:
+    """Minimal stdout stand-in that records writes and reports a chosen tty state."""
+
+    def __init__(self, tty):
+        self.tty = tty
+        self.written = ""
+
+    def isatty(self):
+        return self.tty
+
+    def write(self, text):
+        self.written += text
+
+    def flush(self):
+        pass
+
+
+def test_progress_bar_draws_on_a_terminal(monkeypatch):
+    """A progress bar draws itself when stdout is a terminal."""
+    stdout = FakeStdout(tty=True)
+    monkeypatch.setattr(sys, "stdout", stdout)
+
+    bar = ProgressBar(total=2, label="Testing")
+    bar.step()
+
+    assert "Testing" in stdout.written
+    assert bar.count == 1
+
+
+def test_progress_bar_silent_without_a_terminal(monkeypatch):
+    """
+    A progress bar writes nothing when stdout is not a terminal.
+
+    Redrawing in place only makes sense on a terminal. Anywhere else -- a log
+    file, a CI job, a pipe -- every redraw lands as another line and buries the
+    output that matters, so counting continues but drawing does not.
+    """
+    stdout = FakeStdout(tty=False)
+    monkeypatch.setattr(sys, "stdout", stdout)
+
+    bar = ProgressBar(total=2, label="Testing")
+    bar.step()
+    bar.step()
+
+    assert stdout.written == ""
+    assert bar.count == 2
+
+
 @pytest.fixture(scope="session")
 def log_output_dir(tmp_path_factory):
     """Session-scoped temp directory for log file output."""

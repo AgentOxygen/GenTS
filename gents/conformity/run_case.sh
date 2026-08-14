@@ -23,7 +23,7 @@ ARCHIVE=/tmp/case.tar.xz
 mkdir -p "$SAMPLE_DIR" "$OUTPUT_DIR"
 
 echo "Downloading case archive from $URL"
-curl -fSL "$URL" -o "$ARCHIVE"
+curl -fsSL "$URL" -o "$ARCHIVE"
 
 echo "Extracting to $SAMPLE_DIR"
 tar -xf "$ARCHIVE" -C "$SAMPLE_DIR"
