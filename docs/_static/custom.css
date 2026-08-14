@@ -1,0 +1,57 @@
+/* Conformity results table.
+ *
+ * Case names, versions and dates are all long and none of them read well broken
+ * across lines, so the table is allowed to be wider than the text column and
+ * scrolls sideways instead of wrapping. `display: block` is what makes a table
+ * scrollable at all; it also means the column widths come from the content, so
+ * the directive uses `:widths: auto`. */
+table.conformity-table {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: nowrap;
+    margin: 1.5em 0;
+    border-collapse: collapse;
+    font-size: 0.92em;
+    /* Alabaster frames every table.docutils in a border and a drop shadow.
+     * Both have to go, or the shadow still reads as an outer edge. */
+    border: none;
+    box-shadow: none;
+    /* The horizontal scrollbar is drawn along the bottom of the padding box, so
+     * bottom padding is what separates it from the last row. */
+    padding-bottom: 0.9em;
+}
+
+table.conformity-table th,
+table.conformity-table td {
+    padding: 0.45em 1.1em 0.45em 0.5em;
+    text-align: left;
+    vertical-align: top;
+    /* Same reason: alabaster's shorthand puts a border on all four sides of
+     * every cell, so it is cleared before the one rule worth keeping. */
+    border: none;
+    border-bottom: 1px solid #e1e4e5;
+}
+
+table.conformity-table thead th {
+    border-bottom: 2px solid #b1b4b5;
+    font-weight: bold;
+}
+
+table.conformity-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* Docutils wraps every cell's text in a paragraph, whose default margin would
+ * otherwise double the row height. */
+table.conformity-table th > p,
+table.conformity-table td > p {
+    margin: 0;
+}
+
+table.conformity-table caption {
+    text-align: left;
+    padding-bottom: 0.5em;
+    font-style: italic;
+}

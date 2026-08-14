@@ -32,3 +32,12 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store', '.ipynb_checkpoints']
 
 html_theme = 'alabaster'
 html_static_path = ['_static']
+html_css_files = ['custom.css']
+
+# Alabaster centres a fixed-width page; the text column is what is left of
+# page_width once sidebar_width is taken out. The theme's default 940px leaves
+# roughly 700px for content, which is narrow for tables and code blocks.
+html_theme_options = {
+    'page_width': '1200px',
+    'sidebar_width': '240px',
+}

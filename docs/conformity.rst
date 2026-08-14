@@ -12,7 +12,8 @@ Each row below records one run of one case and links to the `GitHub Actions <htt
 
 .. list-table:: Conformity results by case
     :header-rows: 1
-    :widths: 32 18 20 18 12
+    :widths: auto
+    :class: conformity-table
 
     * - Case
       - Model
@@ -23,7 +24,7 @@ Each row below records one run of one case and links to the `GitHub Actions <htt
       - CESM3 (spec v1)
       - 92% (22/24)
       - 1.2.1.dev4+g4e9f666e2.d20260814
-      - `2026-08-14 <https://github.com/AgentOxygen/GenTS/actions/runs/31837677999/job/94887538773>`__
+      - `2026-08-14 <https://github.com/AgentOxygen/GenTS/actions/runs/31837677999/attempts/1#summary-94887538773>`__
 
 A check **passes** when it was evaluated and held, **fails** when it was evaluated and did not, and **skips** when it could not be evaluated at all (for cases that lack the relevant data). Skipped checks are excluded from the percentage rather than counted as passes, so a run over a narrow case cannot inflate its own score.
 
