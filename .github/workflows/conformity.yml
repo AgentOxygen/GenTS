@@ -116,8 +116,9 @@ jobs:
             if [ "$failed" -ne 0 ]; then
               echo
               echo "$failed check(s) did not hold. That is a finding about how this case was"
-              echo "handled, not a failure of this job: see the log above for which, and the"
-              echo "uploaded report for the full detail."
+              echo "handled, not a failure of this job:"
+              echo
+              jq -r '.checks[] | select(.status == "fail") | "- **\(.description)**\n  \(.detail)"' out/report.json
             fi
             echo
             echo "To publish this result, paste the row below into the results table in"
