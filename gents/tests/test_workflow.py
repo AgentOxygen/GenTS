@@ -327,3 +327,12 @@ def test_multistep_large_slicing_workflow(multistep_large_case):
 
     ts_paths = ts_collection.execute(optimize=True)
     assert len(ts_paths) == SIMPLE_NUM_VARS*int(np.ceil(MS_LARGE_NUM_TEST_HIST_FILES*MS_LARGE_NUM_TIMESTEPS / 12))
+
+
+def test_trailing_slash_input_dir(structured_case):
+    """A trailing '/' on the input dir must still nest output under the output dir, not glue onto its name."""
+    input_head_dir, output_head_dir = structured_case
+    ts_collection = TSCollection(HFCollection(f"{input_head_dir}/"), str(output_head_dir))
+    assert len(ts_collection) > 0
+    for order in ts_collection:
+        assert order["ts_path_template"].startswith(f"{output_head_dir}/")
