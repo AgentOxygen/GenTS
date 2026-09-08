@@ -452,7 +452,7 @@ class HFCollection:
             self.__hf_to_meta_map = meta_map
         
         self.__hf_groups = hf_groups
-        self.__hf_dir = hf_dir
+        self.__hf_dir = Path(hf_dir)
 
         if meta_map is None and hf_groups is None:
             logger.info(f"Initialized HFCollection at '{hf_dir}'")
@@ -526,9 +526,10 @@ class HFCollection:
 
     def get_input_dir(self):
         """
-        Returns the head directory this collection was initialised from.
+        Returns the head directory this collection was initialised from,
+        normalised (no trailing separator).
 
-        :rtype: str
+        :rtype: pathlib.Path
         """
         return self.__hf_dir
 
