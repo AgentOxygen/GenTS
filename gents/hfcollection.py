@@ -601,6 +601,10 @@ class HFCollection:
         :type raise_errors: bool
         :param show_progress: If ``False``, suppress the stdout progress bar.
         :type show_progress: bool
+        :returns: This collection, mutated in place, so the call can be chained
+            onto construction. Unlike the filters and transforms, this is *not* a
+            copy: :meth:`check_pulled` and its callers rely on the mutation.
+        :rtype: HFCollection
         :raises ValueError: If any group holds fewer than two time steps in total,
             regardless of ``raise_errors``.
         """
@@ -649,6 +653,7 @@ class HFCollection:
                     raise ValueError(f"{exc} Group with paths: {group_paths}") from exc
                 for path in group_paths:
                     self.__hf_to_timestep_delta_map[path] = delta
+        return self
 
     def check_validity(self):
         """
