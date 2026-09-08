@@ -558,3 +558,17 @@ def test_slice_groups_no_full_time_decoding(multistep_large_case):
     # The slicing itself must still produce multiple year windows.
     sliced_keys = [key for key in sliced.get_groups() if "[sorting_pivot]" in key]
     assert len(sliced_keys) >= 2
+
+
+def test_pull_metadata_returns_self(simple_case):
+    """pull_metadata() is fluent, not immutable: it returns the receiver itself, mutated in place."""
+    input_head_dir, output_head_dir = simple_case
+    hf_collection = HFCollection(input_head_dir)
+    assert not hf_collection.is_pulled()
+
+    returned = hf_collection.pull_metadata(show_progress=False)
+
+    assert returned is hf_collection
+    assert hf_collection.is_pulled()
+    # Contrast: the copy-returning transforms leave the receiver alone.
+    assert hf_collection.exclude(["*.00001.nc"]) is not hf_collection
