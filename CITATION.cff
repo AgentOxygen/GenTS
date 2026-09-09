@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use GenTS to extend your workflow or other software, please cite it as below."
+authors:
+  - family-names: Cummins
+    given-names: Cameron
+    orcid: https://orcid.org/0000-0002-5526-966X
+title: "GenTS: Generate Time Series Python Package"
+version: 1.3.0
+date-released: 2026-09-09
+repository-code: "https://github.com/AgentOxygen/GenTS"
+license: MIT
