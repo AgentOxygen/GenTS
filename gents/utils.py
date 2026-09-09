@@ -148,7 +148,7 @@ def log_hfcollection_info(hfc, show_progress=True):
     """
     logger = logging.getLogger("gents")
 
-    hfc.check_pulled()
+    hfc.check_pulled(show_progress=show_progress)
     logger.info(f"=============================================")
     logger.info(f"              HFCollection Info              ")
     logger.info(f"=============================================")
