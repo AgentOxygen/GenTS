@@ -759,10 +759,14 @@ class HFCollection:
         :type end_year: int
         :param glob_patterns: Selects which files the year filter applies to. Files
             matching none of the patterns pass through untouched; the default
-            ``["*"]`` applies the year filter to every file.
-        :type glob_patterns: list[str]
+            ``["*"]`` applies the year filter to every file. A single string is
+            also accepted.
+        :type glob_patterns: list[str] or str
         :rtype: HFCollection
         """
+        if type(glob_patterns) is str:
+            glob_patterns = [glob_patterns]
+
         self.check_pulled()
         filtered_path_map = {}
         for path in self.__hf_to_meta_map:

@@ -667,3 +667,16 @@ def test_slice_groups_allows_disjoint_patterns_across_calls(structured_case):
     assert len([key for key in groups if "[sorting_pivot]" in key]) == STRUCTURED_NUM_SUBDIRS * 2
     for key in groups:
         assert key.count("[sorting_pivot]") <= 1
+
+
+def test_include_years_accepts_a_single_string(long_case):
+    """A bare string glob behaves as a one-element list, not as a sequence of characters."""
+    input_head_dir, output_head_dir = long_case
+    hf_collection = HFCollection(input_head_dir)
+
+    as_string = hf_collection.include_years(CASE_START_YEAR, CASE_START_YEAR, glob_patterns="*.0000[0-5].nc")
+    as_list = hf_collection.include_years(CASE_START_YEAR, CASE_START_YEAR, glob_patterns=["*.0000[0-5].nc"])
+
+    assert list(as_string) == list(as_list)
+    # Every file the glob does not name passes through untouched.
+    assert len(as_string) == len(hf_collection)
