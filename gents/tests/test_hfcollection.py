@@ -572,3 +572,35 @@ def test_pull_metadata_returns_self(simple_case):
     assert hf_collection.is_pulled()
     # Contrast: the copy-returning transforms leave the receiver alone.
     assert hf_collection.exclude(["*.00001.nc"]) is not hf_collection
+
+
+def test_include_years_glob_patterns_are_selective(long_case):
+    """Files matching none of the glob patterns bypass the year filter entirely."""
+    input_head_dir, output_head_dir = long_case
+    hf_collection = HFCollection(input_head_dir)
+
+    # The first 6 monthly files are the only ones the year filter may touch.
+    selected = "*.0000[0-5].nc"
+    filtered = hf_collection.include_years(CASE_START_YEAR, CASE_START_YEAR, glob_patterns=[selected])
+
+    untouched = [path for path in hf_collection if not fnmatch.fnmatch(str(path), selected)]
+    assert len(untouched) > 0
+    for path in untouched:
+        assert path in filtered
+
+    # Every selected file here also falls in the kept year, so nothing is dropped.
+    assert len(filtered) == len(hf_collection)
+
+    # A year range excluding the selected files drops only those.
+    dropped = hf_collection.include_years(CASE_START_YEAR + 10, CASE_START_YEAR + 10, glob_patterns=[selected])
+    assert len(dropped) == len(hf_collection) - 6
+    for path in untouched:
+        assert path in dropped
+
+
+def test_include_years_default_applies_to_every_file(long_case):
+    """The default ['*'] leaves the year filter applying to the whole collection."""
+    input_head_dir, output_head_dir = long_case
+    hf_collection = HFCollection(input_head_dir)
+
+    assert len(hf_collection.include_years(CASE_START_YEAR, CASE_START_YEAR)) == 12

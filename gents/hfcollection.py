@@ -757,27 +757,30 @@ class HFCollection:
         :type start_year: int
         :param end_year: Last year in the range (inclusive).
         :type end_year: int
-        :param glob_patterns: Restricts which files the year filter applies to.
+        :param glob_patterns: Selects which files the year filter applies to. Files
+            matching none of the patterns pass through untouched; the default
+            ``["*"]`` applies the year filter to every file.
         :type glob_patterns: list[str]
         :rtype: HFCollection
         """
         self.check_pulled()
         filtered_path_map = {}
-        remove_paths = []
-        for pattern in glob_patterns:
-            for path in self.__hf_to_meta_map:
-                if fnmatch.fnmatch(path, pattern):
-                    meta_ds = self.__hf_to_meta_map[path]
-                    float_bounds = meta_ds.get_float_time_bounds()
-                    if float_bounds is not None:
-                        first_pair = np.ma.getdata(float_bounds)[0]
-                        midpoint = first_pair[0] + (first_pair[1] - first_pair[0]) / 2
-                        time = meta_ds.decode_time_bounds_values(midpoint)
-                    else:
-                        time = meta_ds.decode_time_values(np.ma.getdata(np.atleast_1d(meta_ds.get_float_times()))[0])
-                    
-                    if start_year <= time.year <= end_year:
-                        filtered_path_map[path] = self.__hf_to_meta_map[path]
+        for path in self.__hf_to_meta_map:
+            if not any(fnmatch.fnmatch(str(path), pattern) for pattern in glob_patterns):
+                filtered_path_map[path] = self.__hf_to_meta_map[path]
+                continue
+
+            meta_ds = self.__hf_to_meta_map[path]
+            float_bounds = meta_ds.get_float_time_bounds()
+            if float_bounds is not None:
+                first_pair = np.ma.getdata(float_bounds)[0]
+                midpoint = first_pair[0] + (first_pair[1] - first_pair[0]) / 2
+                time = meta_ds.decode_time_bounds_values(midpoint)
+            else:
+                time = meta_ds.decode_time_values(np.ma.getdata(np.atleast_1d(meta_ds.get_float_times()))[0])
+
+            if start_year <= time.year <= end_year:
+                filtered_path_map[path] = self.__hf_to_meta_map[path]
 
         logger.debug(f"Filtered from {start_year} to {end_year} applied to following glob patterns: '{glob_patterns}'")
         hf_groups = None
