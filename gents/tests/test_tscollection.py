@@ -558,3 +558,52 @@ def test_include_filters_on_variable(structured_case):
     for order in narrowed:
         assert order["primary_var"] == target_var
         assert "/0_dir/" in order["ts_path_template"]
+
+
+def test_filters_accept_glob_lists(structured_case):
+    """include/exclude take lists for both path and variable globs."""
+    input_head_dir, output_head_dir = structured_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+    all_vars = sorted({order["primary_var"] for order in ts_collection})
+    kept_vars, dropped_var = all_vars[:1], all_vars[-1]
+    assert kept_vars[0] != dropped_var
+
+    included = ts_collection.include(["*/0_dir/*", "*/1_dir/*"], kept_vars)
+    assert len(included) > 0
+    for order in included:
+        assert order["primary_var"] in kept_vars
+        assert "/0_dir/" in order["ts_path_template"] or "/1_dir/" in order["ts_path_template"]
+
+    excluded = ts_collection.exclude(["*/0_dir/*", "*/1_dir/*"], [dropped_var])
+    for order in excluded:
+        in_listed_dirs = "/0_dir/" in order["ts_path_template"] or "/1_dir/" in order["ts_path_template"]
+        assert not (in_listed_dirs and order["primary_var"] == dropped_var)
+    # 2_dir keeps every variable, including the one named in the exclude.
+    assert any(order["primary_var"] == dropped_var for order in excluded)
+
+
+def test_glob_list_equals_repeated_single_glob(structured_case):
+    """A two-element list matches the union of the two globs applied separately."""
+    input_head_dir, output_head_dir = structured_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+
+    as_list = ts_collection.include(["*/0_dir/*", "*/1_dir/*"])
+    union = {order["ts_path_template"] + order["primary_var"] for order in
+             list(ts_collection.include("*/0_dir/*")) + list(ts_collection.include("*/1_dir/*"))}
+
+    assert {order["ts_path_template"] + order["primary_var"] for order in as_list} == union
+
+
+def test_add_args_accepts_glob_lists(structured_case):
+    """The apply_*/add_args family takes lists too, so the whole API stays consistent."""
+    input_head_dir, output_head_dir = structured_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+    target_vars = sorted({order["primary_var"] for order in ts_collection})[:1]
+
+    applied = ts_collection.apply_compression(4, "zlib", ["*/0_dir/*", "*/1_dir/*"], target_vars)
+
+    compressed = [order for order in applied if order.get("complevel") == 4]
+    assert len(compressed) > 0
+    for order in compressed:
+        assert order["primary_var"] in target_vars
+        assert "/2_dir/" not in order["ts_path_template"]
