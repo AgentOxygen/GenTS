@@ -252,3 +252,41 @@ def test_cli_long_hf_slicing(long_case):
 
     ts_paths = find_files(output_head_dir, "*.nc")
     assert len(ts_paths) == LONG_TEST_NUM_HIST_FILES / 12 / 5
+
+def test_cli_exclude_filters_history_files(structured_case):
+    """--exclude reaches the HFCollection and keeps matching history files out of the output."""
+    input_head_dir, output_head_dir = structured_case
+    with patch.object(sys, "argv", ["run_gents", str(input_head_dir), "-o", str(output_head_dir),
+                                    "--exclude", "*/0_dir/*"]):
+        main()
+
+    ts_paths = find_files(output_head_dir, "*.nc")
+    assert len(ts_paths) > 0
+    for path in ts_paths:
+        assert "/0_dir/" not in str(path)
+
+
+def test_cli_include_narrows_to_matching_files(structured_case):
+    """--include overrides the config default, restricting output to the matched subtree."""
+    input_head_dir, output_head_dir = structured_case
+    with patch.object(sys, "argv", ["run_gents", str(input_head_dir), "-o", str(output_head_dir),
+                                    "--include", "*/0_dir/*"]):
+        main()
+
+    ts_paths = find_files(output_head_dir, "*.nc")
+    assert len(ts_paths) > 0
+    for path in ts_paths:
+        assert "/0_dir/" in str(path)
+
+
+def test_cli_append_keeps_config_filters(structured_case):
+    """--append adds to the bundled config's filters instead of replacing them."""
+    input_head_dir, output_head_dir = structured_case
+    with patch.object(sys, "argv", ["run_gents", str(input_head_dir), "-o", str(output_head_dir),
+                                    "--append", "--exclude", "*/0_dir/*"]):
+        main()
+
+    ts_paths = find_files(output_head_dir, "*.nc")
+    assert len(ts_paths) > 0
+    for path in ts_paths:
+        assert "/0_dir/" not in str(path)

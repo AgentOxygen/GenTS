@@ -225,7 +225,10 @@ run_gents <clone_head_dir> -o <out_dir> --model CESM3 \
 
 Flag semantics worth knowing: without `--append`, any `--include`/`--exclude` *replaces*
 the model config's filter lists and `--slice`/`--slice_start_year` replace its slicing
-batches; with `--append`, they are added on top. `--compression` requires `--level`.
+batches; with `--append`, the filters are added on top and the config's slicing batches
+are kept as-is (slicing is not additive — a second batch over the same pattern would
+mark a group twice). `--slice_start_year` overrides `start_year` in every batch either
+way. `--compression` requires `--level`.
 `--model` is case-insensitive; omitted → `gents_example.yaml`. Output dir defaults to
 the input dir (path swaps like `/hist/` → `/proc/tseries/` come from the YAML config).
 `--memory-limit` is in GB and applies **per TS worker**, so the process-wide ceiling is

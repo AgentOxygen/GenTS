@@ -4,6 +4,8 @@ import yaml
 from pathlib import Path
 from unittest.mock import patch
 from gents.cli import check_config, main
+from gents.hfcollection import find_files
+from gents.tests.test_cases import *
 import collections
 import collections.abc
 
@@ -138,3 +140,34 @@ def test_main_model_is_case_insensitive():
     with patch.object(sys, "argv", ["run_gents", "/data/input", "--model", "CESM3"]):
         with pytest.raises(FileNotFoundError):
             main()
+
+
+def test_every_mapped_model_config_exists():
+    """Every model --model accepts must map to a YAML file that is actually bundled."""
+    with patch.object(sys, "argv", ["run_gents", "/data/input", "--model", "cesm3"]):
+        with pytest.raises(FileNotFoundError) as exc:
+            main()
+    # The config resolved; only the (nonexistent) input directory is missing.
+    assert "gents_cesm3.yaml" not in str(exc.value)
+
+
+def test_unmapped_model_raises_value_error_not_file_error():
+    """A model with no bundled config gives the documented ValueError, not a FileNotFoundError."""
+    for model in ("cesm2", "e3sm"):
+        with patch.object(sys, "argv", ["run_gents", "/data/input", "--model", model]):
+            with pytest.raises(ValueError) as exc:
+                main()
+        assert model in str(exc.value).lower()
+
+
+def test_config_without_include_key_does_not_empty_collection(structured_case):
+    """A config omitting 'include' must leave the collection intact, not filter everything out."""
+    input_head_dir, output_head_dir = structured_case
+    config = yaml.safe_load((CONFIG_DIR / "gents_example.yaml").read_text())
+    del config["input_hf"]["include"]
+
+    with patch("gents.cli.yaml.safe_load", return_value=config):
+        with patch.object(sys, "argv", ["run_gents", str(input_head_dir), "-o", str(output_head_dir)]):
+            main()
+
+    assert len(find_files(output_head_dir, "*.nc")) > 0

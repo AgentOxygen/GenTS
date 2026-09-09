@@ -824,24 +824,37 @@ class HFCollection:
         :param start_year: Year to align windows to; ``None`` uses the collection's
             own earliest year.
         :type start_year: int or None
-        :param pattern: ``fnmatch`` glob restricting which groups are sliced.
-        :type pattern: str
+        :param pattern: One or more ``fnmatch`` globs restricting which groups are
+            sliced; a group matching none of them passes through unsliced. A
+            single string is also accepted.
+        :type pattern: list[str] or str
         :param time_alignment_method: How to pick a file's representative time:
             ``'midpoint'`` of its first time bound, ``'direct_time'`` (ignoring
             bounds), ``'start_bound'`` or ``'end_bound'``.
         :type time_alignment_method: str
         :rtype: HFCollection
-        :raises ValueError: If ``time_alignment_method`` is not one of those four.
+        :raises ValueError: If ``time_alignment_method`` is not one of those four,
+            or if ``pattern`` matches a group that a previous call already sliced.
         """
+        if type(pattern) is str:
+            pattern = [pattern]
+
         sliced_groups = {}
         self.check_pulled()
 
         for group in self.get_groups():
             hf_paths = self.get_groups()[group]
-            if not fnmatch.fnmatch(group, pattern):
+            if not any(fnmatch.fnmatch(group, glob) for glob in pattern):
                 sliced_groups[group] = hf_paths
                 continue
-            
+
+            if "[sorting_pivot]" in group:
+                raise ValueError(
+                    f"Group '{group}' has already been sliced, and slicing it again would "
+                    "mark it twice. Pass every pattern to a single slice_groups call, or "
+                    "use patterns that do not overlap across calls."
+                )
+
             if len(hf_paths) == 1:
                 sliced_groups[group] = hf_paths
                 warnings.warn("Cannot slice history file group of size 1.", RuntimeWarning)
