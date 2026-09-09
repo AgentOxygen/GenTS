@@ -757,27 +757,34 @@ class HFCollection:
         :type start_year: int
         :param end_year: Last year in the range (inclusive).
         :type end_year: int
-        :param glob_patterns: Restricts which files the year filter applies to.
-        :type glob_patterns: list[str]
+        :param glob_patterns: Selects which files the year filter applies to. Files
+            matching none of the patterns pass through untouched; the default
+            ``["*"]`` applies the year filter to every file. A single string is
+            also accepted.
+        :type glob_patterns: list[str] or str
         :rtype: HFCollection
         """
+        if type(glob_patterns) is str:
+            glob_patterns = [glob_patterns]
+
         self.check_pulled()
         filtered_path_map = {}
-        remove_paths = []
-        for pattern in glob_patterns:
-            for path in self.__hf_to_meta_map:
-                if fnmatch.fnmatch(path, pattern):
-                    meta_ds = self.__hf_to_meta_map[path]
-                    float_bounds = meta_ds.get_float_time_bounds()
-                    if float_bounds is not None:
-                        first_pair = np.ma.getdata(float_bounds)[0]
-                        midpoint = first_pair[0] + (first_pair[1] - first_pair[0]) / 2
-                        time = meta_ds.decode_time_bounds_values(midpoint)
-                    else:
-                        time = meta_ds.decode_time_values(np.ma.getdata(np.atleast_1d(meta_ds.get_float_times()))[0])
-                    
-                    if start_year <= time.year <= end_year:
-                        filtered_path_map[path] = self.__hf_to_meta_map[path]
+        for path in self.__hf_to_meta_map:
+            if not any(fnmatch.fnmatch(str(path), pattern) for pattern in glob_patterns):
+                filtered_path_map[path] = self.__hf_to_meta_map[path]
+                continue
+
+            meta_ds = self.__hf_to_meta_map[path]
+            float_bounds = meta_ds.get_float_time_bounds()
+            if float_bounds is not None:
+                first_pair = np.ma.getdata(float_bounds)[0]
+                midpoint = first_pair[0] + (first_pair[1] - first_pair[0]) / 2
+                time = meta_ds.decode_time_bounds_values(midpoint)
+            else:
+                time = meta_ds.decode_time_values(np.ma.getdata(np.atleast_1d(meta_ds.get_float_times()))[0])
+
+            if start_year <= time.year <= end_year:
+                filtered_path_map[path] = self.__hf_to_meta_map[path]
 
         logger.debug(f"Filtered from {start_year} to {end_year} applied to following glob patterns: '{glob_patterns}'")
         hf_groups = None
@@ -821,24 +828,37 @@ class HFCollection:
         :param start_year: Year to align windows to; ``None`` uses the collection's
             own earliest year.
         :type start_year: int or None
-        :param pattern: ``fnmatch`` glob restricting which groups are sliced.
-        :type pattern: str
+        :param pattern: One or more ``fnmatch`` globs restricting which groups are
+            sliced; a group matching none of them passes through unsliced. A
+            single string is also accepted.
+        :type pattern: list[str] or str
         :param time_alignment_method: How to pick a file's representative time:
             ``'midpoint'`` of its first time bound, ``'direct_time'`` (ignoring
             bounds), ``'start_bound'`` or ``'end_bound'``.
         :type time_alignment_method: str
         :rtype: HFCollection
-        :raises ValueError: If ``time_alignment_method`` is not one of those four.
+        :raises ValueError: If ``time_alignment_method`` is not one of those four,
+            or if ``pattern`` matches a group that a previous call already sliced.
         """
+        if type(pattern) is str:
+            pattern = [pattern]
+
         sliced_groups = {}
         self.check_pulled()
 
         for group in self.get_groups():
             hf_paths = self.get_groups()[group]
-            if not fnmatch.fnmatch(group, pattern):
+            if not any(fnmatch.fnmatch(group, glob) for glob in pattern):
                 sliced_groups[group] = hf_paths
                 continue
-            
+
+            if "[sorting_pivot]" in group:
+                raise ValueError(
+                    f"Group '{group}' has already been sliced, and slicing it again would "
+                    "mark it twice. Pass every pattern to a single slice_groups call, or "
+                    "use patterns that do not overlap across calls."
+                )
+
             if len(hf_paths) == 1:
                 sliced_groups[group] = hf_paths
                 warnings.warn("Cannot slice history file group of size 1.", RuntimeWarning)

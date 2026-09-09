@@ -405,6 +405,21 @@ def get_timestep_label(dt):
     return f"year_{int(years)}"
 
 
+def _matches_any(value, globs):
+    """
+    Returns whether ``value`` matches at least one ``fnmatch`` glob.
+
+    :param value: String to test, e.g. a history file path or a variable name.
+    :type value: str
+    :param globs: One or more glob patterns; a single string is also accepted.
+    :type globs: list[str] or str
+    :rtype: bool
+    """
+    if type(globs) is str:
+        globs = [globs]
+    return any(fnmatch.fnmatch(value, glob) for glob in globs)
+
+
 class TSCollection:
     """
     The set of time series generation orders derived from an ``HFCollection``.
@@ -636,47 +651,44 @@ class TSCollection:
         An order is kept if any of its source paths matches ``path_glob`` and its
         primary variable matches ``var_glob``.
 
-        :param path_glob: ``fnmatch`` glob applied to source history file paths.
-        :type path_glob: str
-        :param var_glob: ``fnmatch`` glob applied to primary variable names.
-        :type var_glob: str
+        :param path_glob: One or more ``fnmatch`` globs applied to source history
+            file paths; a single string is also accepted.
+        :type path_glob: list[str] or str
+        :param var_glob: One or more ``fnmatch`` globs applied to primary variable
+            names; a single string is also accepted.
+        :type var_glob: list[str] or str
         :rtype: TSCollection
         """
         filtered_orders = []
         for order_dict in copy.deepcopy(self.__orders):
-            path_matched = False
-            for path in order_dict["hf_paths"]:
-                if fnmatch.fnmatch(path, path_glob):
-                    path_matched = True
-                    break
-            
-            if path_matched and fnmatch.fnmatch(order_dict["primary_var"], var_glob):
+            path_matched = any(_matches_any(str(path), path_glob) for path in order_dict["hf_paths"])
+
+            if path_matched and _matches_any(order_dict["primary_var"], var_glob):
                 filtered_orders.append(order_dict)
         logger.debug(f"Inclusive filter(s) applied: '{var_glob}' to history files matching '{path_glob}'")
         return self.copy(ts_orders=filtered_orders)
 
-    def exclude(self, path_glob, var_glob=""):
+    def exclude(self, path_glob, var_glob="*"):
         """
         Returns a new collection with orders matching both filters removed.
 
         An order is dropped if any of its source paths matches ``path_glob`` and
-        its primary variable matches ``var_glob``.
+        its primary variable matches ``var_glob``. Both must match, so the
+        one-argument form drops every order under ``path_glob``.
 
-        :param path_glob: ``fnmatch`` glob applied to source history file paths.
-        :type path_glob: str
-        :param var_glob: ``fnmatch`` glob applied to primary variable names.
-        :type var_glob: str
+        :param path_glob: One or more ``fnmatch`` globs applied to source history
+            file paths; a single string is also accepted.
+        :type path_glob: list[str] or str
+        :param var_glob: One or more ``fnmatch`` globs applied to primary variable
+            names; a single string is also accepted.
+        :type var_glob: list[str] or str
         :rtype: TSCollection
         """
         filtered_orders = []
         for order_dict in copy.deepcopy(self.__orders):
-            path_unmatched = True
-            for path in order_dict["hf_paths"]:
-                if fnmatch.fnmatch(path, path_glob):
-                    path_unmatched = False
-                    break
-            
-            if path_unmatched and not fnmatch.fnmatch(order_dict["primary_var"], var_glob):
+            path_matched = any(_matches_any(str(path), path_glob) for path in order_dict["hf_paths"])
+
+            if not (path_matched and _matches_any(order_dict["primary_var"], var_glob)):
                 filtered_orders.append(order_dict)
         logger.debug(f"Exclusive filter(s) applied: '{var_glob}' to history files matching '{path_glob}'")
         return self.copy(ts_orders=filtered_orders)
@@ -688,10 +700,12 @@ class TSCollection:
         Arguments left ``None`` are not applied. The other ``apply_*`` methods
         are thin wrappers around this one.
 
-        :param path_glob: ``fnmatch`` glob applied to source history file paths.
-        :type path_glob: str
-        :param var_glob: ``fnmatch`` glob applied to primary variable names.
-        :type var_glob: str
+        :param path_glob: One or more ``fnmatch`` globs applied to source history
+            file paths; a single string is also accepted.
+        :type path_glob: list[str] or str
+        :param var_glob: One or more ``fnmatch`` globs applied to primary variable
+            names; a single string is also accepted.
+        :type var_glob: list[str] or str
         :param level: netCDF4 compression level (0-9).
         :type level: int or None
         :param alg: netCDF4 compression algorithm, e.g. ``'zlib'``.
@@ -705,13 +719,9 @@ class TSCollection:
         """
         new_orders = []
         for order_dict in copy.deepcopy(self.__orders):
-            path_matched = False
-            for path in order_dict["hf_paths"]:
-                if fnmatch.fnmatch(path, path_glob):
-                    path_matched = True
-                    break
+            path_matched = any(_matches_any(str(path), path_glob) for path in order_dict["hf_paths"])
 
-            if path_matched and fnmatch.fnmatch(order_dict["primary_var"], var_glob):
+            if path_matched and _matches_any(order_dict["primary_var"], var_glob):
                 if level is not None:
                     order_dict["complevel"] = level
                 if alg is not None:
@@ -736,17 +746,20 @@ class TSCollection:
         :type string_match: str
         :param string_swap: Replacement string.
         :type string_swap: str
-        :param path_glob: ``fnmatch`` glob applied to source history file paths.
-        :type path_glob: str
-        :param var_glob: ``fnmatch`` glob applied to primary variable names.
-        :type var_glob: str
+        :param path_glob: One or more ``fnmatch`` globs applied to source history
+            file paths; a single string is also accepted.
+        :type path_glob: list[str] or str
+        :param var_glob: One or more ``fnmatch`` globs applied to primary variable
+            names; a single string is also accepted.
+        :type var_glob: list[str] or str
         :rtype: TSCollection
         """
         new_orders = []
         for order_dict in copy.deepcopy(self.__orders):
-            for path in order_dict["hf_paths"]:
-                if fnmatch.fnmatch(path, path_glob):
-                    order_dict["ts_path_template"] = order_dict["ts_path_template"].replace(string_match, string_swap)
+            path_matched = any(_matches_any(str(path), path_glob) for path in order_dict["hf_paths"])
+
+            if path_matched and _matches_any(order_dict["primary_var"], var_glob):
+                order_dict["ts_path_template"] = order_dict["ts_path_template"].replace(string_match, string_swap)
             new_orders.append(order_dict)
     
         logger.debug(f"Path swap '{string_match}' -> '{string_swap}' to history files matching '{path_glob}' and variables matching '{var_glob}'.")
@@ -760,10 +773,12 @@ class TSCollection:
         :type level: int
         :param alg: netCDF4 compression algorithm, e.g. ``'zlib'``.
         :type alg: str
-        :param path_glob: ``fnmatch`` glob applied to source history file paths.
-        :type path_glob: str
-        :param var_glob: ``fnmatch`` glob applied to primary variable names.
-        :type var_glob: str
+        :param path_glob: One or more ``fnmatch`` globs applied to source history
+            file paths; a single string is also accepted.
+        :type path_glob: list[str] or str
+        :param var_glob: One or more ``fnmatch`` globs applied to primary variable
+            names; a single string is also accepted.
+        :type var_glob: list[str] or str
         :rtype: TSCollection
         """
         return self.add_args(path_glob=path_glob, var_glob=var_glob, level=level, alg=alg)
@@ -778,10 +793,12 @@ class TSCollection:
 
         :param target_bytes: Target chunk size in bytes.
         :type target_bytes: int
-        :param path_glob: ``fnmatch`` glob applied to source history file paths.
-        :type path_glob: str
-        :param var_glob: ``fnmatch`` glob applied to primary variable names.
-        :type var_glob: str
+        :param path_glob: One or more ``fnmatch`` globs applied to source history
+            file paths; a single string is also accepted.
+        :type path_glob: list[str] or str
+        :param var_glob: One or more ``fnmatch`` globs applied to primary variable
+            names; a single string is also accepted.
+        :type var_glob: list[str] or str
         :rtype: TSCollection
         """
         return self.add_args(path_glob=path_glob, var_glob=var_glob, chunk_target_bytes=target_bytes)
@@ -790,10 +807,12 @@ class TSCollection:
         """
         Enables overwriting of existing output for matching orders.
 
-        :param path_glob: ``fnmatch`` glob applied to source history file paths.
-        :type path_glob: str
-        :param var_glob: ``fnmatch`` glob applied to primary variable names.
-        :type var_glob: str
+        :param path_glob: One or more ``fnmatch`` globs applied to source history
+            file paths; a single string is also accepted.
+        :type path_glob: list[str] or str
+        :param var_glob: One or more ``fnmatch`` globs applied to primary variable
+            names; a single string is also accepted.
+        :type var_glob: list[str] or str
         :rtype: TSCollection
         """
         return self.add_args(path_glob=path_glob, var_glob=var_glob, overwrite=True)
@@ -805,13 +824,14 @@ class TSCollection:
 
         Orders that do not match ``var_glob`` are dropped, not just left alone.
 
-        :param var_glob: ``fnmatch`` glob applied to primary variable names.
-        :type var_glob: str
+        :param var_glob: One or more ``fnmatch`` globs applied to primary variable
+            names; a single string is also accepted.
+        :type var_glob: list[str] or str
         :rtype: TSCollection
         """
         new_orders = []
         for order_dict in copy.deepcopy(self.__orders):
-            if fnmatch.fnmatch(order_dict["primary_var"], var_glob):
+            if _matches_any(order_dict["primary_var"], var_glob):
                 dt = self.__hf_collection.get_timestep_delta(order_dict["hf_paths"][0])
                 timestep_label = get_timestep_label(dt)
 
@@ -825,10 +845,12 @@ class TSCollection:
         """
         Disables overwriting of existing output for matching orders.
 
-        :param path_glob: ``fnmatch`` glob applied to source history file paths.
-        :type path_glob: str
-        :param var_glob: ``fnmatch`` glob applied to primary variable names.
-        :type var_glob: str
+        :param path_glob: One or more ``fnmatch`` globs applied to source history
+            file paths; a single string is also accepted.
+        :type path_glob: list[str] or str
+        :param var_glob: One or more ``fnmatch`` globs applied to primary variable
+            names; a single string is also accepted.
+        :type var_glob: list[str] or str
         :rtype: TSCollection
         """
         return self.add_args(path_glob=path_glob, var_glob=var_glob, overwrite=False)

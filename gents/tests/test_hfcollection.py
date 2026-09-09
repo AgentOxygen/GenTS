@@ -320,13 +320,11 @@ def test_long_hf_slicing(long_case):
     offset = 2
     hf_coll1 = hf_collection.include_years(CASE_START_YEAR+offset, CASE_START_YEAR+offset+9)
     assert len(hf_coll1) == 120
-    hf_coll1 = hf_coll1.slice_groups(slice_size_years=10, start_year=None)
-    groups = hf_coll1.get_groups()
+    groups = hf_coll1.slice_groups(slice_size_years=10, start_year=None).get_groups()
     assert len(groups) == 1
     assert len(groups[list(groups)[0]]) == 120
 
-    hf_coll1 = hf_coll1.slice_groups(slice_size_years=10, start_year=CASE_START_YEAR)
-    groups = hf_coll1.get_groups()
+    groups = hf_coll1.slice_groups(slice_size_years=10, start_year=CASE_START_YEAR).get_groups()
     assert len(groups) == 2
     assert len(groups[list(groups)[0]]) == 120 - (offset*12)
 
@@ -572,3 +570,113 @@ def test_pull_metadata_returns_self(simple_case):
     assert hf_collection.is_pulled()
     # Contrast: the copy-returning transforms leave the receiver alone.
     assert hf_collection.exclude(["*.00001.nc"]) is not hf_collection
+
+
+def test_include_years_glob_patterns_are_selective(long_case):
+    """Files matching none of the glob patterns bypass the year filter entirely."""
+    input_head_dir, output_head_dir = long_case
+    hf_collection = HFCollection(input_head_dir)
+
+    # The first 6 monthly files are the only ones the year filter may touch.
+    selected = "*.0000[0-5].nc"
+    filtered = hf_collection.include_years(CASE_START_YEAR, CASE_START_YEAR, glob_patterns=[selected])
+
+    untouched = [path for path in hf_collection if not fnmatch.fnmatch(str(path), selected)]
+    assert len(untouched) > 0
+    for path in untouched:
+        assert path in filtered
+
+    # Every selected file here also falls in the kept year, so nothing is dropped.
+    assert len(filtered) == len(hf_collection)
+
+    # A year range excluding the selected files drops only those.
+    dropped = hf_collection.include_years(CASE_START_YEAR + 10, CASE_START_YEAR + 10, glob_patterns=[selected])
+    assert len(dropped) == len(hf_collection) - 6
+    for path in untouched:
+        assert path in dropped
+
+
+def test_include_years_default_applies_to_every_file(long_case):
+    """The default ['*'] leaves the year filter applying to the whole collection."""
+    input_head_dir, output_head_dir = long_case
+    hf_collection = HFCollection(input_head_dir)
+
+    assert len(hf_collection.include_years(CASE_START_YEAR, CASE_START_YEAR)) == 12
+
+
+def test_slice_groups_accepts_pattern_list(structured_case):
+    """pattern takes a list of globs; only groups matching one of them are sliced."""
+    input_head_dir, output_head_dir = structured_case
+    hf_collection = HFCollection(input_head_dir)
+
+    sliced = hf_collection.slice_groups(slice_size_years=1, pattern=["*/0_dir/*", "*/1_dir/*"])
+
+    pivoted = [key for key in sliced.get_groups() if "[sorting_pivot]" in key]
+    untouched = [key for key in sliced.get_groups() if "[sorting_pivot]" not in key]
+    assert len(pivoted) == STRUCTURED_NUM_SUBDIRS * 2
+    assert len(untouched) == STRUCTURED_NUM_SUBDIRS
+    for key in pivoted:
+        assert "/0_dir/" in key or "/1_dir/" in key
+    for key in untouched:
+        assert "/2_dir/" in key
+
+
+def test_slice_groups_pattern_string_still_accepted(structured_case):
+    """The single-string form is unchanged, and equals the one-element list form."""
+    input_head_dir, output_head_dir = structured_case
+    hf_collection = HFCollection(input_head_dir)
+
+    as_string = hf_collection.slice_groups(slice_size_years=1, pattern="*/0_dir/*").get_groups()
+    as_list = hf_collection.slice_groups(slice_size_years=1, pattern=["*/0_dir/*"]).get_groups()
+
+    assert list(as_string) == list(as_list)
+    assert len([key for key in as_string if "[sorting_pivot]" in key]) == STRUCTURED_NUM_SUBDIRS
+
+
+def test_slice_groups_overlapping_patterns_slice_once(structured_case):
+    """Overlapping globs in one call cannot double-slice a group."""
+    input_head_dir, output_head_dir = structured_case
+    hf_collection = HFCollection(input_head_dir)
+
+    sliced = hf_collection.slice_groups(slice_size_years=1, pattern=["*", "*/0_dir/*"])
+
+    for key in sliced.get_groups():
+        assert key.count("[sorting_pivot]") == 1
+
+
+def test_slice_groups_rejects_reslicing_a_sliced_group(structured_case):
+    """Re-slicing an already-sliced group raises where the mistake is, not downstream."""
+    input_head_dir, output_head_dir = structured_case
+    sliced = HFCollection(input_head_dir).slice_groups(slice_size_years=1, pattern="*/0_dir/*")
+
+    with pytest.raises(ValueError) as exc:
+        sliced.slice_groups(slice_size_years=1, pattern="*")
+
+    assert "already been sliced" in str(exc.value)
+
+
+def test_slice_groups_allows_disjoint_patterns_across_calls(structured_case):
+    """Slicing separate subtrees in separate calls stays legal, one marker per key."""
+    input_head_dir, output_head_dir = structured_case
+    hf_collection = HFCollection(input_head_dir)
+
+    sliced = hf_collection.slice_groups(slice_size_years=1, pattern="*/0_dir/*")
+    sliced = sliced.slice_groups(slice_size_years=1, pattern="*/1_dir/*")
+
+    groups = sliced.get_groups()
+    assert len([key for key in groups if "[sorting_pivot]" in key]) == STRUCTURED_NUM_SUBDIRS * 2
+    for key in groups:
+        assert key.count("[sorting_pivot]") <= 1
+
+
+def test_include_years_accepts_a_single_string(long_case):
+    """A bare string glob behaves as a one-element list, not as a sequence of characters."""
+    input_head_dir, output_head_dir = long_case
+    hf_collection = HFCollection(input_head_dir)
+
+    as_string = hf_collection.include_years(CASE_START_YEAR, CASE_START_YEAR, glob_patterns="*.0000[0-5].nc")
+    as_list = hf_collection.include_years(CASE_START_YEAR, CASE_START_YEAR, glob_patterns=["*.0000[0-5].nc"])
+
+    assert list(as_string) == list(as_list)
+    # Every file the glob does not name passes through untouched.
+    assert len(as_string) == len(hf_collection)

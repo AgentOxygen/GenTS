@@ -112,7 +112,7 @@ def parse_arguments():
         "-m", "--model",
         type=str,
         default=None,
-        help="Specify a model default GenTS configuration to use: 'CESM3', 'CESM2', 'E3SM'. (Default None)"
+        help="Specify a model default GenTS configuration to use: 'CESM3'. (Default None)"
     )
     parser.add_argument(
         "--exclude",
@@ -203,8 +203,6 @@ def main():
     model_config_files = {
         None: "gents_example.yaml",
         "cesm3": "gents_cesm3.yaml",
-        "cesm2": "gents_cesm2.yaml",
-        "e3sm": "gents_e3sm.yaml",
     }
 
     if args.model not in model_config_files:
@@ -235,19 +233,12 @@ def main():
         if len(args.exclude) > 0:
             hf_exclude = args.exclude
 
-    hfc = hfc.include(hf_include).exclude(hf_exclude)
+    if len(hf_include) > 0:
+        hfc = hfc.include(hf_include)
+    hfc = hfc.exclude(hf_exclude)
 
-    if "slicing" in yaml_config["input_hf"]:
-        slice_batches = yaml_config["input_hf"]["slicing"]
-    else:
-        slice_batches = []
-    
-    if args.append:
-        slice_batches.append({
-            "slice_size_years": args.slice,
-            "start_year": args.slice_start_year
-        })
-    else:
+    slice_batches = yaml_config["input_hf"].get("slicing", [])
+    if not args.append or len(slice_batches) == 0:
         slice_batches = [{
             "slice_size_years": args.slice,
             "start_year": args.slice_start_year

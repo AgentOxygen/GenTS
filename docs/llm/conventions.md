@@ -47,7 +47,11 @@
   `HFCollection.slice_groups` and `TSCollection.update_ts_orders`. Both sides parse it
   literally; change it in both places or nowhere.
 - **All user-facing filters are `fnmatch` globs** applied to *absolute path strings*
-  (or variable names for `var_glob`). Not regex, not `pathlib.match`.
+  (or variable names for `var_glob`). Not regex, not `pathlib.match`. Every glob
+  parameter takes **either a single string or a list of them**, normalised at the top
+  of the method (`if type(x) is str: x = [x]`) and matched with `any(...)`; a new filter
+  must accept both. An empty list matches nothing, so `include([])` empties a collection
+  while `exclude([])` is a no-op — `cli.main` guards the include path accordingly.
 - **Only `GenTSDataStore` opens netCDF files** in the *pipeline*. Never instantiate
   `netCDF4.Dataset` directly outside `datastore.py` — except under `gents/conformity/`,
   which is not pipeline code: `case_builder.py` needs low-level `createVariable` control
@@ -183,10 +187,6 @@ violated by a well-meaning refactor.
   `month_1/`-style frequency directories despite the config asking for them, and any
   CLI-driven output fails the conformity check for it. Either wire the key up in
   `cli.main` or drop it from the YAML.
-- **CLI references missing configs.** `cli.main` maps `--model cesm2` →
-  `gents_cesm2.yaml` and `--model e3sm` → `gents_e3sm.yaml`, but only
-  `gents_example.yaml` and `gents_cesm3.yaml` exist in `gents/configs/`. Selecting
-  cesm2/e3sm currently dies with `FileNotFoundError` at `open()`, not a friendly error.
 - **`calculate_year_slices` quirks:** the guard's error message is inverted
   ("Maximum year cannot exceed minimum year" fires when max < min), and the early
   return triggers when `slice_size_years >= max_year - min_year`, so a span exactly
@@ -255,6 +255,24 @@ violated by a well-meaning refactor.
   which only works for simulations whose calendar years actually start near 0.
 
 ## Resolved since the last revision (don't re-document as bugs)
+
+- **CLI referenced missing configs.** `cli.main` mapped `--model cesm2`/`e3sm` to YAML
+  files that were never bundled, dying with `FileNotFoundError` at `open()`. The phantom
+  entries are gone, so those models now hit the documented `ValueError`; `--help` lists
+  only `CESM3`. Re-add an entry only together with its YAML file.
+- **`TSCollection.exclude` dropped on OR, not AND.** It kept an order only when the path
+  *and* variable both failed to match, so `exclude("*", "TEMP")` emptied the collection.
+  It now drops exactly the intersection its docstring describes, and `var_glob` defaults
+  to `"*"` like `include`.
+- **`include_years` glob patterns were not selective.** Files matching no pattern were
+  dropped instead of passing through untouched.
+- **`--append` crashed on every bundled config.** It appended a second slicing batch over
+  the same `pattern: "*"`, double-marking group keys with `[sorting_pivot]` and failing in
+  `update_ts_orders` with `ValueError: too many values to unpack`. Slicing is not additive:
+  `--append` now keeps the config's slicing batches. `slice_groups` also rejects re-slicing
+  an already-sliced group rather than producing keys no consumer can parse.
+- **`apply_path_swap` ignored `var_glob`.** The parameter was accepted, documented, and
+  logged, but never matched on; the swap applied to every variable under a matching path.
 
 - **`EMFILE` on wide streams.** `MHFDataset` used to open every file of a group at once,
   so a ~1800-file daily stream died with `OSError: [Errno 24] Too many open files`. It now

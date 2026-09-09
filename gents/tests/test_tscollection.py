@@ -508,3 +508,131 @@ def test_execute_no_data_never_reads_primary_data(simple_case):
         ts_collection.execute(no_data=True, show_progress=False)
     assert not any(name.startswith("VAR") for name in RecordingDataStore.accessed)
     clear_output_dir(output_head_dir)
+
+
+def test_exclude_requires_both_filters_to_match(structured_case):
+    """exclude() drops an order only when the path AND the variable match, per its docstring."""
+    input_head_dir, output_head_dir = structured_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+
+    def labels(tsc):
+        return {(("0_dir" in order["ts_path_template"]), order["primary_var"]) for order in tsc}
+
+    everything = labels(ts_collection)
+    target_var = sorted(var for _, var in everything)[0]
+    assert len(everything) > 1
+
+    # Both filters together remove only the intersection, not the union.
+    narrowed = labels(ts_collection.exclude("*/0_dir/*", target_var))
+    assert (True, target_var) not in narrowed
+    assert (False, target_var) in narrowed
+    assert any(in_dir for in_dir, _ in narrowed)
+
+    # A variable filter with a catch-all path glob must not empty the collection.
+    var_only = labels(ts_collection.exclude("*", target_var))
+    assert var_only == {entry for entry in everything if entry[1] != target_var}
+    assert len(var_only) > 0
+
+
+def test_exclude_single_argument_drops_whole_paths(structured_case):
+    """The one-argument form still drops every order under the matched path."""
+    input_head_dir, output_head_dir = structured_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+
+    remaining = ts_collection.exclude("*/0_dir/*")
+
+    assert len(remaining) < len(ts_collection)
+    for order in remaining:
+        assert "/0_dir/" not in order["ts_path_template"]
+
+
+def test_include_filters_on_variable(structured_case):
+    """include() keeps only orders matching both the path and variable globs."""
+    input_head_dir, output_head_dir = structured_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+    target_var = sorted({order["primary_var"] for order in ts_collection})[0]
+
+    narrowed = ts_collection.include("*/0_dir/*", target_var)
+
+    assert len(narrowed) > 0
+    for order in narrowed:
+        assert order["primary_var"] == target_var
+        assert "/0_dir/" in order["ts_path_template"]
+
+
+def test_filters_accept_glob_lists(structured_case):
+    """include/exclude take lists for both path and variable globs."""
+    input_head_dir, output_head_dir = structured_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+    all_vars = sorted({order["primary_var"] for order in ts_collection})
+    kept_vars, dropped_var = all_vars[:1], all_vars[-1]
+    assert kept_vars[0] != dropped_var
+
+    included = ts_collection.include(["*/0_dir/*", "*/1_dir/*"], kept_vars)
+    assert len(included) > 0
+    for order in included:
+        assert order["primary_var"] in kept_vars
+        assert "/0_dir/" in order["ts_path_template"] or "/1_dir/" in order["ts_path_template"]
+
+    excluded = ts_collection.exclude(["*/0_dir/*", "*/1_dir/*"], [dropped_var])
+    for order in excluded:
+        in_listed_dirs = "/0_dir/" in order["ts_path_template"] or "/1_dir/" in order["ts_path_template"]
+        assert not (in_listed_dirs and order["primary_var"] == dropped_var)
+    # 2_dir keeps every variable, including the one named in the exclude.
+    assert any(order["primary_var"] == dropped_var for order in excluded)
+
+
+def test_glob_list_equals_repeated_single_glob(structured_case):
+    """A two-element list matches the union of the two globs applied separately."""
+    input_head_dir, output_head_dir = structured_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+
+    as_list = ts_collection.include(["*/0_dir/*", "*/1_dir/*"])
+    union = {order["ts_path_template"] + order["primary_var"] for order in
+             list(ts_collection.include("*/0_dir/*")) + list(ts_collection.include("*/1_dir/*"))}
+
+    assert {order["ts_path_template"] + order["primary_var"] for order in as_list} == union
+
+
+def test_add_args_accepts_glob_lists(structured_case):
+    """The apply_*/add_args family takes lists too, so the whole API stays consistent."""
+    input_head_dir, output_head_dir = structured_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+    target_vars = sorted({order["primary_var"] for order in ts_collection})[:1]
+
+    applied = ts_collection.apply_compression(4, "zlib", ["*/0_dir/*", "*/1_dir/*"], target_vars)
+
+    compressed = [order for order in applied if order.get("complevel") == 4]
+    assert len(compressed) > 0
+    for order in compressed:
+        assert order["primary_var"] in target_vars
+        assert "/2_dir/" not in order["ts_path_template"]
+
+
+def test_apply_path_swap_honors_var_glob(structured_case):
+    """apply_path_swap swaps only orders whose variable matches var_glob."""
+    input_head_dir, output_head_dir = structured_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+    target_var = sorted({order["primary_var"] for order in ts_collection})[0]
+
+    swapped = ts_collection.apply_path_swap("/0_dir/", "/SWAPPED/", var_glob=target_var)
+
+    hits = [order for order in swapped if "/SWAPPED/" in order["ts_path_template"]]
+    assert len(hits) > 0
+    for order in hits:
+        assert order["primary_var"] == target_var
+    # Orders for other variables under the same path keep the original template.
+    others = [order for order in swapped
+              if order["primary_var"] != target_var and "/0_dir/" in order["ts_path_template"]]
+    assert len(others) > 0
+
+
+def test_apply_path_swap_default_var_glob_swaps_every_variable(structured_case):
+    """The default var_glob='*' leaves the path-only behaviour of existing callers intact."""
+    input_head_dir, output_head_dir = structured_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+
+    swapped = ts_collection.apply_path_swap("/0_dir/", "/SWAPPED/")
+
+    expected = sum("/0_dir/" in order["ts_path_template"] for order in ts_collection)
+    assert sum("/SWAPPED/" in order["ts_path_template"] for order in swapped) == expected
