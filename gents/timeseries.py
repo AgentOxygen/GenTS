@@ -756,7 +756,9 @@ class TSCollection:
         """
         new_orders = []
         for order_dict in copy.deepcopy(self.__orders):
-            if any(_matches_any(str(path), path_glob) for path in order_dict["hf_paths"]):
+            path_matched = any(_matches_any(str(path), path_glob) for path in order_dict["hf_paths"])
+
+            if path_matched and _matches_any(order_dict["primary_var"], var_glob):
                 order_dict["ts_path_template"] = order_dict["ts_path_template"].replace(string_match, string_swap)
             new_orders.append(order_dict)
     

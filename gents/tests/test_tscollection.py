@@ -607,3 +607,32 @@ def test_add_args_accepts_glob_lists(structured_case):
     for order in compressed:
         assert order["primary_var"] in target_vars
         assert "/2_dir/" not in order["ts_path_template"]
+
+
+def test_apply_path_swap_honors_var_glob(structured_case):
+    """apply_path_swap swaps only orders whose variable matches var_glob."""
+    input_head_dir, output_head_dir = structured_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+    target_var = sorted({order["primary_var"] for order in ts_collection})[0]
+
+    swapped = ts_collection.apply_path_swap("/0_dir/", "/SWAPPED/", var_glob=target_var)
+
+    hits = [order for order in swapped if "/SWAPPED/" in order["ts_path_template"]]
+    assert len(hits) > 0
+    for order in hits:
+        assert order["primary_var"] == target_var
+    # Orders for other variables under the same path keep the original template.
+    others = [order for order in swapped
+              if order["primary_var"] != target_var and "/0_dir/" in order["ts_path_template"]]
+    assert len(others) > 0
+
+
+def test_apply_path_swap_default_var_glob_swaps_every_variable(structured_case):
+    """The default var_glob='*' leaves the path-only behaviour of existing callers intact."""
+    input_head_dir, output_head_dir = structured_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+
+    swapped = ts_collection.apply_path_swap("/0_dir/", "/SWAPPED/")
+
+    expected = sum("/0_dir/" in order["ts_path_template"] for order in ts_collection)
+    assert sum("/SWAPPED/" in order["ts_path_template"] for order in swapped) == expected
