@@ -655,12 +655,13 @@ class TSCollection:
         logger.debug(f"Inclusive filter(s) applied: '{var_glob}' to history files matching '{path_glob}'")
         return self.copy(ts_orders=filtered_orders)
 
-    def exclude(self, path_glob, var_glob=""):
+    def exclude(self, path_glob, var_glob="*"):
         """
         Returns a new collection with orders matching both filters removed.
 
         An order is dropped if any of its source paths matches ``path_glob`` and
-        its primary variable matches ``var_glob``.
+        its primary variable matches ``var_glob``. Both must match, so the
+        one-argument form drops every order under ``path_glob``.
 
         :param path_glob: ``fnmatch`` glob applied to source history file paths.
         :type path_glob: str
@@ -670,13 +671,13 @@ class TSCollection:
         """
         filtered_orders = []
         for order_dict in copy.deepcopy(self.__orders):
-            path_unmatched = True
+            path_matched = False
             for path in order_dict["hf_paths"]:
                 if fnmatch.fnmatch(path, path_glob):
-                    path_unmatched = False
+                    path_matched = True
                     break
-            
-            if path_unmatched and not fnmatch.fnmatch(order_dict["primary_var"], var_glob):
+
+            if not (path_matched and fnmatch.fnmatch(order_dict["primary_var"], var_glob)):
                 filtered_orders.append(order_dict)
         logger.debug(f"Exclusive filter(s) applied: '{var_glob}' to history files matching '{path_glob}'")
         return self.copy(ts_orders=filtered_orders)
