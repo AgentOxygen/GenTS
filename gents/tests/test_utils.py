@@ -136,3 +136,16 @@ def test_hfc_info_logger(structured_case, log_output_dir):
                 info_output_found = True
                 break
         assert info_output_found
+
+def test_log_hfcollection_info_show_progress_reaches_metadata_pull(simple_case):
+    """show_progress=False must also silence the 'Pulling Metadata' bar that check_pulled() triggers."""
+    from unittest.mock import patch
+
+    input_head_dir, output_head_dir = simple_case
+    hf_collection = HFCollection(input_head_dir)
+    assert not hf_collection.is_pulled()
+
+    with patch("gents.hfcollection.ProgressBar") as mock_bar:
+        log_hfcollection_info(hf_collection, show_progress=False)
+
+    assert mock_bar.call_args.kwargs["quiet"] is True

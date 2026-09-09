@@ -533,12 +533,16 @@ class HFCollection:
         """
         return self.__hf_dir
 
-    def check_pulled(self):
+    def check_pulled(self, show_progress=True):
         """
         Pulls metadata if it has not been pulled already.
+
+        :param show_progress: Forwarded to :meth:`pull_metadata`; if ``False``,
+            suppress the stdout progress bar of a pull triggered from here.
+        :type show_progress: bool
         """
         if not self.is_pulled():
-            self.pull_metadata()
+            self.pull_metadata(show_progress=show_progress)
 
     def copy(self, num_processes=None, meta_map=None, hf_groups=None, step_map=None, multistep_slice_map=None):
         """
