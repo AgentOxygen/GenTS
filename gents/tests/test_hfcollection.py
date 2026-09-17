@@ -680,3 +680,81 @@ def test_include_years_accepts_a_single_string(long_case):
     assert list(as_string) == list(as_list)
     # Every file the glob does not name passes through untouched.
     assert len(as_string) == len(hf_collection)
+
+
+def test_get_time_boundary_num_matches_get_year_boundary_num(long_case):
+    """get_time_boundary_num() at month=1, day=1 agrees with get_year_boundary_num()."""
+    input_head_dir, output_head_dir = long_case
+    hf_collection = HFCollection(input_head_dir).pull_metadata()
+    meta = hf_collection[list(hf_collection)[0]]
+    units, calendar = meta.get_time_units(), meta.get_time_calendar()
+
+    for year in (CASE_START_YEAR, CASE_START_YEAR + 5, 0):
+        assert get_time_boundary_num(units, calendar, year) == get_year_boundary_num(year, units, calendar)
+
+
+def test_include_time_matches_include_years(long_case):
+    """include_time(start_year, end_year + 1) reproduces include_years(start_year, end_year)."""
+    input_head_dir, output_head_dir = long_case
+    hf_collection = HFCollection(input_head_dir)
+
+    for start_year, end_year in [(CASE_START_YEAR, CASE_START_YEAR), (CASE_START_YEAR, CASE_START_YEAR + 1), (CASE_START_YEAR + 5, CASE_START_YEAR + 8)]:
+        via_years = hf_collection.include_years(start_year, end_year)
+        via_time = hf_collection.include_time(start_year, end_year + 1)
+        assert list(via_years) == list(via_time)
+
+
+def test_include_time_glob_patterns_are_selective(long_case):
+    """Files matching none of the glob patterns bypass the date filter entirely."""
+    input_head_dir, output_head_dir = long_case
+    hf_collection = HFCollection(input_head_dir)
+
+    selected = "*.0000[0-5].nc"
+    filtered = hf_collection.include_time(CASE_START_YEAR, CASE_START_YEAR + 1, glob_patterns=[selected])
+
+    untouched = [path for path in hf_collection if not fnmatch.fnmatch(str(path), selected)]
+    assert len(untouched) > 0
+    for path in untouched:
+        assert path in filtered
+    assert len(filtered) == len(hf_collection)
+
+    dropped = hf_collection.include_time(CASE_START_YEAR + 10, CASE_START_YEAR + 11, glob_patterns=[selected])
+    assert len(dropped) == len(hf_collection) - 6
+    for path in untouched:
+        assert path in dropped
+
+
+def test_include_time_open_ended_bounds(long_case):
+    """A None bound means no lower/upper limit on that side."""
+    input_head_dir, output_head_dir = long_case
+    hf_collection = HFCollection(input_head_dir)
+
+    assert len(hf_collection.include_time(None, CASE_START_YEAR + 1)) == 12
+    assert len(hf_collection.include_time(CASE_START_YEAR, None)) == len(hf_collection)
+    assert len(hf_collection.include_time(None, None)) == len(hf_collection)
+
+
+def test_include_time_accepts_a_single_string(long_case):
+    """A bare string glob behaves as a one-element list, not as a sequence of characters."""
+    input_head_dir, output_head_dir = long_case
+    hf_collection = HFCollection(input_head_dir)
+
+    as_string = hf_collection.include_time(CASE_START_YEAR, CASE_START_YEAR + 1, glob_patterns="*.0000[0-5].nc")
+    as_list = hf_collection.include_time(CASE_START_YEAR, CASE_START_YEAR + 1, glob_patterns=["*.0000[0-5].nc"])
+
+    assert list(as_string) == list(as_list)
+    assert len(as_string) == len(hf_collection)
+
+
+def test_include_time_month_granularity(long_case):
+    """include_time()'s month/day arguments give it finer-than-a-year selectivity."""
+    input_head_dir, output_head_dir = long_case
+    hf_collection = HFCollection(input_head_dir)
+
+    # Only the first half of CASE_START_YEAR (6 monthly files).
+    filtered = hf_collection.include_time(CASE_START_YEAR, CASE_START_YEAR, end_month=7)
+    assert len(filtered) == 6
+
+    # Only the second half.
+    filtered = hf_collection.include_time(CASE_START_YEAR, CASE_START_YEAR + 1, start_month=7, end_month=1)
+    assert len(filtered) == 6

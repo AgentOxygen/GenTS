@@ -116,16 +116,39 @@ def sort_hf_groups(hf_paths, delimiter=".", substring_index=2):
     return hf_groups
 
 
+def get_time_boundary_num(units, calendar, year, month=1, day=1):
+    """
+    Returns the raw time value of a calendar date under the given time reference.
+
+    :param units: CF time units the result is expressed in.
+    :type units: str
+    :param calendar: CF calendar name.
+    :type calendar: str
+    :param year: Calendar year of the boundary.
+    :type year: int
+    :param month: Calendar month of the boundary.
+    :type month: int
+    :param day: Calendar day of the boundary.
+    :type day: int
+    :returns: Boundary expressed as a raw time value.
+    :rtype: float
+    """
+    for candidate_year in (year, year + 1):
+        try:
+            boundary = cftime.datetime(candidate_year, month, day, calendar=calendar)
+            return cftime.date2num(boundary, units, calendar=calendar)
+        except ValueError:
+            continue
+    raise ValueError(f"Cannot represent {year}-{month:02d}-{day:02d} (or year {year + 1}) in calendar '{calendar}'.")
+
+
 def get_year_boundary_num(year, units, calendar):
     """
     Returns the raw time value of midnight, January 1 of ``year`` under the
     given time reference.
 
-    Comparing raw time values against these boundaries reproduces year-based
-    tests (``start <= time.year <= end``) without decoding every time step. A
-    year the calendar cannot represent (year 0 in a ``standard`` calendar)
-    steps forward to the nearest representable year, which selects the same set
-    of times: no time value can fall inside the missing year.
+    Thin wrapper around :func:`get_time_boundary_num` for the calendar-year
+    case.
 
     :param year: Calendar year of the boundary.
     :type year: int
@@ -136,13 +159,7 @@ def get_year_boundary_num(year, units, calendar):
     :returns: Boundary expressed as a raw time value.
     :rtype: float
     """
-    for candidate_year in (year, year + 1):
-        try:
-            boundary = cftime.datetime(candidate_year, 1, 1, calendar=calendar)
-            return cftime.date2num(boundary, units, calendar=calendar)
-        except ValueError:
-            continue
-    raise ValueError(f"Cannot represent year {year} (or {year + 1}) in calendar '{calendar}'.")
+    return get_time_boundary_num(units, calendar, year)
 
 
 def get_year_bounds(hf_to_meta_map):
@@ -749,9 +766,11 @@ class HFCollection:
         """
         Returns a new collection holding only files within a year range.
 
-        A file's year is the midpoint of its first time bound, or its first time
-        value when it has no bounds. Metadata is pulled if necessary, so prefer
-        :meth:`include` when a path filter would do.
+        Thin wrapper around :meth:`include_time` for the calendar-year case:
+        equivalent to ``include_time(start_year, end_year + 1,
+        glob_patterns=glob_patterns)``, i.e. every representable instant from
+        the first moment of ``start_year`` up to (but not including) the first
+        moment of the year after ``end_year``.
 
         :param start_year: First year in the range (inclusive).
         :type start_year: int
@@ -761,6 +780,35 @@ class HFCollection:
             matching none of the patterns pass through untouched; the default
             ``["*"]`` applies the year filter to every file. A single string is
             also accepted.
+        :type glob_patterns: list[str] or str
+        :rtype: HFCollection
+        """
+        return self.include_time(start_year, end_year + 1, glob_patterns=glob_patterns)
+
+    def include_time(self, start_year, end_year, start_month=1, start_day=1, end_month=1, end_day=1, glob_patterns=["*"]):
+        """
+        Returns a new collection holding only files within a date range.
+
+        :param start_year: Calendar year of the start of the range (inclusive),
+            or ``None`` for no lower bound (``start_month``/``start_day`` are
+            ignored in that case).
+        :type start_year: int or None
+        :param end_year: Calendar year of the end of the range (exclusive), or
+            ``None`` for no upper bound (``end_month``/``end_day`` are ignored
+            in that case).
+        :type end_year: int or None
+        :param start_month: Calendar month of the start of the range.
+        :type start_month: int
+        :param start_day: Calendar day of the start of the range.
+        :type start_day: int
+        :param end_month: Calendar month of the end of the range.
+        :type end_month: int
+        :param end_day: Calendar day of the end of the range.
+        :type end_day: int
+        :param glob_patterns: Selects which files the date filter applies to.
+            Files matching none of the patterns pass through untouched; the
+            default ``["*"]`` applies the filter to every file. A single string
+            is also accepted.
         :type glob_patterns: list[str] or str
         :rtype: HFCollection
         """
@@ -779,14 +827,20 @@ class HFCollection:
             if float_bounds is not None:
                 first_pair = np.ma.getdata(float_bounds)[0]
                 midpoint = first_pair[0] + (first_pair[1] - first_pair[0]) / 2
-                time = meta_ds.decode_time_bounds_values(midpoint)
+                ref_units = meta_ds.get_time_bounds_units()
+                ref_calendar = meta_ds.get_time_bounds_calendar()
             else:
-                time = meta_ds.decode_time_values(np.ma.getdata(np.atleast_1d(meta_ds.get_float_times()))[0])
+                midpoint = np.ma.getdata(np.atleast_1d(meta_ds.get_float_times()))[0]
+                ref_units = meta_ds.get_time_units()
+                ref_calendar = meta_ds.get_time_calendar()
 
-            if start_year <= time.year <= end_year:
+            lower_num = -np.inf if start_year is None else get_time_boundary_num(ref_units, ref_calendar, start_year, start_month, start_day)
+            upper_num = np.inf if end_year is None else get_time_boundary_num(ref_units, ref_calendar, end_year, end_month, end_day)
+
+            if lower_num <= midpoint < upper_num:
                 filtered_path_map[path] = self.__hf_to_meta_map[path]
 
-        logger.debug(f"Filtered from {start_year} to {end_year} applied to following glob patterns: '{glob_patterns}'")
+        logger.debug(f"Filtered from {start_year}-{start_month:02d}-{start_day:02d} to {end_year}-{end_month:02d}-{end_day:02d} applied to following glob patterns: '{glob_patterns}'")
         hf_groups = None
         if self.__hf_groups is not None:
             hf_groups = sort_hf_groups(list(filtered_path_map.keys()))
