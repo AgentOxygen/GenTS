@@ -25,6 +25,9 @@ MIXED_TS_NUM_TEST_HIST_FILES = 10
 LONG_TEST_NUM_HIST_FILES = 240
 MS_LARGE_NUM_TEST_HIST_FILES = 4
 MS_LARGE_NUM_TIMESTEPS = 15
+CONTINUED_INITIAL_NUM_HIST_FILES = 12
+CONTINUED_EXTEND_NUM_HIST_FILES = 12
+CONTINUED_NUM_VARS = 2
 
 
 def generate_history_file(
@@ -483,7 +486,31 @@ def extraneous_file_case(tmp_path_factory):
     hf_paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(SIMPLE_NUM_TEST_HIST_FILES)]
     for file_index, path in enumerate(hf_paths):
         generate_history_file(path, [(file_index+0.5)*30], [[file_index*30, (file_index+1)*30]])
-    
+
     generate_history_file(f"{head_hf_dir}/extraneous.nc", [0], [[0,0]])
 
     return head_hf_dir, head_ts_dir
+
+
+@pytest.fixture(scope="function")
+def continued_case(tmp_path_factory):
+    """
+    12 monthly history files, plus a callable to append more files continuing
+    the same monthly time axis, simulating a CESM run resumed from a restart.
+    """
+    head_hf_dir = tmp_path_factory.mktemp("continued_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("continued_timeseries_files")
+
+    def write_batch(start_index, count):
+        paths = [f"{head_hf_dir}/testing.hf.{str(index).zfill(5)}.nc" for index in range(start_index, start_index + count)]
+        for file_index, path in zip(range(start_index, start_index + count), paths):
+            generate_history_file(path, [(file_index+0.5)*30], [[file_index*30, (file_index+1)*30]], num_vars=CONTINUED_NUM_VARS)
+        return paths
+
+    write_batch(0, CONTINUED_INITIAL_NUM_HIST_FILES)
+
+    def extend(count=CONTINUED_EXTEND_NUM_HIST_FILES, start_index=CONTINUED_INITIAL_NUM_HIST_FILES):
+        """Appends ``count`` more monthly history files starting at ``start_index``."""
+        return write_batch(start_index, count)
+
+    return head_hf_dir, head_ts_dir, extend

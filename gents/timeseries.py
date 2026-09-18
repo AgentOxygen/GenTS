@@ -10,9 +10,10 @@ import fnmatch
 from os.path import isfile
 from os import remove, makedirs
 from pathlib import Path
-from gents.meta import get_attributes
+from gents.meta import get_attributes, get_meta_from_path
 from gents.mhfdataset import MHFDataset
 from gents.datastore import GenTSDataStore
+from gents.hfcollection import find_files
 from gents.utils import get_version, LOG_LEVEL_IO_WARNING, ProgressBar
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import traceback
@@ -816,6 +817,45 @@ class TSCollection:
         :rtype: TSCollection
         """
         return self.add_args(path_glob=path_glob, var_glob=var_glob, overwrite=True)
+
+    def skip_existing(self):
+        """
+        Returns a new collection with each order narrowed to timesteps not
+        already covered by existing output, for resuming a continued run.
+
+        :rtype: TSCollection
+        """
+        new_orders = []
+        for order_dict in copy.deepcopy(self.__orders):
+            template = Path(order_dict["ts_path_template"])
+            var_name = order_dict["primary_var"]
+            latest_existing_time = None
+
+            for path in find_files(template.parent, f"{template.name}.{var_name}.*.nc"):
+                if not check_timeseries_integrity(path):
+                    continue    
+                ts_times = get_meta_from_path(path).get_float_times()
+                ts_times = np.ma.getdata(np.atleast_1d(ts_times))
+
+                if not latest_existing_time or ts_times[-1] > latest_existing_time:
+                    latest_existing_time = ts_times[-1]
+            
+            if latest_existing_time:
+                new_hf_paths = []
+                for hf_path in order_dict["hf_paths"]:
+                    hf_times = self.__hf_collection[hf_path].get_float_times()
+                    hf_times = np.ma.getdata(np.atleast_1d(hf_times))
+
+                    if hf_times[-1] > latest_existing_time:
+                        new_hf_paths.append(hf_path)
+
+                order_dict["hf_paths"] = new_hf_paths
+            
+            if len(order_dict["hf_paths"]) > 0:
+                new_orders.append(order_dict)
+
+        logger.debug(f"skip_existing() kept {len(new_orders)} of {len(self.__orders)} order(s).")
+        return self.copy(ts_orders=new_orders)
 
     def append_timestep_dirs(self, var_glob="*"):
         """
