@@ -758,3 +758,35 @@ def test_skip_existing_multiple_variables_independent_coverage(continued_case):
     assert len(var0_orders) == 0
     assert len(var1_orders) == 1
     assert len(var1_orders[0]["hf_paths"]) == CONTINUED_EXTEND_NUM_HIST_FILES
+
+
+def test_skip_existing_zero_covered_time_not_mistaken_for_no_output(tmp_path_factory):
+    """A latest-covered raw time of exactly 0.0 must not read as 'no existing output'."""
+    head_hf_dir = tmp_path_factory.mktemp("zero_time_hf")
+    head_ts_dir = tmp_path_factory.mktemp("zero_time_ts")
+
+    # Second initial file's raw time lands exactly on 0.0 ("days since 1850-01-01").
+    generate_history_file(f"{head_hf_dir}/testing.hf.00000.nc", [-30], [[-45, -15]], num_vars=1)
+    generate_history_file(f"{head_hf_dir}/testing.hf.00001.nc", [0], [[-15, 15]], num_vars=1)
+    TSCollection(HFCollection(head_hf_dir), str(head_ts_dir)).execute()
+
+    generate_history_file(f"{head_hf_dir}/testing.hf.00002.nc", [30], [[15, 45]], num_vars=1)
+
+    resumed = TSCollection(HFCollection(head_hf_dir), str(head_ts_dir)).skip_existing()
+
+    assert len(resumed) == 1
+    order = resumed[0]
+    assert len(order["hf_paths"]) == 1
+    assert Path(order["hf_paths"][0]).name == "testing.hf.00002.nc"
+
+
+def test_skip_existing_ts_string_reflects_trimmed_range(continued_case):
+    """A trimmed order's output filename describes the steps it actually covers."""
+    input_head_dir, output_head_dir, extend = continued_case
+    TSCollection(HFCollection(input_head_dir), str(output_head_dir)).execute()
+    extend()
+
+    resumed = TSCollection(HFCollection(input_head_dir), str(output_head_dir)).skip_existing()
+
+    for order in resumed:
+        assert order["ts_string"] == "185101-185112"

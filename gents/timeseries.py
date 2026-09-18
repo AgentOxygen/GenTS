@@ -8,12 +8,11 @@ Contact: cameron.cummins@utexas.edu
 import numpy as np
 import fnmatch
 from os.path import isfile
-from os import remove, makedirs
+from os import remove, makedirs, listdir
 from pathlib import Path
 from gents.meta import get_attributes, get_meta_from_path
 from gents.mhfdataset import MHFDataset
 from gents.datastore import GenTSDataStore
-from gents.hfcollection import find_files
 from gents.utils import get_version, LOG_LEVEL_IO_WARNING, ProgressBar
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import traceback
@@ -829,28 +828,42 @@ class TSCollection:
         for order_dict in copy.deepcopy(self.__orders):
             template = Path(order_dict["ts_path_template"])
             var_name = order_dict["primary_var"]
+            name_glob = f"{template.name}.{var_name}.*.nc"
             latest_existing_time = None
 
-            for path in find_files(template.parent, f"{template.name}.{var_name}.*.nc"):
-                if not check_timeseries_integrity(path):
-                    continue    
-                ts_times = get_meta_from_path(path).get_float_times()
-                ts_times = np.ma.getdata(np.atleast_1d(ts_times))
+            if template.parent.is_dir():
+                for name in listdir(template.parent):
+                    if not fnmatch.fnmatch(name, name_glob):
+                        continue
+                    candidate_path = str(template.parent / name)
+                    if not check_timeseries_integrity(candidate_path):
+                        continue
+                    ts_times = get_meta_from_path(candidate_path).get_float_times()
+                    ts_times = np.ma.getdata(np.atleast_1d(ts_times))
 
-                if not latest_existing_time or ts_times[-1] > latest_existing_time:
-                    latest_existing_time = ts_times[-1]
-            
-            if latest_existing_time:
+                    if latest_existing_time is None or ts_times[-1] > latest_existing_time:
+                        latest_existing_time = ts_times[-1]
+
+            if latest_existing_time is not None:
+                original_hf_paths = order_dict["hf_paths"]
                 new_hf_paths = []
-                for hf_path in order_dict["hf_paths"]:
+                for hf_path in original_hf_paths:
                     hf_times = self.__hf_collection[hf_path].get_float_times()
                     hf_times = np.ma.getdata(np.atleast_1d(hf_times))
 
                     if hf_times[-1] > latest_existing_time:
                         new_hf_paths.append(hf_path)
 
+                if new_hf_paths and new_hf_paths != original_hf_paths:
+                    first_meta = self.__hf_collection[new_hf_paths[0]]
+                    first_float_time = np.ma.getdata(np.atleast_1d(first_meta.get_float_times()))[0]
+                    new_start_time = first_meta.decode_time_values(first_float_time)
+                    time_format = get_timestamp_format(self.__hf_collection.get_timestep_delta(new_hf_paths[0]))
+                    _, end_str = order_dict["ts_string"].split("-", 1)
+                    order_dict["ts_string"] = f"{new_start_time.strftime(time_format)}-{end_str}"
+
                 order_dict["hf_paths"] = new_hf_paths
-            
+
             if len(order_dict["hf_paths"]) > 0:
                 new_orders.append(order_dict)
 
