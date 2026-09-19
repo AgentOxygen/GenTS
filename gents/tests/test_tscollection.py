@@ -4,8 +4,10 @@ from gents.datastore import GenTSDataStore
 from gents.timeseries import *
 from os.path import isfile, getsize, isdir
 from os import listdir, remove, makedirs
+from pathlib import Path
 from shutil import rmtree
 from cftime import num2date
+import logging
 import warnings
 
 
@@ -124,6 +126,11 @@ def test_tscollection_copy(simple_case):
     assert ts_copy is not ts_collection
 
     ts_copy = ts_collection.apply_path_swap("a", "b", "*.txt", "txt")
+    assert type(ts_copy) == TSCollection
+    assert list(ts_copy) == list(ts_collection)
+    assert ts_copy is not ts_collection
+
+    ts_copy = ts_collection.skip_existing()
     assert type(ts_copy) == TSCollection
     assert list(ts_copy) == list(ts_collection)
     assert ts_copy is not ts_collection
@@ -636,3 +643,150 @@ def test_apply_path_swap_default_var_glob_swaps_every_variable(structured_case):
 
     expected = sum("/0_dir/" in order["ts_path_template"] for order in ts_collection)
     assert sum("/SWAPPED/" in order["ts_path_template"] for order in swapped) == expected
+
+
+def test_skip_existing_no_prior_output(continued_case):
+    """With no existing output, skip_existing() leaves every order unchanged."""
+    input_head_dir, output_head_dir, extend = continued_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+
+    resumed = ts_collection.skip_existing()
+
+    assert len(resumed) == len(ts_collection)
+    for order, original in zip(resumed, ts_collection):
+        assert order["hf_paths"] == original["hf_paths"]
+        assert order["ts_start_index"] == original["ts_start_index"]
+        assert order["ts_string"] == original["ts_string"]
+
+
+def test_skip_existing_full_coverage_drops_order(continued_case):
+    """Once every order's output already exists, skip_existing() drops every order."""
+    input_head_dir, output_head_dir, extend = continued_case
+    TSCollection(HFCollection(input_head_dir), str(output_head_dir)).execute()
+
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+    resumed = ts_collection.skip_existing()
+
+    assert len(resumed) == 0
+
+
+def test_skip_existing_partial_coverage_trims_and_prunes(continued_case):
+    """A continuation run only regenerates the new timesteps, leaving prior output untouched."""
+    input_head_dir, output_head_dir, extend = continued_case
+    TSCollection(HFCollection(input_head_dir), str(output_head_dir)).execute()
+
+    original_files = {name: getsize(f"{output_head_dir}/{name}") for name in listdir(output_head_dir)}
+    assert len(original_files) == CONTINUED_NUM_VARS
+
+    extend()
+
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+    resumed = ts_collection.skip_existing()
+
+    assert len(resumed) == CONTINUED_NUM_VARS
+    for order in resumed:
+        # Only the new files remain -- the fully-covered ones were pruned, not
+        # just skipped by index.
+        assert len(order["hf_paths"]) == CONTINUED_EXTEND_NUM_HIST_FILES
+        for path in order["hf_paths"]:
+            file_index = int(Path(path).name.split(".")[2])
+            assert file_index >= CONTINUED_INITIAL_NUM_HIST_FILES
+
+    resumed.execute()
+
+    new_files = {name: getsize(f"{output_head_dir}/{name}") for name in listdir(output_head_dir)}
+    for name, size in original_files.items():
+        assert name in new_files
+        assert new_files[name] == size
+    assert len(new_files) == 2 * CONTINUED_NUM_VARS
+
+
+def test_skip_existing_duplicate_boundary_timestep(tmp_path_factory):
+    """A continuation's first timestep exactly duplicating the prior run's last one is dropped."""
+    head_hf_dir = tmp_path_factory.mktemp("dup_boundary_hf")
+    head_ts_dir = tmp_path_factory.mktemp("dup_boundary_ts")
+
+    generate_history_file(f"{head_hf_dir}/testing.hf.00000.nc", [15], [[0, 30]], num_vars=1)
+    generate_history_file(f"{head_hf_dir}/testing.hf.00001.nc", [45], [[30, 60]], num_vars=1)
+    TSCollection(HFCollection(head_hf_dir), str(head_ts_dir)).execute()
+
+    # The continuation's first file duplicates the old run's last timestep
+    # exactly (a restart-boundary duplicate); the second is genuinely new.
+    generate_history_file(f"{head_hf_dir}/testing.hf.00002.nc", [45], [[30, 60]], num_vars=1)
+    generate_history_file(f"{head_hf_dir}/testing.hf.00003.nc", [75], [[60, 90]], num_vars=1)
+
+    resumed = TSCollection(HFCollection(head_hf_dir), str(head_ts_dir)).skip_existing()
+
+    assert len(resumed) == 1
+    order = resumed[0]
+    assert len(order["hf_paths"]) == 1
+    assert Path(order["hf_paths"][0]).name == "testing.hf.00003.nc"
+
+
+def test_skip_existing_ignores_corrupt_existing_file(continued_case):
+    """A file matching the naming pattern but failing the integrity check counts as no coverage."""
+    input_head_dir, output_head_dir, extend = continued_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+    original_order = ts_collection[0]
+    template, var = original_order["ts_path_template"], original_order["primary_var"]
+
+    makedirs(Path(template).parent, exist_ok=True)
+    with open(f"{template}.{var}.18500101-18501231.nc", "w") as corrupt_file:
+        corrupt_file.write("not a real netCDF file")
+
+    resumed = ts_collection.skip_existing()
+
+    matched = [order for order in resumed if order["primary_var"] == var][0]
+    assert matched["hf_paths"] == original_order["hf_paths"]
+
+
+def test_skip_existing_multiple_variables_independent_coverage(continued_case):
+    """Each order's coverage is evaluated independently, even within the same group."""
+    input_head_dir, output_head_dir, extend = continued_case
+    TSCollection(HFCollection(input_head_dir), str(output_head_dir)).execute()
+    extend()
+
+    # Only VAR0 gets regenerated for the new range; VAR1 is left behind.
+    partial = TSCollection(HFCollection(input_head_dir), str(output_head_dir)).include("*", "VAR0").skip_existing()
+    assert len(partial) == 1
+    partial.execute()
+
+    resumed = TSCollection(HFCollection(input_head_dir), str(output_head_dir)).skip_existing()
+
+    var0_orders = [order for order in resumed if order["primary_var"] == "VAR0"]
+    var1_orders = [order for order in resumed if order["primary_var"] == "VAR1"]
+    assert len(var0_orders) == 0
+    assert len(var1_orders) == 1
+    assert len(var1_orders[0]["hf_paths"]) == CONTINUED_EXTEND_NUM_HIST_FILES
+
+
+def test_skip_existing_zero_covered_time_not_mistaken_for_no_output(tmp_path_factory):
+    """A latest-covered raw time of exactly 0.0 must not read as 'no existing output'."""
+    head_hf_dir = tmp_path_factory.mktemp("zero_time_hf")
+    head_ts_dir = tmp_path_factory.mktemp("zero_time_ts")
+
+    # Second initial file's raw time lands exactly on 0.0 ("days since 1850-01-01").
+    generate_history_file(f"{head_hf_dir}/testing.hf.00000.nc", [-30], [[-45, -15]], num_vars=1)
+    generate_history_file(f"{head_hf_dir}/testing.hf.00001.nc", [0], [[-15, 15]], num_vars=1)
+    TSCollection(HFCollection(head_hf_dir), str(head_ts_dir)).execute()
+
+    generate_history_file(f"{head_hf_dir}/testing.hf.00002.nc", [30], [[15, 45]], num_vars=1)
+
+    resumed = TSCollection(HFCollection(head_hf_dir), str(head_ts_dir)).skip_existing()
+
+    assert len(resumed) == 1
+    order = resumed[0]
+    assert len(order["hf_paths"]) == 1
+    assert Path(order["hf_paths"][0]).name == "testing.hf.00002.nc"
+
+
+def test_skip_existing_ts_string_reflects_trimmed_range(continued_case):
+    """A trimmed order's output filename describes the steps it actually covers."""
+    input_head_dir, output_head_dir, extend = continued_case
+    TSCollection(HFCollection(input_head_dir), str(output_head_dir)).execute()
+    extend()
+
+    resumed = TSCollection(HFCollection(input_head_dir), str(output_head_dir)).skip_existing()
+
+    for order in resumed:
+        assert order["ts_string"] == "185101-185112"
