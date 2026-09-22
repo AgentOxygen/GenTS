@@ -41,7 +41,7 @@ verified against the source; when docs and code disagree, trust the code and fix
 ## Repository map
 
 ```
-gents/                  Package source (7 pipeline modules ~3,100 lines, + conformity/)
+gents/                  Package source (7 pipeline modules ~3,700 lines, + conformity/)
   hfcollection.py       HFCollection: discover/filter/group/slice history files
   timeseries.py         TSCollection: build + execute time-series "orders"; file writing
   meta.py               netCDFMeta: cached per-file metadata; primary/secondary classification
@@ -56,13 +56,14 @@ gents/                  Package source (7 pipeline modules ~3,100 lines, + confo
     check.py              gents_conform — run a model spec against generated output
     report.py             pass/fail/skip collector; text + JSON rendering
     models/cesm3.py       what correct CESM3 output looks like (the file that matters)
-  tests/                pytest suite (242 tests); test_cases.py generates synthetic fixtures
+  tests/                pytest suite (284 tests); test_cases.py generates synthetic fixtures
 docs/                   Sphinx docs (index/install/user/dev/api .rst)
 benchmarks/             ASV performance benchmarks + fixtures.build_bench_case()
 pipeline_bench.py       Standalone py-spy profiling driver (repo root, not an ASV suite)
 Dockerfile              Multi-stage: runtime / test / bench / dev / deptest-floor / deptest-latest
 .github/workflows/      tests.yml (docker --target test), dependency_checks, release
 build/lib/              STALE build artifact copy of the package — never read or edit
+downloads/              gitignored; local copies of user-reported cases (e.g. clone tarballs)
 ```
 
 ## The pipeline in one paragraph
@@ -81,7 +82,7 @@ group once into a memory-bounded cache) and writing one netCDF file per variable
 
 ```bash
 pip install -e ".[dev]"          # editable install with test/docs/bench extras
-pytest gents/tests/              # full test suite (242 tests, ~25 s)
+pytest gents/tests/              # full test suite (284 tests, ~35 s)
 docker build --target test -t gents-tests . && docker run --rm gents-tests   # CI-equivalent
 run_gents <hf_dir> --model CESM3 --dryrun   # CLI dry run (read-only validation)
 ```

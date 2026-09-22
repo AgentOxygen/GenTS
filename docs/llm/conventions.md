@@ -2,7 +2,7 @@
 
 > Rules the codebase relies on that are easy to violate, plus known stale spots.
 > Verify a gotcha still exists before acting on it — this file describes the code as of
-> August 2026 (branch `validation`).
+> September 2026 (branch `main`).
 
 ## API invariants — do not break
 
@@ -17,7 +17,9 @@
   filter first, read headers second). Methods needing metadata call `check_pulled()`,
   which auto-pulls.
 - **Copies inherit metadata.** Filtering a pulled collection yields pulled
-  sub-collections; never re-read headers that a parent already read.
+  sub-collections; never re-read headers that a parent already read. (They also inherit
+  the parent's *groups*, which is a bug — see "`include()`/`exclude()` after a pull"
+  below.)
 - **Worker picklability.** Anything submitted to `ProcessPoolExecutor` must be a
   module-level function with picklable args. `get_meta_from_path` exists precisely as
   the picklable factory for `netCDFMeta`; keep that pattern.
@@ -46,6 +48,41 @@
 - **`[sorting_pivot]` group-key suffix** is the string protocol between
   `HFCollection.slice_groups` and `TSCollection.update_ts_orders`. Both sides parse it
   literally; change it in both places or nowhere.
+- **`include_time`/`include_years` half-open range.** `include_time(start_year, end_year, ...)`
+  keeps `start_date <= representative_time < end_date` (end **exclusive**), matching the
+  `[lower_num, upper_num)` convention `slice_groups` already used. `include_years` is a
+  thin wrapper (`include_time(start_year, end_year + 1)`); do not "fix" it to inclusive
+  bounds without checking both together. Only calendar-agnostic `year`/`month`/`day`
+  components are ever taken from a caller — there is no finer granularity (hour/minute/
+  second), and no date-like object is accepted, specifically so the boundary can be
+  re-expressed fresh in any file's own calendar via `get_time_boundary_num` without ever
+  comparing two `cftime.datetime` objects that might carry different calendars (that raises
+  `TypeError`; see the float-domain time handling section below).
+- **`TSCollection.skip_existing()` strict inequality, whole-file granularity.** The resume
+  cutoff compares with `>`, not `>=` (a continuation run can re-emit the prior run's exact
+  last timestep as its own first timestep, and `>` is what drops that duplicate rather than
+  keeping or double-counting it), and a source file is kept or dropped *whole* rather than
+  split. That's deliberate, not a missed case: an output stream's step count cannot change
+  mid-run without a namelist edit and a fresh run, so a continuation always starts a new HF
+  file at the restart boundary and no single file can straddle "already covered" and
+  "genuinely new." Do not "simplify" the inequality to `>=`, and do not reintroduce
+  `ts_start_index`/`ts_end_index` narrowing to handle a straddling file — it cannot happen
+  in this workflow.
+- **`skip_existing()` compares raw floats across files.** It compares an existing TS
+  output's raw time value directly against a candidate HF file's raw time value, with no
+  `decode_time_values()` call — a scoped exception to the float-domain rule below, which
+  otherwise treats an undecoded cross-file comparison as unsafe. It relies on both sides
+  (the order's own output and its own input) sharing one `(units, calendar)` reference.
+  That is usual but **not guaranteed** within a stream: WW3 writes a new `units` string per
+  restart segment (see the WW3 gotcha below). There the raw values happen to stay
+  continuous, so the comparison still works, but only by accident. Do not generalize this
+  pattern to a comparison spanning two different streams.
+- **`skip_existing()` does not fill a gap, and does not warn about one either.** If more
+  than one existing, valid time series file is found for one order, only the *latest*
+  covered end is used as the cutoff — a gap between two disjoint existing outputs (e.g.
+  years 0-3 and 6-7 exist, 4-5 does not) is neither detected, backfilled, nor logged. This
+  is a known, accepted limitation, not a bug to silently "fix" by unioning ranges — see the
+  resume concept in `concepts.md`.
 - **All user-facing filters are `fnmatch` globs** applied to *absolute path strings*
   (or variable names for `var_glob`). Not regex, not `pathlib.match`. Every glob
   parameter takes **either a single string or a list of them**, normalised at the top
@@ -72,22 +109,35 @@
   array per file in the group, or the variable is absent from the cache entirely. A
   partial (prefix-only) list makes `__get_hf_data` return a *different file's* data by
   index, silently.
+- **Secondaries are budgeted too.** `open()` plans secondaries before primaries, and
+  both go through `__plan_cacheable_vars`, so a secondary that doesn't fit (e.g. CICE's
+  static grid × 3,650 daily files) is read on demand, not cached. Its size estimate is
+  one file's shape × file count even for variables with no time dimension.
 - **One file open at a time.** `open()` and `__cache_variable` both use
   `with GenTSDataStore(path)` per file. Nothing in the class holds a handle open across
   files, and nothing should — that property is what retired the `EMFILE` gotcha.
+- **Every read is raw.** Each handle `MHFDataset` opens calls
+  `set_auto_maskandscale(False)` before reading. Masked arrays carry a mask that
+  `__get_cache_dsize` doesn't count (+25% over `memory_limit_bytes` for float32), and
+  scaled reads of packed ints get truncated back to the on-disk dtype by `get_var_vals`.
+  A new read site must do the same.
 - **Eviction is per-variable, on switch.** Do not free a file's entry after reading it:
   write chunks don't align with source file boundaries, so the same entry is legitimately
   read more than once per variable.
-- **`memory_limit_bytes` is per `MHFDataset`**, i.e. per worker process. The pipeline-wide
-  ceiling is roughly `tscores × memory_limit`. `execute()` and the CLI default to
-  `timeseries.DEFAULT_MEMORY_LIMIT_BYTES` (4 GiB); only a directly-constructed
+- **`memory_limit_bytes` is per `MHFDataset`**, i.e. per worker process, and bounds only
+  the cache. The pipeline-wide peak is roughly
+  `parent metadata + tscores × (memory_limit + worker overhead)`. The parent holds every
+  file's `netCDFMeta` (measured at 5.8 GiB for a 40k-file CESM3 case), and under `fork`
+  workers can end up copying part of it (see the gotchas below). `execute()` and the CLI
+  default to `timeseries.DEFAULT_MEMORY_LIMIT_BYTES` (4 GiB); only a directly-constructed
   `MHFDataset` is unbounded by default.
 
 ### `netCDFMeta` load flags
 
 `decode_dates`, `load_time_bounds`, `load_variable_attrs`, `compute_dim_bounds` exist to
 skip measured per-file cost for callers that don't need the result (`MHFDataset` needs
-none of them; `get_meta_from_path` — the whole pipeline — opts out of `decode_dates`).
+only the first file's variable attrs; `get_meta_from_path` — the whole pipeline — opts
+out of `decode_dates` only, so it still loads attrs nobody reads — see gotchas).
 Opting out of the latter three must stay **strict**: the corresponding getter raises
 `RuntimeError` rather than returning empty or stale data. Don't "helpfully" soften that —
 silent empties would surface as wrong output, not an error. `decode_dates=False` is the
@@ -107,6 +157,12 @@ did). Year-window membership is tested against per-reference boundaries from
 `get_cftimes()`/`get_cftime_bounds()` in pipeline code reintroduces an O(total steps)
 `num2date` — the regression is guarded by size-capped `num2date` assertions in
 `test_hfcollection.py` and `test_tscollection.py`.
+
+Reference-safety covers the `HFCollection` year/slice/timestep math only. Several
+places still compare raw floats across files and assume **one reference per group**:
+`sort_along_time` (sorts all files by raw first time), `MHFDataset`'s time mapping, and
+the written time axis (raw values from every file, labelled with the first file's
+`units`). A group that mixes references gets a wrong output time axis.
 
 ## Conformity conventions (`gents/conformity/`) — do not break
 
@@ -154,7 +210,45 @@ violated by a well-meaning refactor.
 - Private attributes use double-underscore name mangling (`self.__hf_to_meta_map`).
 - Loggers are `logging.getLogger(__name__)` under the `"gents"` hierarchy.
 
-## Known gotchas / stale spots (verified 2026-08)
+## Known gotchas / stale spots (verified 2026-09)
+
+- **Static secondaries that don't fit the cache are truncated to their first row.**
+  `__cache_variable` stores a no-time variable as a bare array
+  (`__data_var_cache[var] = hf_ds[var][:]`) instead of a one-item list, so
+  `__get_hf_data(0, var)` returns `cache[var][0]`, its first row. `write_timeseries_file`
+  then broadcasts that row across the whole output variable. It triggers whenever a static
+  secondary misses the `open()` budget (every daily CICE stream: `TLAT`, `tarea`,
+  `*_bounds`, …). Missing-value clones hide it because every value is fill. Repro: 3
+  files, a static `(4, 5)` variable, `memory_limit_bytes=200` →
+  `get_var_vals` returns shape `(5,)`.
+- **`include()`/`exclude()` after a pull keep stale groups.** `copy()` inherits
+  `self.get_groups()` whenever the collection is pulled, so a filtered copy still lists
+  every group of its parent. `slice_groups()` then raises `KeyError` on the first dropped
+  path (`hfc.pull_metadata(); hfc.include("*ww3.hi*").slice_groups()`). Filtering *before*
+  the pull (as `cli.main` does) avoids it.
+- **Worker pools use the platform's default start method.** Neither pool passes
+  `mp_context`. That's `fork` on Linux before Python 3.14, including the Docker images
+  (`DEFAULT_PYTHON=3.12`). Forked workers inherit the parent's `netCDFMeta` heap, and
+  CPython's refcount/GC writes gradually copy those pages. Measured with a 5.8 GiB parent:
+  one `--no-data` execute worker reached 2.4 GiB private memory under `fork` vs 440 MiB
+  under `forkserver`.
+- **The parent keeps per-variable attrs it never reads.** `get_meta_from_path` builds
+  metas with `load_variable_attrs=True`, but nothing reads attrs from an `HFCollection`'s
+  metas (`MHFDataset` builds its own). It is 53–76% of each meta's size on CESM3 streams
+  (`cpl.hi`: 58.7 → 27.4 KiB pickled).
+- **Re-running a finished case still reads every group.** The integrity-stamp skip lives
+  inside `write_timeseries_file`, *after* `generate_time_series` has opened the
+  `MHFDataset` (one pass over every file, preloading primaries up to the limit) and read
+  the secondaries. Output is not rewritten, but the input is read again. Only
+  `skip_existing()` drops work before any file is opened.
+- **Dead code in `hfcollection.py`.** `check_groups_by_variables`, `filter_by_variables`,
+  `sort_metas_by_time` and `is_ds_within_years` are defined but never called. Nothing
+  enforces a consistent variable set within a group.
+- **WW3 history files have self-inconsistent time units.** Each restart segment's `time`
+  counts seconds from model start (0001), but its `units` say `seconds since <restart
+  date>`. A file named `ww3.hi.0005-01-02` therefore decodes to `0009-01-02`, and a
+  24-year run slices as years 1–50. GenTS decodes each file faithfully; the input is
+  wrong. Other CESM3 components keep one `days since 0001-01-01` throughout.
 
 - **`gents/conformity/` is not packaged.** `pyproject.toml` sets
   `packages = ["gents", "gents.configs"]`, an explicit list, so a built wheel/sdist
@@ -180,13 +274,6 @@ violated by a well-meaning refactor.
   returns a collection containing only `TREFHT` — every other order is silently discarded
   rather than left un-prefixed. Harmless at the default `"*"`, which is the only way it is
   currently called.
-- **`append_timestep_dirs` is dead config in the CLI.** `gents_cesm3.yaml` and
-  `gents_example.yaml` both set `output_ts.append_timestep_dirs: true`, but `cli.main`
-  only reads `path_swaps` and `compression` from `output_ts` — `TSCollection.append_timestep_dirs()`
-  is never called anywhere outside its own definition and its tests. So CLI output has no
-  `month_1/`-style frequency directories despite the config asking for them, and any
-  CLI-driven output fails the conformity check for it. Either wire the key up in
-  `cli.main` or drop it from the YAML.
 - **`calculate_year_slices` quirks:** the guard's error message is inverted
   ("Maximum year cannot exceed minimum year" fires when max < min), and the early
   return triggers when `slice_size_years >= max_year - min_year`, so a span exactly
@@ -244,9 +331,10 @@ violated by a well-meaning refactor.
   lookup over a `GenTSDataStore` but returns empty-handed where `netCDFMeta` raises. Keep
   that split: the clone must describe every file it copies, not just the GenTS-legible
   ones.
-- **`MHFDataset` trusts the first file** of a group for variable dims/dtype/attrs;
-  variable-set consistency is enforced earlier by `check_groups_by_variables`
-  (majority wins, minority files dropped with a warning).
+- **`MHFDataset` trusts the first file** of a group for variable dims/dtype/attrs, and
+  nothing upstream enforces a consistent variable set (`check_groups_by_variables` is
+  dead code, see above). A secondary missing from a later file is skipped at `open()`;
+  a primary missing from a later file fails that worker call when it is read.
 - **Time-bounds variable names are matched case-insensitively** against exactly:
   `time_bnds`, `time_bnd`, `time_bounds`, `time_bound`; the time variable must have
   `units` and `calendar` attributes or the file is rejected.
@@ -277,7 +365,15 @@ violated by a well-meaning refactor.
 - **`EMFILE` on wide streams.** `MHFDataset` used to open every file of a group at once,
   so a ~1800-file daily stream died with `OSError: [Errno 24] Too many open files`. It now
   opens one file at a time and caches data instead of handles, so the ulimit workaround is
-  no longer needed. `gents/conformity/README.md` still carries the old warning.
+  no longer needed.
+- **`append_timestep_dirs` was dead config in the CLI.** Both bundled YAMLs set
+  `output_ts.append_timestep_dirs: true` but `cli.main` never read it. It is now wired up
+  (`cli.main` calls `tsc.append_timestep_dirs()` when the key is true).
+- **Lazy `MHFDataset` reads were masked and scaled.** `__cache_variable` and the
+  direct-read fallback opened handles without `set_auto_maskandscale(False)`, unlike
+  `open()`. The uncounted masks pushed the cache ~25% over `memory_limit_bytes`, and
+  scaled reads of packed ints were truncated back to the on-disk dtype. Fixed in
+  `ea8f36f`; see "Every read is raw" above.
 - **`hfcollection.check_config` / `get_default_config`.** Removed (2026-08): they asserted a
   `{name, include, exclude}` config shape that no version of GenTS still uses, were called
   from nowhere, and collided by name with the live `gents.cli.check_config`. The YAML

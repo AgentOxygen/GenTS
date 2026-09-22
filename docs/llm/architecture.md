@@ -24,7 +24,8 @@ HFCollection {path: netCDFMeta}                    gents/meta.py
 TSCollection — list of order dicts                 gents/timeseries.py
    │  modifiers: include/exclude, add_args, apply_compression,
    │             apply_chunk_target_bytes, apply_path_swap, apply_overwrite,
-   │             append_timestep_dirs, add_attrs
+   │             append_timestep_dirs, add_attrs, skip_existing (resume a
+   │             continued run -- narrows/drops orders against existing output)
    │  .execute() — batches orders sharing source files (optimize=True),
    │               pool (or in-process) → generate_time_series() per batch
    ▼
@@ -46,9 +47,9 @@ bundled YAML config (`gents/configs/*.yaml`) merged with command-line flags.
 |---|---|---|
 | `datastore.py` | `GenTSDataStore` — the *only* place `netCDF4.Dataset` is constructed in the pipeline; context manager + delegation | netCDF4 |
 | `meta.py` | `netCDFMeta` (cached header metadata, with opt-out load flags), `is_var_secondary` (primary/secondary rules), `get_meta_from_path` (picklable factory), `get_attributes`, `get_time_variables_names` | datastore |
-| `hfcollection.py` | `HFCollection` + module-level helpers for discovery, grouping, year math, fragmentation merging | meta, utils |
+| `hfcollection.py` | `HFCollection` + module-level helpers for discovery, grouping, date math (`get_time_boundary_num`, `get_year_boundary_num`), fragmentation merging | meta, utils |
 | `mhfdataset.py` | `MHFDataset` — presents a file group as one virtual dataset; time→file mapping; memory-bounded variable cache; tile reassembly | datastore, meta |
-| `timeseries.py` | `TSCollection`, order construction/execution, `write_timeseries_file`, `compute_chunksizes`, `CHUNK_TARGET_BYTES`, `check_timeseries_integrity`, `check_timeseries_conform`, `get_timestamp_format`, `get_timestep_label` | mhfdataset, datastore, meta, utils |
+| `timeseries.py` | `TSCollection` (including `skip_existing`, the resume modifier), order construction/execution, `write_timeseries_file`, `compute_chunksizes`, `CHUNK_TARGET_BYTES`, `check_timeseries_integrity`, `check_timeseries_conform`, `get_timestamp_format`, `get_timestep_label` | mhfdataset, datastore, meta, utils |
 | `cli.py` | argparse, YAML config loading/merging, `check_config`, `main()` | hfcollection, timeseries, utils |
 | `utils.py` | `enable_logging`, `ProgressBar`, `get_version`, `get_time_stamp`, `log_hfcollection_info`, `log_tscollection_info`, `LOG_LEVEL_IO_WARNING = 5` | — |
 
@@ -160,13 +161,15 @@ number of simultaneously open handles is therefore 1, independent of group size.
 - **Time mapping:** `{float_time: [(file_index, sub_time_index), ...]}`. `sub_time_index`
   is the step's position inside its own file, precomputed so reads never rescan a time
   array. More than one entry per time ⇒ fragmented group.
-- **Cache:** `open()` caches every secondary variable plus as many primaries from
-  `preload_var_list` as fit under `memory_limit_bytes` (`__plan_cacheable_vars`, sized
+- **Cache:** `open()` caches as many secondaries, then as many primaries from
+  `preload_var_list`, as fit under `memory_limit_bytes` (`__plan_cacheable_vars`, sized
   from one file's shape × file count). All-or-nothing per variable — a partial entry
   would serve the wrong file's data. Anything left over is cached on first use if it
   fits, otherwise only the requested time slice is read from disk per access.
   `preload_primaries=False` (used by `no_data` runs) skips all primary preloading —
-  primaries stay readable on demand.
+  primaries stay readable on demand. Every read path uses raw values
+  (`set_auto_maskandscale(False)`), so cached data is plain `ndarray` whose size the
+  budget counts exactly.
 - **Eviction:** reads move through one variable at a time, so switching variables frees
   the previous one's cache. A single file's entry is *not* freed after one read, since
   write chunks don't align with source file boundaries.
@@ -205,16 +208,22 @@ workers are logged (`raise_errors=False` default) rather than raised, so a bad f
 doesn't kill a long batch job. Dask was removed; `dask_client` kwargs remain only as
 deprecation shims.
 
+Neither pool sets a start method, so workers start with the platform default: `fork`
+on Linux before Python 3.14 (including the Docker images), `forkserver` from 3.14.
+
 Memory is bounded per worker, not globally: `execute(memory_limit_bytes=...)` (CLI
-`--memory-limit`, in GB) is forwarded to every `MHFDataset` a worker opens, so the
-process-wide ceiling is roughly `tscores × memory_limit`. The default is
-`DEFAULT_MEMORY_LIMIT_BYTES` (4 GiB per worker); constructing an `MHFDataset` directly
-is still unbounded by default.
+`--memory-limit`, in GB) is forwarded to every `MHFDataset` a worker opens and bounds
+that worker's cache. The parent is not bounded: it holds every file's `netCDFMeta`
+for the whole run (5.8 GiB on a 40k-file CESM3 case), and forked workers can copy part
+of it. See the `MHFDataset` cache invariants and gotchas in
+[conventions.md](conventions.md). The default is `DEFAULT_MEMORY_LIMIT_BYTES` (4 GiB
+per worker); constructing an `MHFDataset` directly is still unbounded by default.
 
 ## Error-handling philosophy
 
-Skip-and-warn, not fail-fast: invalid files are dropped by `check_validity`, minority
-variable sets are dropped by `check_groups_by_variables`, worker exceptions are logged.
+Skip-and-warn, not fail-fast: invalid files are dropped by `check_validity` and worker
+exceptions are logged. Variable-set consistency within a group is *not* checked
+(`check_groups_by_variables` exists but is never called).
 Logging uses the `"gents"` logger hierarchy; `enable_logging(verbose=True)` turns on
 per-file I/O traces at custom level `LOG_LEVEL_IO_WARNING = 5`.
 

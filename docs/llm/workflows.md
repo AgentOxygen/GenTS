@@ -1,7 +1,7 @@
 # Workflows & Recipes
 
 > Commands and step-by-step recipes for common tasks. Commands verified against the
-> Dockerfile, CI workflow, and pyproject as of August 2026.
+> Dockerfile, CI workflow, and pyproject as of September 2026.
 
 ## Environment setup
 
@@ -15,7 +15,7 @@ pip install -r requirements.txt && pip install -e .
 ## Testing
 
 ```bash
-pytest gents/tests/                         # full suite (242 tests, ~25 s)
+pytest gents/tests/                         # full suite (284 tests, ~35 s)
 pytest gents/tests/test_workflow.py         # one file
 ```
 
@@ -93,17 +93,16 @@ asv run --machine gents-container HEAD^!
 
 - `--machine <fixed name>` — asv defaults the machine name to the hostname, which is a
   fresh random hex string in every container, so results never accumulate or compare.
-- `asv.conf.json` lists `branches: ["main", "validation"]` — a working/feature branch
-  needs to be listed (or use an explicit range like `HEAD^!`) for `asv run` to discover
-  its commits.
+- `asv.conf.json` lists `branches: ["main"]` — a working/feature branch needs an
+  explicit range like `HEAD^!` for `asv run` to discover its commits.
+- `asv.conf.json` pins `pythons: ["3.14"]`, but the `bench`/`dev` images default to
+  `DEFAULT_PYTHON=3.12`. Build them with `--build-arg DEFAULT_PYTHON=3.14` so asv finds
+  the pinned interpreter.
 
-Two things that used to require workarounds are fixed in the tree, not just documented
-around: `asv.conf.json` no longer pins `pythons` (asv defaults to the interpreter it is
-running under, so any image works out of the box), and the `bench` Dockerfile stage sets
-`ENV HOME=/usr/local/gents`, so `asv machine` no longer fails with `PermissionError` on
-`/.asv-machine.json`. Without a bind mount the image's baked-in `/usr/local/gents` is
-root-owned from `COPY` and still isn't writable by uid 1000 — a separate, pre-existing
-issue.
+The `bench` Dockerfile stage sets `ENV HOME=/usr/local/gents`, so `asv machine` no
+longer fails with `PermissionError` on `/.asv-machine.json`. Without a bind mount the
+image's baked-in `/usr/local/gents` is root-owned from `COPY` and still isn't writable
+by uid 1000 — a separate, pre-existing issue.
 
 ## Performance profiling (py-spy + `pipeline_bench.py`)
 
@@ -231,8 +230,10 @@ mark a group twice). `--slice_start_year` overrides `start_year` in every batch 
 way. `--compression` requires `--level`.
 `--model` is case-insensitive; omitted → `gents_example.yaml`. Output dir defaults to
 the input dir (path swaps like `/hist/` → `/proc/tseries/` come from the YAML config).
-`--memory-limit` is in GB and applies **per TS worker**, so the process-wide ceiling is
-about `tscores ×` that; defaults to 4 GB per worker (`DEFAULT_MEMORY_LIMIT_BYTES`). `-nd/--no-data` (→ `execute(no_data=True)`)
+`--memory-limit` is in GB and caps each **TS worker's cache**; defaults to 4 GB per worker
+(`DEFAULT_MEMORY_LIMIT_BYTES`). Size a job for the parent's metadata (it grows with file
+count; 5.8 GiB for a 40k-file CESM3 case, `--dryrun` alone shows it) plus
+`--tscores ×` a bit over the limit. `-nd/--no-data` (→ `execute(no_data=True)`)
 builds the full directory/file structure but skips reading/writing primary-variable data
 — primaries read back as their fill value; the fast path for conformity runs over
 missing-value clones (see the `--no-data` concept in [concepts.md](concepts.md)). Don't
@@ -357,8 +358,7 @@ first — several obvious-looking refactors are explicitly unwanted there.
 Required top-level keys (asserted by `cli.check_config`): `version`, `model`,
 `input_hf`, `output_ts`. Under `input_hf`: `match` (discovery glob), `include`,
 `exclude`, `slicing` (list of `slice_groups` kwarg dicts). Under `output_ts`:
-`append_timestep_dirs` (currently ignored by the CLI — see
-[conventions.md](conventions.md)), `path_swaps` (list of `apply_path_swap` kwargs),
+`append_timestep_dirs` (bool → `append_timestep_dirs()`), `path_swaps` (list of `apply_path_swap` kwargs),
 `compression` (list of `apply_compression` kwargs). To add support for a new model, add a
 YAML here, register it in `model_config_files` in `cli.main`, include it in
 `[tool.setuptools.package-data]` (already `*.yaml`), and add tests mirroring
@@ -384,10 +384,13 @@ tsc = tsc.append_timestep_dirs()
 output_paths = tsc.execute(memory_limit_bytes=8 * 1024**3)     # returns written file paths
 ```
 
-Filter *before* `pull_metadata()`/`TSCollection` construction to avoid needless header
-reads. Re-running is cheap: existing complete outputs (integrity-stamped) are skipped
-unless `apply_overwrite` / `--overwrite` is set. Pass `show_progress=False` to
-`pull_metadata`/`execute` when driving GenTS from a script that owns stdout.
+Filter *before* `pull_metadata()`/`TSCollection` construction, both to avoid needless
+header reads and because filtering a pulled collection keeps its stale groups (see
+[conventions.md](conventions.md)). Re-running doesn't rewrite complete
+(integrity-stamped) outputs unless `apply_overwrite` / `--overwrite` is set, but every
+group's input is still read; use `skip_existing()` to drop finished work up front. Pass
+`show_progress=False` to `pull_metadata`/`execute` when driving GenTS from a script that
+owns stdout.
 
 ### Inspecting state interactively
 

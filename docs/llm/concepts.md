@@ -16,7 +16,8 @@
   `h0`, `h1`, `h2`, ... (CESM) or `eam.h0`... (E3SM). Different streams have different
   variable sets and time step sizes, so they must never be mixed in one output file.
 - **Model component:** Subdirectory per model subsystem in a case's output tree:
-  `atm`, `ocn`, `lnd`, `ice`, `glc`, `rof`. Conventionally raw files live under
+  `atm`, `ocn`, `lnd`, `ice`, `glc`, `rof` (CESM3 cases also have `cpl` and `wav`,
+  which the bundled config's `"*.nc"` include pulls in). Conventionally raw files live under
   `<component>/hist/` and processed output under `<component>/proc/tseries/`.
 - **Case:** One model simulation/run and its output directory tree.
 
@@ -61,6 +62,25 @@
 - **Multistep slicing:** A single HF can contain many time steps that straddle a slice
   boundary; `HFCollection` records per-file `(start_index, end_index)` tuples
   (`get_multistep_slices`) so `TSCollection` can split within a file.
+- **Resume / incremental generation (`TSCollection.skip_existing`):** Narrows each
+  already-built order to the HF source files not yet covered by existing output, for a
+  CESM/E3SM run that was continued from a restart after time series were already generated
+  for the earlier portion. Scans the output directory (its own directory only, not
+  recursively) for files matching `{ts_path_template}.{primary_var}.*.nc`, and takes the
+  latest raw time any *complete* (`check_timeseries_integrity`-passing) match covers as the
+  cutoff. Drops each `hf_paths` entry *whole* if its own last raw time step does not exceed
+  that cutoff, keeps it whole otherwise — **file granularity, not step granularity**: a
+  continued run always starts a fresh HF file at the restart boundary (a stream's step count
+  can't change mid-run without a namelist edit and a fresh run), so no single file can
+  straddle "already covered" and "genuinely new," and there is nothing to split within one.
+  `ts_start_index`/`ts_end_index` are therefore left untouched by this modifier; the
+  trimmed order's `ts_string` is recomputed from the first surviving file's own first
+  timestep so the output name still describes what it actually covers. An order with no
+  existing output is untouched; one already covered in full is dropped. Per-order
+  granularity means two variables in the same group can have independently different resume
+  points. Does not detect or fill a gap between two disjoint existing outputs, and does not
+  warn about one either — see `conventions.md`. Library-only for now: nothing in `cli.py`
+  or the bundled YAML configs calls it.
 - **Fragmented (tiled) files:** Some models split one time step *spatially* across
   several files (e.g. per latitude band); detected by paths not ending in `.nc` and
   merged by matching non-time dimension bounds (`merge_fragmented_groups`).
@@ -69,15 +89,17 @@
 - **Order:** A plain dict describing one TS output file to generate — the unit of work
   of `TSCollection`. See [architecture.md](architecture.md) for the exact schema.
 - **Variable cache / memory limit:** `MHFDataset` reads a group's files one at a time and
-  keeps *data* in memory rather than keeping *handles* open. On `open()` it caches every
-  secondary variable plus as many primaries as fit under `memory_limit_bytes`
+  keeps *data* in memory rather than keeping *handles* open. On `open()` it caches as
+  many secondaries, then primaries, as fit under `memory_limit_bytes`
   (`execute(memory_limit_bytes=...)`, CLI `--memory-limit`, in GB); the rest are read on
   demand and cached if they fit. Caching is all-or-nothing per variable and per group, and
   a variable's cache is released when reads move on to the next variable. The limit is
-  per worker process, so the pipeline-wide ceiling is roughly `tscores × limit`; the
-  default is `timeseries.DEFAULT_MEMORY_LIMIT_BYTES` (4 GiB per worker) — a bare
-  `MHFDataset` constructed directly is still unbounded. Data too big to cache is read
-  from disk per run of consecutive steps, fetching only the needed slice.
+  per worker process and covers only the cache: the pipeline-wide peak is roughly
+  `parent metadata + tscores × (limit + overhead)`. The default is
+  `timeseries.DEFAULT_MEMORY_LIMIT_BYTES` (4 GiB per worker) — a bare `MHFDataset`
+  constructed directly is still unbounded. Data too big to cache is read from disk per
+  run of consecutive steps, fetching only the needed slice. All reads are raw (no
+  masking, no `scale_factor` applied), so packed data is copied as stored.
 - **Lazy date decoding:** `cftime.num2date` is measurably expensive per file, and the
   pipeline works almost entirely on raw float time values, which order identically to
   their decoded dates within one `(units, calendar)` reference. `get_meta_from_path`
@@ -85,15 +107,18 @@
   grouping, slicing, timestamp ranges) stays in the float domain and only endpoint
   values are decoded, via `netCDFMeta.decode_time_values` /
   `decode_time_bounds_values`. Year-window membership is tested against per-reference
-  float boundaries from `hfcollection.get_year_boundary_num`. Cross-file comparisons use
-  the decoded CFTime endpoints, so mixed time references between files stay correct.
+  float boundaries from `hfcollection.get_year_boundary_num`. Cross-file comparisons in
+  `HFCollection`'s year/slice/timestep math use decoded CFTime endpoints, so mixed time
+  references stay correct there. Within a group, `sort_along_time`, `MHFDataset` and
+  the written time axis still assume one reference (see `conventions.md`).
   Sibling flags (`load_time_bounds`, `load_variable_attrs`, `compute_dim_bounds`) skip
   other per-file reads; each of those getters raises rather than lying when its data was
   skipped, while `get_cftimes()`/`get_cftime_bounds()` simply decode on first call.
 - **Integrity stamp:** Every completed TS file gets a `gents_version` global attribute.
   Dual use: (1) output files lacking it are considered corrupt/partial and are
-  regenerated; (2) *input* files carrying it are recognized as GenTS output and
-  excluded from processing (`netCDFMeta.is_valid`).
+  regenerated, while stamped ones are not rewritten (the check happens at write time,
+  after the group's input has already been read); (2) *input* files carrying it are
+  recognized as GenTS output and excluded from processing (`netCDFMeta.is_valid`).
 - **Conforming chunking:** Output chunking convention checked by
   `check_timeseries_conform`: `time` stored contiguously; large variables chunked along
   time so each chunk is ≈ 4 MiB (CMOR-friendly). Files < 4 MiB are stored contiguously.
