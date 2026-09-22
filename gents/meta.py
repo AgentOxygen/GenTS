@@ -498,7 +498,8 @@ def get_meta_from_path(path: str):
     Opens a netCDF file and returns a :class:`netCDFMeta` built from it.
 
     Picklable factory, so metadata can be read inside ``ProcessPoolExecutor``
-    workers.
+    workers. Dates are left undecoded and per-variable attributes unread; the
+    pipeline needs neither from collection metadata.
 
     :param path: Path to the netCDF history file.
     :type path: str
@@ -509,7 +510,7 @@ def get_meta_from_path(path: str):
     ds_meta = None
     try:
         with GenTSDataStore(path, 'r') as ds:
-            ds_meta = netCDFMeta(ds, path, decode_dates=False)
+            ds_meta = netCDFMeta(ds, path, decode_dates=False, load_variable_attrs=False)
     except Exception as e:
         raise type(e)(f"{e} Path: {path}") from e
 
