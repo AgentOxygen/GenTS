@@ -405,3 +405,28 @@ def test_MHFDataset_memory_limited_reads_correct_slices(tmp_path):
         vals = ds.get_var_vals("VAR0", time_index_start=start, time_index_end=end)
         assert np.array_equal(vals, source[start:end])
     ds.close()
+
+
+def test_MHFDataset_reads_raw_values_on_every_path(tmp_path):
+    """Preloaded, lazily cached and uncacheable direct reads all return the raw on-disk
+    values, as open() does: no scaling (which corrupts packed integers) and no masking
+    (whose uncounted mask array lets the cache overrun memory_limit_bytes)."""
+    raw = np.arange(36, dtype="i2").reshape(3, 3, 4)
+    paths = []
+    for findex in range(3):
+        path = str(tmp_path / f"testing.hf.{findex:05d}.nc")
+        generate_history_file(path, [findex * 30.0], [[findex * 30.0, (findex + 1) * 30.0]], num_vars=1, dtype="i2")
+        with GenTSDataStore(path, "a") as ds:
+            ds["VAR0"].scale_factor = 0.5
+            ds["VAR0"].set_auto_scale(False)
+            ds["VAR0"][:] = raw[findex:findex + 1]
+        paths.append(path)
+
+    preloaded = MHFDataset(paths)
+    lazy = MHFDataset(paths, preload_primaries=False)
+    direct = MHFDataset(paths, memory_limit_bytes=1)
+    for ds in (preloaded, lazy, direct):
+        with ds:
+            assert np.array_equal(ds.get_var_vals("VAR0"), raw)
+            for cached in ds._MHFDataset__data_var_cache.get("VAR0", []):
+                assert not np.ma.isMaskedArray(cached)

@@ -275,6 +275,7 @@ class MHFDataset:
 
         for index, path in enumerate(self.__hf_files):
             with GenTSDataStore(path, 'r') as hf_ds:
+                hf_ds.set_auto_maskandscale(False)
                 if index == 0:
                     for var_name in notime_vars_to_cache:
                         self.__data_var_cache[var_name] = hf_ds[var_name][:]
@@ -320,6 +321,7 @@ class MHFDataset:
         else:
             # Too big to cache whole; reread just the requested region.
             with GenTSDataStore(self.__hf_files[index], 'r') as hf_ds:
+                hf_ds.set_auto_maskandscale(False)
                 if time_slice is None:
                     return hf_ds[var_name][:]
                 return hf_ds[var_name][time_slice]
