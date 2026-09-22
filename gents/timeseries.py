@@ -18,6 +18,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import traceback
 import logging
 import copy
+import gc
 import warnings
 
 logger = logging.getLogger(__name__)
@@ -1009,18 +1010,25 @@ class TSCollection:
                 })
         prog_bar = ProgressBar(total=len(optimized_orders), label="Generating Timeseries", quiet=not show_progress)
         if self.__num_processes > 1:
-            with ProcessPoolExecutor(max_workers=self.__num_processes) as executor:
-                futures = {executor.submit(generate_time_series, **args): args for args in optimized_orders}
-                for future in as_completed(futures):
-                    try:
-                        results.append(future.result())
-                    except Exception as exc:
-                        order = futures[future]
-                        logger.warning(f"Failed to generate time series for {order['ts_path_template']}: {exc}", exc_info=True)
-                        if raise_errors:
-                            raise
-                    finally:
-                        prog_bar.step()
+            # Forked workers share the parent's heap copy-on-write. Freezing the GC
+            # keeps collections from writing to those pages, so workers don't end up
+            # copying the collection's metadata.
+            gc.freeze()
+            try:
+                with ProcessPoolExecutor(max_workers=self.__num_processes) as executor:
+                    futures = {executor.submit(generate_time_series, **args): args for args in optimized_orders}
+                    for future in as_completed(futures):
+                        try:
+                            results.append(future.result())
+                        except Exception as exc:
+                            order = futures[future]
+                            logger.warning(f"Failed to generate time series for {order['ts_path_template']}: {exc}", exc_info=True)
+                            if raise_errors:
+                                raise
+                        finally:
+                            prog_bar.step()
+            finally:
+                gc.unfreeze()
         else:
             for args in optimized_orders:
                 try:
