@@ -390,8 +390,9 @@ def merge_fragmented_groups(hf_groups, hf_meta_map):
 
     dim_hashes = {}
     for pattern in fragmented_groups:
-        dims = hf_meta_map[fragmented_groups[pattern][0]].get_dim_bounds()
-        dims = {variable: dims[variable] for variable in dims if variable != "time"}
+        init_meta = hf_meta_map[fragmented_groups[pattern][0]]
+        dims = init_meta.get_dim_bounds()
+        dims = {variable: dims[variable] for variable in dims if variable != init_meta.get_time_var_name()}
         dims_hash = str(dims)
 
         if dims_hash not in dim_hashes:

@@ -812,3 +812,20 @@ def test_slice_start_year_after_data_extends_windows_backwards(tmp_path):
 
     assert [group.split("[sorting_pivot]")[1] for group in groups] == ["1849-1850", "1851-1852"]
     assert sum(len(paths) for paths in groups.values()) == 36
+
+
+@pytest.mark.parametrize("time_name", ["time", "Time"])
+def test_fragmented_tiles_merge_whatever_the_time_name(tmp_path, time_name):
+    """Tiled files merge into one group across timesteps whether the time
+    coordinate is spelled 'time' or 'Time' (it differs per timestep, so it must be
+    left out of the tiles' coordinate key)."""
+    dim_shapes = {time_name: None, "bnds": 2, "lat": 1, "lon": 2}
+    for step in range(4):
+        for tile, lat in enumerate([-45.0, 45.0]):
+            generate_history_file(f"{tmp_path}/testing.hf.{step:05d}.nc.{tile}", [(step+0.5)*30], [[step*30, (step+1)*30]], num_vars=1,
+                                  time_name=time_name, time_bounds_name=f"{time_name}_bounds", dim_shapes=dim_shapes,
+                                  dim_vals={"lat": [lat], "lon": [0.0, 90.0]})
+    hf_collection = HFCollection(tmp_path)
+    hf_collection.pull_metadata()
+
+    assert [len(paths) for paths in hf_collection.get_groups().values()] == [8]
