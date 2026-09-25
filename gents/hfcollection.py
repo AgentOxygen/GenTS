@@ -589,6 +589,9 @@ class HFCollection:
             meta_map = self.__hf_to_meta_map
         if hf_groups is None and self.is_pulled():
             hf_groups = self.get_groups()
+            if meta_map is not self.__hf_to_meta_map:
+                hf_groups = {group: [path for path in paths if path in meta_map] for group, paths in hf_groups.items()}
+                hf_groups = {group: paths for group, paths in hf_groups.items() if paths}
         if step_map is None:
             step_map = self.__hf_to_timestep_delta_map
         if multistep_slice_map is None:
@@ -843,11 +846,7 @@ class HFCollection:
                 filtered_path_map[path] = self.__hf_to_meta_map[path]
 
         logger.debug(f"Filtered from {start_year}-{start_month:02d}-{start_day:02d} to {end_year}-{end_month:02d}-{end_day:02d} applied to following glob patterns: '{glob_patterns}'")
-        hf_groups = None
-        if self.__hf_groups is not None:
-            hf_groups = sort_hf_groups(list(filtered_path_map.keys()))
-
-        return self.copy(meta_map=filtered_path_map, hf_groups=hf_groups)
+        return self.copy(meta_map=filtered_path_map)
 
     def get_groups(self, check_fragmented=True):
         """

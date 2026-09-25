@@ -774,3 +774,27 @@ def test_collections_do_not_share_multistep_slices(straddling_case):
         hf_collection.pull_metadata()
         assert hf_collection.get_multistep_slices(next(iter(hf_collection))) is None
         hf_collection.slice_groups(slice_size_years=1, start_year=CASE_START_YEAR)
+
+
+def test_filters_after_pull_drop_filtered_paths_from_groups(structured_case):
+    """include()/exclude() after pull_metadata() keep only surviving paths in the
+    inherited groups, so slice_groups() doesn't look up a dropped file."""
+    input_head_dir, output_head_dir = structured_case
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection.pull_metadata()
+
+    for filtered in (hf_collection.include("*/0_dir/*"), hf_collection.exclude("*/0_dir/*")):
+        grouped_paths = [path for paths in filtered.get_groups().values() for path in paths]
+        assert sorted(grouped_paths) == sorted(filtered)
+        filtered.slice_groups()
+
+
+def test_include_years_keeps_merged_and_sliced_groups(spatial_fragment_case):
+    """A time filter that drops nothing leaves fragment merging and slicing intact."""
+    input_head_dir, output_head_dir = spatial_fragment_case
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection.pull_metadata()
+    sliced = hf_collection.slice_groups(slice_size_years=1)
+
+    assert hf_collection.include_years(0, 99999).get_groups() == hf_collection.get_groups()
+    assert sliced.include_years(0, 99999).get_groups() == sliced.get_groups()
