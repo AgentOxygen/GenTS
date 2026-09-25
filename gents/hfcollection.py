@@ -480,12 +480,15 @@ class HFCollection:
             files (see :meth:`get_multistep_slices`).
         :type multistep_slice_map: dict or None
         :param dask_client: Deprecated. Pass ``num_processes`` instead.
-        :raises FileNotFoundError: If ``meta_map`` is not given and no file under
-            ``hf_dir`` matches the pattern.
+        :raises FileNotFoundError: If ``meta_map`` is not given and ``hf_dir`` is not
+            an existing directory, or no file under it matches the pattern.
         """
         if dask_client is not None:
             warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism or reference the ReadTheDocs for using Dask..", DeprecationWarning, stacklevel=2)
 
+        # Checked before abspath, which would turn "" into the current directory.
+        if meta_map is None and not os.path.isdir(hf_dir):
+            raise FileNotFoundError(f"History file directory '{hf_dir}' does not exist.")
         # Absolute (symlinks kept), so every path and group key starts with it and
         # output templates can strip it as a prefix.
         hf_dir = os.path.abspath(hf_dir)

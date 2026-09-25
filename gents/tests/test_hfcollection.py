@@ -504,10 +504,15 @@ def test_get_timestep_delta_matches_reference(simple_case, multistep_large_case,
         assert hf_collection.get_timestep_delta(path) == timedelta(0)
 
 
-def test_no_history_files():
-    """No history files found should raise an error."""
-    with pytest.raises(FileNotFoundError) as exc:
-        empty_hfcollection = HFCollection("")
+def test_no_history_files(tmp_path, monkeypatch):
+    """An empty or missing input path raises, rather than falling back to the current
+    directory (run from one holding .nc files, as the Docker test stages are)."""
+    generate_history_file(f"{tmp_path}/stray.nc", [15], [[0, 30]])
+    monkeypatch.chdir(tmp_path)
+
+    for missing in ("", "no_such_dir"):
+        with pytest.raises(FileNotFoundError):
+            HFCollection(missing)
 
 
 def test_extraneous_hfcollection(extraneous_file_case):
