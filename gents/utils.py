@@ -119,7 +119,7 @@ class ProgressBar:
         self.count += 1
         if self.quiet:
             return
-        percent = self.count / self.total
+        percent = self.count / self.total if self.total else 1.0
         filled_length = int(self.length * percent)
         bar = "█" * filled_length + "-" * (self.length - filled_length)
         elapsed = time() - self.start_time

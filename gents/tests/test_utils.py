@@ -65,6 +65,18 @@ def test_progress_bar_silent_without_a_terminal(monkeypatch):
     assert bar.count == 2
 
 
+def test_progress_bar_with_nothing_to_do_draws_complete(monkeypatch):
+    """A zero-total bar (an empty execute(), e.g. after skip_existing() finds
+    everything done) draws as complete on a terminal instead of dividing by zero."""
+    stdout = FakeStdout(tty=True)
+    monkeypatch.setattr(sys, "stdout", stdout)
+
+    ProgressBar(total=0, label="Testing")
+
+    assert "100.00%" in stdout.written
+    assert stdout.written.endswith("\n")
+
+
 @pytest.fixture(scope="session")
 def log_output_dir(tmp_path_factory):
     """Session-scoped temp directory for log file output."""
