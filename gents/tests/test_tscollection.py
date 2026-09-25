@@ -848,3 +848,28 @@ def test_relative_input_dir_keeps_output_names(tmp_path, monkeypatch):
     for cwd, input_dir in ((tmp_path, "case"), (tmp_path / "case", ".")):
         monkeypatch.chdir(cwd)
         assert TSCollection(HFCollection(input_dir), output_dir)[0]["ts_path_template"] == expected
+
+
+def test_auxiliary_order_keeps_every_step_when_first_variable_is_static(tmp_path):
+    """A group with no primaries writes every time step even when its first variable
+    is static (its first dimension used to become the step count)."""
+    input_dir, output_dir = tmp_path / "hist", tmp_path / "out"
+    input_dir.mkdir()
+    for index in range(12):
+        with GenTSDataStore(f"{input_dir}/testing.hf.{index:05d}.nc", "w") as ds:
+            ds.createDimension("ny", 3)
+            ds.createDimension("time", None)
+            ds.createDimension("nbnd", 2)
+            ds.createVariable("area", float, ("ny",))[:] = [1.0, 2.0, 3.0]
+            time = ds.createVariable("time", float, ("time",))
+            time.units, time.calendar = "days since 1850-01-01", "noleap"
+            time[:] = [(index + 0.5) * 30]
+            ds.createVariable("time_bnds", float, ("time", "nbnd"))[:] = [[index * 30, (index + 1) * 30]]
+
+    ts_collection = TSCollection(HFCollection(input_dir), str(output_dir))
+    assert [order["primary_var"] for order in ts_collection] == ["auxiliary"]
+    ts_collection.execute(raise_errors=True, show_progress=False)
+
+    with GenTSDataStore(f"{output_dir}/testing.hf.auxiliary.185001-185012.nc", "r") as ds:
+        assert len(ds["time"]) == 12
+        assert ds["area"][:].tolist() == [1.0, 2.0, 3.0]

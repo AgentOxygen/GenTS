@@ -187,14 +187,14 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
 
     if ts_start_index is None:
         ts_start_index = 0
+    if ts_end_index is None:
+        ts_end_index = len(agg_hf_ds.get_time_vals())
 
     with GenTSDataStore(ts_out_path, mode="w") as ts_ds:
         if primary_var != "auxiliary":
             var_shape = agg_hf_ds.get_var_data_shape(primary_var)
             var_dims = agg_hf_ds.get_var_dimensions(primary_var)
             
-            if ts_end_index is None:
-                ts_end_index = var_shape[0]
             var_shape[0] = ts_end_index - ts_start_index
 
             for index, dim in enumerate(var_dims):
@@ -246,8 +246,6 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
             var_shape = agg_hf_ds.get_var_data_shape(secondary_var)
             var_dims = agg_hf_ds.get_var_dimensions(secondary_var)
 
-            if ts_end_index is None:
-                ts_end_index = var_shape[0]
             if "time" in var_dims:
                 var_shape[0] = ts_end_index - ts_start_index
 
