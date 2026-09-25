@@ -327,3 +327,26 @@ def test_cli_compression_overrides_model_config(tmp_path):
     assert len(ts_paths) == 1
     with GenTSDataStore(ts_paths[0], "r") as ts_ds:
         assert ts_ds["VAR0"].filters()["complevel"] == 5
+
+
+def test_parse_align_method_rejects_unknown_methods():
+    """--align_method only accepts the four methods slice_groups/update_ts_orders know."""
+    with patch.object(sys, "argv", ["run_gents", "hf_dir", "--align_method", "bogus_method"]):
+        with pytest.raises(SystemExit):
+            parse_arguments()
+
+
+def test_cli_align_method_used_for_slicing_and_names(tmp_path):
+    """--align_method reaches both slicing and output naming. With end_bound, each
+    December (ending on January 1st) moves into the next year's slice."""
+    for index in range(24):  # monthly, 1850-1851
+        generate_history_file(f"{tmp_path}/testing.hf.{index:05d}.nc", [(index+0.5)*30], [[index*30, (index+1)*30]], num_vars=1)
+    output_dir = tmp_path / "out"
+
+    with patch.object(sys, "argv", [
+        "run_gents", str(tmp_path), "-o", str(output_dir), "--slice", "1", "--align_method", "end_bound"
+    ]):
+        main()
+
+    ranges = sorted(path.name.split(".")[-2] for path in find_files(output_dir, "*.nc"))
+    assert ranges == ["185002-185012", "185101-185112", "185201-185201"]
