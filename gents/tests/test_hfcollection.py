@@ -847,3 +847,18 @@ def test_copies_reuse_paths_instead_of_rewalking(tmp_path):
     assert walks.call_count == 1  # construction only; the filters reuse its paths
     assert len(filtered) == 2
     assert len(emptied) == 0
+
+
+@pytest.mark.parametrize("method", ["midpoint", "start_bound", "end_bound", "direct_time"])
+def test_slice_groups_keeps_every_file_for_every_alignment(tmp_path, method):
+    """Slice windows span the years of the same aligned times the files are assigned
+    by. With end_bound, the last December ends on January 1st of the next year and
+    used to fall past the last (midpoint-based) window."""
+    for index in range(24):  # monthly, 1850-1851
+        generate_history_file(f"{tmp_path}/testing.hf.{index:05d}.nc", [(index+0.5)*30], [[index*30, (index+1)*30]], num_vars=1)
+    hf_collection = HFCollection(tmp_path)
+    hf_collection.pull_metadata()
+
+    groups = hf_collection.slice_groups(slice_size_years=1, start_year=None, time_alignment_method=method).get_groups()
+
+    assert sum(len(paths) for paths in groups.values()) == 24

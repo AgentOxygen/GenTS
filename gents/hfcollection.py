@@ -162,34 +162,61 @@ def get_year_boundary_num(year, units, calendar):
     return get_time_boundary_num(units, calendar, year)
 
 
-def get_year_bounds(hf_to_meta_map):
+def get_aligned_times(meta, time_alignment_method="midpoint"):
+    """
+    Returns one file's representative time for each step, with the reference
+    needed to decode them.
+
+    ``'midpoint'``, ``'start_bound'`` and ``'end_bound'`` pick from the time bounds;
+    ``'direct_time'``, or a file without bounds, uses the time values themselves.
+
+    :param meta: Metadata of the history file.
+    :type meta: gents.meta.netCDFMeta
+    :param time_alignment_method: ``'midpoint'``, ``'start_bound'``,
+        ``'end_bound'`` or ``'direct_time'``.
+    :type time_alignment_method: str
+    :returns: ``(times, units, calendar)``.
+    :rtype: tuple[numpy.ndarray, str, str]
+    :raises ValueError: If ``time_alignment_method`` is not one of those four.
+    """
+    float_bnds = meta.get_float_time_bounds()
+    if float_bnds is None or time_alignment_method == "direct_time":
+        times = np.ma.getdata(np.atleast_1d(meta.get_float_times()))
+        return times, meta.get_time_units(), meta.get_time_calendar()
+
+    bnds = np.ma.getdata(float_bnds)
+    if time_alignment_method == "midpoint":
+        times = bnds[:, 0] + (bnds[:, 1] - bnds[:, 0]) / 2
+    elif time_alignment_method == "start_bound":
+        times = bnds[:, 0]
+    elif time_alignment_method == "end_bound":
+        times = bnds[:, 1]
+    else:
+        raise ValueError(f"'{time_alignment_method}' is an invalid time-alignment method. Valid methods are ['direct_time', 'midpoint', 'start_bound', 'end_bound']")
+    return times, meta.get_time_bounds_units(), meta.get_time_bounds_calendar()
+
+
+def get_year_bounds(hf_to_meta_map, time_alignment_method="midpoint"):
     """
     Returns the ``(min_year, max_year)`` covered by a set of history files.
 
-    A file's year comes from the midpoint of each time bound, or from the time
-    value itself when the file has no bounds.
+    Years come from each step's aligned time (see :func:`get_aligned_times`), the
+    same times :meth:`HFCollection.slice_groups` assigns files to windows by.
 
     :param hf_to_meta_map: ``{path: netCDFMeta}`` mapping to inspect.
     :type hf_to_meta_map: dict
+    :param time_alignment_method: See :func:`get_aligned_times`.
+    :type time_alignment_method: str
     :rtype: tuple[int, int]
     """
     min_year = np.inf
     max_year = -np.inf
 
-    for path in list(hf_to_meta_map.keys()):
-        meta = hf_to_meta_map[path]
-        float_bounds = meta.get_float_time_bounds()
-        # Midpoints are computed on the raw values, which order identically to
-        # their decoded dates, so only the two extremes need decoding per file.
-        if float_bounds is None:
-            midpoints = np.ma.getdata(np.atleast_1d(meta.get_float_times()))
-            decode = meta.decode_time_values
-        else:
-            bounds = np.ma.getdata(float_bounds)
-            midpoints = bounds[:, 0] + (bounds[:, 1] - bounds[:, 0]) / 2
-            decode = meta.decode_time_bounds_values
-
-        extremes = np.atleast_1d(decode(np.array([np.min(midpoints), np.max(midpoints)])))
+    for meta in hf_to_meta_map.values():
+        # Raw values order identically to their decoded dates, so only the two
+        # extremes need decoding per file.
+        times, units, calendar = get_aligned_times(meta, time_alignment_method)
+        extremes = np.atleast_1d(num2date(np.array([np.min(times), np.max(times)]), units=units, calendar=calendar))
         if extremes[-1].year > max_year:
             max_year = extremes[-1].year
         if extremes[0].year < min_year:
@@ -938,7 +965,7 @@ class HFCollection:
 
             group_meta_map = {path: self.__hf_to_meta_map[path] for path in hf_paths}
             
-            min_year, max_year = get_year_bounds(group_meta_map)
+            min_year, max_year = get_year_bounds(group_meta_map, time_alignment_method)
             if start_year is not None:
                 if start_year > min_year:
                     min_year -= (min_year - start_year) % slice_size_years
@@ -950,24 +977,7 @@ class HFCollection:
             hf_slices = {}
             boundary_cache = {}
             for hf_path in hf_paths:
-                meta_ds = self.__hf_to_meta_map[hf_path]
-                float_bnds = meta_ds.get_float_time_bounds()
-                if float_bnds is None or time_alignment_method == "direct_time":
-                    times = np.ma.getdata(np.atleast_1d(meta_ds.get_float_times()))
-                    ref_units = meta_ds.get_time_units()
-                    ref_calendar = meta_ds.get_time_calendar()
-                else:
-                    bnds = np.ma.getdata(float_bnds)
-                    if time_alignment_method == "midpoint":
-                        times = bnds[:, 0] + (bnds[:, 1] - bnds[:, 0]) / 2
-                    elif time_alignment_method == "start_bound":
-                        times = bnds[:, 0]
-                    elif time_alignment_method == "end_bound":
-                        times = bnds[:, 1]
-                    else:
-                        raise ValueError(f"'{time_alignment_method}' is an invalid time-alignment method. Valid methods are ['direct_time', 'midpoint', 'start_bound', 'end_bound']")
-                    ref_units = meta_ds.get_time_bounds_units()
-                    ref_calendar = meta_ds.get_time_bounds_calendar()
+                times, ref_units, ref_calendar = get_aligned_times(self.__hf_to_meta_map[hf_path], time_alignment_method)
 
                 for time_slice in time_slices:
                     cache_key = (time_slice, ref_units, ref_calendar)
