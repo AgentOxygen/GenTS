@@ -466,6 +466,7 @@ class HFCollection:
             raise FileNotFoundError(f"No files matching '{hf_glob_pattern}' found in '{hf_dir}'")
 
         self.__hf_to_meta_map = {}
+        self.__pulled = False
         self.__hf_multistep_slices = multistep_slice_map
         if self.__hf_multistep_slices is None:
             self.__hf_multistep_slices = {}
@@ -509,12 +510,14 @@ class HFCollection:
         """
         Returns whether metadata has been loaded for every file in the collection.
 
+        Cached once true: entries only ever go from ``None`` to loaded, so a pulled
+        collection stays pulled. The per-file getters call this once per file.
+
         :rtype: bool
         """
-        for path in self.__hf_to_meta_map:
-            if self.__hf_to_meta_map[path] is None:
-                return False
-        return True
+        if not self.__pulled:
+            self.__pulled = all(meta is not None for meta in self.__hf_to_meta_map.values())
+        return self.__pulled
 
     def get_multistep_slices(self, hf_path):
         """
