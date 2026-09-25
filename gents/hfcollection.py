@@ -857,7 +857,8 @@ class HFCollection:
         """
         Returns the collection's ``{group ID: [paths]}`` mapping.
 
-        Groups are built by :func:`sort_hf_groups` on the first call and cached.
+        Groups are built by :func:`sort_hf_groups` on the first call and cached,
+        with each group's paths in time order (by decoded first time value).
 
         :param check_fragmented: Also merge spatially tiled groups via
             :func:`merge_fragmented_groups`, which requires metadata.
@@ -870,8 +871,16 @@ class HFCollection:
             if check_fragmented:
                 self.check_pulled()
                 self.__hf_groups = merge_fragmented_groups(self.__hf_groups, self.__hf_to_meta_map)
+                self.__hf_groups = {
+                    group: sorted(paths, key=self.__first_time)
+                    for group, paths in self.__hf_groups.items()
+                }
 
         return self.__hf_groups
+
+    def __first_time(self, hf_path):
+        meta = self.__hf_to_meta_map[hf_path]
+        return meta.decode_time_values(np.ma.getdata(np.atleast_1d(meta.get_float_times()))[0])
 
     def slice_groups(self, slice_size_years=10, start_year=0, pattern="*", time_alignment_method="midpoint"):
         """

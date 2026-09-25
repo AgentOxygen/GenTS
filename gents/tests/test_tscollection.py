@@ -873,3 +873,27 @@ def test_auxiliary_order_keeps_every_step_when_first_variable_is_static(tmp_path
     with GenTSDataStore(f"{output_dir}/testing.hf.auxiliary.185001-185012.nc", "r") as ds:
         assert len(ds["time"]) == 12
         assert ds["area"][:].tolist() == [1.0, 2.0, 3.0]
+
+
+def test_groups_follow_time_order_when_file_names_do_not(tmp_path):
+    """Cut indices assume a group's first path is its earliest file, so groups are
+    ordered by time even when file names sort the other way."""
+    input_dir, output_dir = tmp_path / "hist", tmp_path / "out"
+    input_dir.mkdir()
+    for k in range(5):  # 6-step files from April 1850, named in reverse time order
+        months = np.arange(3 + 6*k, 9 + 6*k)
+        path = f"{input_dir}/testing.hf.{9 - k:05d}.nc"
+        generate_history_file(path, (months + 0.5)*30, [[m*30, (m+1)*30] for m in months], num_vars=1)
+        with GenTSDataStore(path, "a") as ds:
+            ds["VAR0"][:] = months[:, None, None] * np.ones((len(months), 3, 4))
+
+    hf_collection = HFCollection(input_dir)
+    hf_collection.pull_metadata()
+    for paths in hf_collection.get_groups().values():
+        first_times = [hf_collection[path].get_float_times()[0] for path in paths]
+        assert first_times == sorted(first_times)
+
+    ts_collection = TSCollection(hf_collection.slice_groups(slice_size_years=1, start_year=CASE_START_YEAR), str(output_dir))
+    ts_collection.execute(raise_errors=True, show_progress=False)
+    with GenTSDataStore(f"{output_dir}/testing.hf.VAR0.185101-185112.nc", "r") as ds:
+        assert ds["VAR0"][:, 0, 0].tolist() == list(range(12, 24))
