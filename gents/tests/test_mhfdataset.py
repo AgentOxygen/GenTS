@@ -430,3 +430,22 @@ def test_MHFDataset_reads_raw_values_on_every_path(tmp_path):
             assert np.array_equal(ds.get_var_vals("VAR0"), raw)
             for cached in ds._MHFDataset__data_var_cache.get("VAR0", []):
                 assert not np.ma.isMaskedArray(cached)
+
+
+def test_MHFDataset_static_variable_lazily_cached_returns_whole_array(tmp_path):
+    """A no-time variable that doesn't fit the preload but is cached lazily comes back
+    whole, not truncated to its first row."""
+    grid = np.arange(20, dtype=float).reshape(4, 5)
+    paths = []
+    for findex in range(3):
+        path = str(tmp_path / f"testing.hf.{findex:05d}.nc")
+        generate_history_file(path, [findex * 30.0], [[findex * 30.0, (findex + 1) * 30.0]], num_vars=1)
+        with GenTSDataStore(path, "a") as ds:
+            ds.createDimension("ny", 4)
+            ds.createDimension("nx", 5)
+            ds.createVariable("grid", float, ("ny", "nx"))[:] = grid
+        paths.append(path)
+
+    # 300 B: too small to preload grid for 3 files (480 B), big enough to cache it lazily (160 B).
+    with MHFDataset(paths, memory_limit_bytes=300) as ds:
+        assert np.array_equal(ds.get_var_vals("grid"), grid)

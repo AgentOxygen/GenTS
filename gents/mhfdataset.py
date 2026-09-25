@@ -278,8 +278,7 @@ class MHFDataset:
                 hf_ds.set_auto_maskandscale(False)
                 if index == 0:
                     for var_name in notime_vars_to_cache:
-                        self.__data_var_cache[var_name] = hf_ds[var_name][:]
-                
+                        self.__data_var_cache[var_name] = [hf_ds[var_name][:]]
                 for var_name in time_vars_to_cache:
                     if var_name in self.__data_var_cache:
                         self.__data_var_cache[var_name].append(hf_ds[var_name][:])
