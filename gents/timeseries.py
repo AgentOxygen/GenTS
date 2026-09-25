@@ -929,8 +929,9 @@ class TSCollection:
         """
         Runs every order, writing the time series files.
 
-        Orders sharing a first source file and time slice are batched together so
-        each group of history files is opened once rather than once per variable.
+        Orders sharing source files, time slice, output path template and
+        secondary variables are batched together so each group of history files is
+        opened once rather than once per variable.
         Work runs over a process pool when ``num_processes > 1`` and in-process
         otherwise; per-order failures are logged and the rest of the run continues.
 
@@ -960,10 +961,10 @@ class TSCollection:
         if optimize:
             order_index_merge_map = {}
             for index, order in enumerate(self.__orders):
-                first_hf_path = order["hf_paths"][0]
-                start_index = order["ts_start_index"]
-                end_index = order["ts_end_index"]
-                key = f"{first_hf_path}.{start_index}.{end_index}"
+                key = (
+                    tuple(order["hf_paths"]), order["ts_start_index"], order["ts_end_index"],
+                    order["ts_path_template"], tuple(order["secondary_vars"]),
+                )
                 if key in order_index_merge_map:
                     order_index_merge_map[key].append(index)
                 else:

@@ -917,3 +917,18 @@ def test_time_dimension_name_is_not_assumed_lowercase(tmp_path, time_name):
         assert ds.dimensions[time_name].isunlimited()
         assert ds["VAR0"][:, 0, 0].tolist() == [0, 1, 2]
         assert ds[f"{time_name}_bounds"][:].tolist() == [[0, 30], [30, 60], [60, 90]]
+
+
+def test_batched_execute_keeps_per_variable_output_paths(tmp_path):
+    """execute(optimize=True) batches variables that share source files, but each
+    still goes to its own ts_path_template (e.g. a var_glob-limited path swap)."""
+    (tmp_path / "hist").mkdir()
+    for index in range(3):
+        generate_history_file(f"{tmp_path}/hist/testing.hf.{index:05d}.nc", [(index+0.5)*30], [[index*30, (index+1)*30]], num_vars=2)
+    output_dir = tmp_path / "out"
+
+    ts_collection = TSCollection(HFCollection(tmp_path), str(output_dir))
+    ts_collection.apply_path_swap("/hist/", "/swapped/", var_glob="VAR1").execute(raise_errors=True, show_progress=False)
+
+    assert isfile(f"{output_dir}/hist/testing.hf.VAR0.185001-185003.nc")
+    assert isfile(f"{output_dir}/swapped/testing.hf.VAR1.185001-185003.nc")
