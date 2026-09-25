@@ -290,3 +290,20 @@ def test_cli_append_keeps_config_filters(structured_case):
     assert len(ts_paths) > 0
     for path in ts_paths:
         assert "/0_dir/" not in str(path)
+
+
+def test_cli_overwrite_rewrites_complete_output(simple_case):
+    """-w/--overwrite rewrites existing complete output; without it, it is kept."""
+    input_head_dir, output_head_dir = simple_case
+    argv = ["run_gents", str(input_head_dir), "-o", str(output_head_dir)]
+    with patch.object(sys, "argv", argv):
+        main()
+    ts_path = find_files(output_head_dir, "*.nc")[0]
+
+    for extra_args, marker_survives in (([], True), (["-w"], False)):
+        with GenTSDataStore(ts_path, "a") as ts_ds:
+            ts_ds.setncattr("marker", "from the previous run")
+        with patch.object(sys, "argv", argv + extra_args):
+            main()
+        with GenTSDataStore(ts_path, "r") as ts_ds:
+            assert ("marker" in ts_ds.ncattrs()) == marker_survives

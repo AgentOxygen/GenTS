@@ -250,6 +250,8 @@ def main():
         hfc = hfc.slice_groups(**slice_batch)
 
     tsc = TSCollection(hfc, args.outputdir, num_processes=args.tscores)
+    if args.overwrite:
+        tsc = tsc.apply_overwrite(path_glob="*")
 
     if args.compression is not None:
         tsc = tsc.apply_compression(alg=args.compression, level=args.level, path_glob="*")
