@@ -527,7 +527,7 @@ class TSCollection:
         orders = []
         for index, glob_template in enumerate(self.__groups):
             hf_paths = self.__groups[glob_template]
-            output_template = glob_template.split(str(self.__hf_collection.get_input_dir()))[1]
+            output_template = glob_template.removeprefix(str(self.__hf_collection.get_input_dir()))
             if "[sorting_pivot]" in output_template:
                 output_template, slice_years = output_template.split("[sorting_pivot]")
                 logger.debug(f"Group [{index+1}/{len(self.__groups)}] {len(hf_paths)} files: {output_template}, sliced to [{slice_years}]")

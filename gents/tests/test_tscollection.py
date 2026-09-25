@@ -832,3 +832,19 @@ def test_trailing_single_file_slice_keeps_last_step(straddling_case):
 
     with GenTSDataStore(f"{output_head_dir}/testing.hf.VAR0.185201-185203.nc", "r") as ds:
         assert ds["VAR0"][:, 0, 0].tolist() == [24, 25, 26]
+
+
+def test_relative_input_dir_keeps_output_names(tmp_path, monkeypatch):
+    """A relative input directory whose name repeats in the file prefix (CESM's
+    archive/<case>/atm/hist/<case>.cam.h0.* run as `run_gents <case>`), or ".",
+    gives the same output template as an absolute one."""
+    hist_dir = tmp_path / "case" / "atm" / "hist"
+    hist_dir.mkdir(parents=True)
+    for index in range(2):
+        generate_history_file(f"{hist_dir}/case.cam.h0.{index:05d}.nc", [(index+0.5)*30], [[index*30, (index+1)*30]], num_vars=1)
+    output_dir = str(tmp_path / "out")
+    expected = f"{output_dir}/atm/hist/case.cam.h0"
+
+    for cwd, input_dir in ((tmp_path, "case"), (tmp_path / "case", ".")):
+        monkeypatch.chdir(cwd)
+        assert TSCollection(HFCollection(input_dir), output_dir)[0]["ts_path_template"] == expected

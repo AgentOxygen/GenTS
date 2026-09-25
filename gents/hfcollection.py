@@ -433,7 +433,9 @@ class HFCollection:
         The pre-computed arguments below are how :meth:`copy` hands state to a
         derived collection; callers normally pass only the first few.
 
-        :param hf_dir: Root directory to search for history files.
+        :param hf_dir: Root directory to search for history files. Made absolute
+            (without resolving symlinks), so relative paths are relative to the
+            current directory at construction.
         :type hf_dir: str
         :param num_processes: Worker processes used for parallel metadata reads.
         :type num_processes: int
@@ -454,6 +456,9 @@ class HFCollection:
         if dask_client is not None:
             warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism or reference the ReadTheDocs for using Dask..", DeprecationWarning, stacklevel=2)
 
+        # Absolute (symlinks kept), so every path and group key starts with it and
+        # output templates can strip it as a prefix.
+        hf_dir = os.path.abspath(hf_dir)
         self.__raw_paths = find_files(hf_dir, hf_glob_pattern)
         self.__num_processes = num_processes
 
