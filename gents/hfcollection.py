@@ -446,13 +446,15 @@ class HFCollection:
         :type hf_groups: dict or None
         :param step_map: Pre-computed ``{path: timedelta}`` mapping.
         :type step_map: dict or None
-        :param hf_glob_pattern: ``fnmatch`` pattern used to discover files.
+        :param hf_glob_pattern: ``fnmatch`` pattern used to discover files. Unused
+            when ``meta_map`` is given: its keys are the collection's paths.
         :type hf_glob_pattern: str
         :param multistep_slice_map: Pre-computed slice indices for multi-timestep
             files (see :meth:`get_multistep_slices`).
         :type multistep_slice_map: dict or None
         :param dask_client: Deprecated. Pass ``num_processes`` instead.
-        :raises FileNotFoundError: If no file under ``hf_dir`` matches the pattern.
+        :raises FileNotFoundError: If ``meta_map`` is not given and no file under
+            ``hf_dir`` matches the pattern.
         """
         if dask_client is not None:
             warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism or reference the ReadTheDocs for using Dask..", DeprecationWarning, stacklevel=2)
@@ -460,29 +462,24 @@ class HFCollection:
         # Absolute (symlinks kept), so every path and group key starts with it and
         # output templates can strip it as a prefix.
         hf_dir = os.path.abspath(hf_dir)
-        self.__raw_paths = find_files(hf_dir, hf_glob_pattern)
         self.__num_processes = num_processes
 
-        if len(self.__raw_paths) == 0:
-            raise FileNotFoundError(f"No files matching '{hf_glob_pattern}' found in '{hf_dir}'")
+        if meta_map is None:
+            meta_map = {path: None for path in find_files(hf_dir, hf_glob_pattern)}
+            if len(meta_map) == 0:
+                raise FileNotFoundError(f"No files matching '{hf_glob_pattern}' found in '{hf_dir}'")
+            if hf_groups is None:
+                logger.info(f"Initialized HFCollection at '{hf_dir}'")
+                logger.info(f"{len(meta_map)} netCDF files found.")
 
-        self.__hf_to_meta_map = {}
+        self.__hf_to_meta_map = meta_map
         self.__pulled = False
         self.__hf_multistep_slices = multistep_slice_map
         if self.__hf_multistep_slices is None:
             self.__hf_multistep_slices = {}
-        if meta_map is None:
-            for path in self.__raw_paths:
-                self.__hf_to_meta_map[path] = None
-        else:
-            self.__hf_to_meta_map = meta_map
-        
+
         self.__hf_groups = hf_groups
         self.__hf_dir = Path(hf_dir)
-
-        if meta_map is None and hf_groups is None:
-            logger.info(f"Initialized HFCollection at '{hf_dir}'")
-            logger.info(f"{len(self.__raw_paths)} netCDF files found.")
 
         self.__hf_to_timestep_delta_map = step_map
 

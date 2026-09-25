@@ -1,3 +1,4 @@
+from unittest.mock import patch
 from gents.tests.test_cases import *
 from gents.hfcollection import *
 from gents.meta import netCDFMeta
@@ -829,3 +830,20 @@ def test_fragmented_tiles_merge_whatever_the_time_name(tmp_path, time_name):
     hf_collection.pull_metadata()
 
     assert [len(paths) for paths in hf_collection.get_groups().values()] == [8]
+
+
+def test_copies_reuse_paths_instead_of_rewalking(tmp_path):
+    """Filters build copies from the parent's paths rather than re-walking the input
+    tree, which also used the default glob and so broke collections built with
+    another (and walked a 41k-file tree 10 times per CLI run)."""
+    for index in range(3):
+        generate_history_file(f"{tmp_path}/testing.hf.{index:05d}.hist", [(index+0.5)*30], [[index*30, (index+1)*30]], num_vars=1)
+
+    with patch("gents.hfcollection.find_files", wraps=find_files) as walks:
+        hf_collection = HFCollection(tmp_path, hf_glob_pattern="*.hist")
+        filtered = hf_collection.include("*").exclude("*00002*")
+        emptied = hf_collection.include([])
+
+    assert walks.call_count == 1  # construction only; the filters reuse its paths
+    assert len(filtered) == 2
+    assert len(emptied) == 0
