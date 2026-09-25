@@ -969,7 +969,7 @@ class HFCollection:
 
                     if len(times) > 1:
                         past_window = times >= upper_num
-                        end_index = int(np.argmax(past_window)) if past_window.any() else len(times) - 1
+                        end_index = int(np.argmax(past_window)) if past_window.any() else len(times)
                         if start_index != 0 or times[-1] >= upper_num:
                             if hf_path in self.__hf_multistep_slices:
                                 assert f"{time_slice[0]}-{time_slice[1]}" not in self.__hf_multistep_slices[hf_path]

@@ -817,3 +817,18 @@ def test_skip_existing_recomputes_cut_indices_for_trimmed_order(straddling_case)
     resumed.execute(raise_errors=True, show_progress=False)
     with GenTSDataStore(f"{output_head_dir}/testing.hf.VAR0.185210-185212.nc", "r") as ds:
         assert ds["VAR0"][:, 0, 0].tolist() == [33, 34, 35]
+
+
+def test_trailing_single_file_slice_keeps_last_step(straddling_case):
+    """A slice made of one multi-step file that starts before the window and ends
+    inside it keeps every in-window step, including the file's last."""
+    input_head_dir, output_head_dir, write = straddling_case
+    write(range(4))  # Apr 1850 .. Mar 1852; 1852's slice is file 3's Jan-Mar alone
+
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection.pull_metadata()
+    ts_collection = TSCollection(hf_collection.slice_groups(slice_size_years=1, start_year=CASE_START_YEAR), str(output_head_dir))
+    ts_collection.execute(raise_errors=True, show_progress=False)
+
+    with GenTSDataStore(f"{output_head_dir}/testing.hf.VAR0.185201-185203.nc", "r") as ds:
+        assert ds["VAR0"][:, 0, 0].tolist() == [24, 25, 26]
