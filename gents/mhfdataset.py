@@ -347,6 +347,15 @@ class MHFDataset:
         """
         return np.prod(self.get_var_data_shape(var_name))*self.get_var_dtype(var_name).itemsize
 
+    def get_time_var_name(self):
+        """
+        Returns the name of the group's time variable, as spelled in its files
+        (``time``, ``Time``, ...).
+
+        :rtype: str
+        """
+        return self.__time_name
+
     def get_time_vals(self):
         """
         Returns the sorted, unique float time values across the group.
@@ -462,7 +471,7 @@ class MHFDataset:
         if var_name in self.__data_coords:
             return self.__data_coords[var_name]
 
-        if "time" not in self.get_var_dimensions(var_name):
+        if self.__time_name not in self.get_var_dimensions(var_name):
             return self.__get_hf_data(0, var_name)
 
         time_vals = self.get_time_vals()[time_index_start:time_index_end]

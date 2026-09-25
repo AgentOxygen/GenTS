@@ -897,3 +897,23 @@ def test_groups_follow_time_order_when_file_names_do_not(tmp_path):
     ts_collection.execute(raise_errors=True, show_progress=False)
     with GenTSDataStore(f"{output_dir}/testing.hf.VAR0.185101-185112.nc", "r") as ds:
         assert ds["VAR0"][:, 0, 0].tolist() == list(range(12, 24))
+
+
+@pytest.mark.parametrize("time_name", ["time", "Time"])
+def test_time_dimension_name_is_not_assumed_lowercase(tmp_path, time_name):
+    """A time dimension spelled 'Time' (MOM6 standalone) is written per step like
+    'time', not treated as static with the first file's data repeated."""
+    for index in range(3):
+        path = f"{tmp_path}/testing.hf.{index:05d}.nc"
+        generate_history_file(path, [(index+0.5)*30], [[index*30, (index+1)*30]], num_vars=1,
+                              time_name=time_name, time_bounds_name=f"{time_name}_bounds")
+        with GenTSDataStore(path, "a") as ds:
+            ds["VAR0"][:] = index
+    output_dir = tmp_path / "out"
+
+    TSCollection(HFCollection(tmp_path), str(output_dir)).execute(raise_errors=True, show_progress=False)
+
+    with GenTSDataStore(f"{output_dir}/testing.hf.VAR0.185001-185003.nc", "r") as ds:
+        assert ds.dimensions[time_name].isunlimited()
+        assert ds["VAR0"][:, 0, 0].tolist() == [0, 1, 2]
+        assert ds[f"{time_name}_bounds"][:].tolist() == [[0, 30], [30, 60], [60, 90]]

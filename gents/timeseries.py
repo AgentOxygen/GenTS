@@ -189,6 +189,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
         ts_start_index = 0
     if ts_end_index is None:
         ts_end_index = len(agg_hf_ds.get_time_vals())
+    time_name = agg_hf_ds.get_time_var_name()
 
     with GenTSDataStore(ts_out_path, mode="w") as ts_ds:
         if primary_var != "auxiliary":
@@ -198,7 +199,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
             var_shape[0] = ts_end_index - ts_start_index
 
             for index, dim in enumerate(var_dims):
-                if dim == "time":
+                if dim == time_name:
                     ts_ds.createDimension(dim, None)
                 else:
                     ts_ds.createDimension(dim, var_shape[index])
@@ -229,7 +230,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
 
             if no_data:
                 pass
-            elif len(var_shape) > 0 and "time" in var_dims:
+            elif len(var_shape) > 0 and time_name in var_dims:
                 for i in range(0, var_shape[0], chunksizes[0]):
                     end = min(i + chunksizes[0], var_shape[0])
                     chunk = agg_hf_ds.get_var_vals(
@@ -246,12 +247,12 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
             var_shape = agg_hf_ds.get_var_data_shape(secondary_var)
             var_dims = agg_hf_ds.get_var_dimensions(secondary_var)
 
-            if "time" in var_dims:
+            if time_name in var_dims:
                 var_shape[0] = ts_end_index - ts_start_index
 
             for index, dim in enumerate(var_dims):
                 if dim not in ts_ds.dimensions:
-                    if dim == "time":
+                    if dim == time_name:
                         ts_ds.createDimension(dim, None)
                     else:
                         ts_ds.createDimension(dim, var_shape[index])
@@ -274,7 +275,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
             ts_ds[secondary_var].setncatts(
                 {key: val for key, val in svar_attrs.items() if key != "_FillValue"}
             )
-            if "time" in var_dims:
+            if time_name in var_dims:
                 svar_vals = secondary_vars_data[secondary_var][ts_start_index:ts_end_index]
             else:
                 svar_vals = secondary_vars_data[secondary_var]
