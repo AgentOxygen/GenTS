@@ -395,6 +395,16 @@ def test_get_meta_from_path_defers_decoding(tmp_path):
     assert len(meta.get_cftimes()) == 2
 
 
+def test_get_meta_from_path_skips_variable_attrs(tmp_path):
+    """get_meta_from_path() leaves per-variable attrs unread: nothing reads them from
+    collection metadata, and holding them for every file dominates the parent's memory."""
+    path = str(tmp_path / "test.nc")
+    generate_history_file(path, [15.0], [[0.0, 30.0]])
+    meta = get_meta_from_path(path)
+    with pytest.raises(RuntimeError, match="load_variable_attrs"):
+        meta.get_variable_attrs("VAR0")
+
+
 def test_netcdfmeta_is_valid_does_not_decode(tmp_path):
     """is_valid() decides from raw values alone, never triggering a cftime decode."""
     from unittest.mock import patch

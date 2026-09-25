@@ -1,3 +1,4 @@
+from unittest.mock import patch
 from gents.tests.test_cases import *
 from gents.hfcollection import *
 from gents.meta import netCDFMeta
@@ -27,6 +28,9 @@ def test_calculate_year_slices():
     assert calculate_year_slices(10, 1, 30) == [(1, 10), (11, 20), (21, 30)]
     assert calculate_year_slices(1, 0, 3) == [(0, 0), (1, 1), (2, 2), (3, 3)]
     assert calculate_year_slices(5, 3, 12) == [(3, 7), (8, 12)]
+    assert calculate_year_slices(10, 1, 10) == [(1, 10)]
+    assert calculate_year_slices(10, 1, 11) == [(1, 10), (11, 20)]
+    assert calculate_year_slices(1, 1850, 1851) == [(1850, 1850), (1851, 1851)]
 
 
 def test_hf_sorting(structured_case):
@@ -185,7 +189,7 @@ def test_simple_hfcollection(simple_case, caplog):
         repeat_years = []
         year_slices = calculate_year_slices(slice_size, min_year, max_year)
         for lower, upper in year_slices:
-            assert upper - lower <= slice_size
+            assert upper - lower < slice_size
             assert lower <= upper
             assert lower not in repeat_years
             assert upper not in repeat_years
@@ -500,10 +504,15 @@ def test_get_timestep_delta_matches_reference(simple_case, multistep_large_case,
         assert hf_collection.get_timestep_delta(path) == timedelta(0)
 
 
-def test_no_history_files():
-    """No history files found should raise an error."""
-    with pytest.raises(FileNotFoundError) as exc:
-        empty_hfcollection = HFCollection("")
+def test_no_history_files(tmp_path, monkeypatch):
+    """An empty or missing input path raises, rather than falling back to the current
+    directory (run from one holding .nc files, as the Docker test stages are)."""
+    generate_history_file(f"{tmp_path}/stray.nc", [15], [[0, 30]])
+    monkeypatch.chdir(tmp_path)
+
+    for missing in ("", "no_such_dir"):
+        with pytest.raises(FileNotFoundError):
+            HFCollection(missing)
 
 
 def test_extraneous_hfcollection(extraneous_file_case):
@@ -758,3 +767,103 @@ def test_include_time_month_granularity(long_case):
     # Only the second half.
     filtered = hf_collection.include_time(CASE_START_YEAR, CASE_START_YEAR + 1, start_month=7, end_month=1)
     assert len(filtered) == 6
+
+
+def test_collections_do_not_share_multistep_slices(straddling_case):
+    """Each new HFCollection starts with its own multistep slice map, so slicing the
+    same files again in one process (e.g. a continued run in a notebook) works."""
+    input_head_dir, output_head_dir, write = straddling_case
+    write(range(5))
+
+    for _ in range(2):
+        hf_collection = HFCollection(input_head_dir)
+        hf_collection.pull_metadata()
+        assert hf_collection.get_multistep_slices(next(iter(hf_collection))) is None
+        hf_collection.slice_groups(slice_size_years=1, start_year=CASE_START_YEAR)
+
+
+def test_filters_after_pull_drop_filtered_paths_from_groups(structured_case):
+    """include()/exclude() after pull_metadata() keep only surviving paths in the
+    inherited groups, so slice_groups() doesn't look up a dropped file."""
+    input_head_dir, output_head_dir = structured_case
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection.pull_metadata()
+
+    for filtered in (hf_collection.include("*/0_dir/*"), hf_collection.exclude("*/0_dir/*")):
+        grouped_paths = [path for paths in filtered.get_groups().values() for path in paths]
+        assert sorted(grouped_paths) == sorted(filtered)
+        filtered.slice_groups()
+
+
+def test_include_years_keeps_merged_and_sliced_groups(spatial_fragment_case):
+    """A time filter that drops nothing leaves fragment merging and slicing intact."""
+    input_head_dir, output_head_dir = spatial_fragment_case
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection.pull_metadata()
+    sliced = hf_collection.slice_groups(slice_size_years=1)
+
+    assert hf_collection.include_years(0, 99999).get_groups() == hf_collection.get_groups()
+    assert sliced.include_years(0, 99999).get_groups() == sliced.get_groups()
+
+
+def test_slice_start_year_after_data_extends_windows_backwards(tmp_path):
+    """start_year aligns windows; data before it gets windows on the same alignment
+    instead of being dropped."""
+    for index in range(36):  # monthly, 1850-1852
+        generate_history_file(f"{tmp_path}/testing.hf.{index:05d}.nc", [(index+0.5)*30], [[index*30, (index+1)*30]], num_vars=1)
+    hf_collection = HFCollection(tmp_path)
+    hf_collection.pull_metadata()
+
+    groups = hf_collection.slice_groups(slice_size_years=2, start_year=CASE_START_YEAR + 1).get_groups()
+
+    assert [group.split("[sorting_pivot]")[1] for group in groups] == ["1849-1850", "1851-1852"]
+    assert sum(len(paths) for paths in groups.values()) == 36
+
+
+@pytest.mark.parametrize("time_name", ["time", "Time"])
+def test_fragmented_tiles_merge_whatever_the_time_name(tmp_path, time_name):
+    """Tiled files merge into one group across timesteps whether the time
+    coordinate is spelled 'time' or 'Time' (it differs per timestep, so it must be
+    left out of the tiles' coordinate key)."""
+    dim_shapes = {time_name: None, "bnds": 2, "lat": 1, "lon": 2}
+    for step in range(4):
+        for tile, lat in enumerate([-45.0, 45.0]):
+            generate_history_file(f"{tmp_path}/testing.hf.{step:05d}.nc.{tile}", [(step+0.5)*30], [[step*30, (step+1)*30]], num_vars=1,
+                                  time_name=time_name, time_bounds_name=f"{time_name}_bounds", dim_shapes=dim_shapes,
+                                  dim_vals={"lat": [lat], "lon": [0.0, 90.0]})
+    hf_collection = HFCollection(tmp_path)
+    hf_collection.pull_metadata()
+
+    assert [len(paths) for paths in hf_collection.get_groups().values()] == [8]
+
+
+def test_copies_reuse_paths_instead_of_rewalking(tmp_path):
+    """Filters build copies from the parent's paths rather than re-walking the input
+    tree, which also used the default glob and so broke collections built with
+    another (and walked a 41k-file tree 10 times per CLI run)."""
+    for index in range(3):
+        generate_history_file(f"{tmp_path}/testing.hf.{index:05d}.hist", [(index+0.5)*30], [[index*30, (index+1)*30]], num_vars=1)
+
+    with patch("gents.hfcollection.find_files", wraps=find_files) as walks:
+        hf_collection = HFCollection(tmp_path, hf_glob_pattern="*.hist")
+        filtered = hf_collection.include("*").exclude("*00002*")
+        emptied = hf_collection.include([])
+
+    assert walks.call_count == 1  # construction only; the filters reuse its paths
+    assert len(filtered) == 2
+    assert len(emptied) == 0
+
+
+@pytest.mark.parametrize("method", ["midpoint", "start_bound", "end_bound", "direct_time"])
+def test_slice_groups_keeps_every_file_for_every_alignment(tmp_path, method):
+    """Slice windows span the years of the same aligned times the files are assigned
+    by. With end_bound, the last December ends on January 1st of the next year and
+    used to fall past the last (midpoint-based) window."""
+    for index in range(24):  # monthly, 1850-1851
+        generate_history_file(f"{tmp_path}/testing.hf.{index:05d}.nc", [(index+0.5)*30], [[index*30, (index+1)*30]], num_vars=1)
+    hf_collection = HFCollection(tmp_path)
+    hf_collection.pull_metadata()
+
+    groups = hf_collection.slice_groups(slice_size_years=1, start_year=None, time_alignment_method=method).get_groups()
+
+    assert sum(len(paths) for paths in groups.values()) == 24

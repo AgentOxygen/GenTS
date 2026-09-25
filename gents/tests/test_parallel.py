@@ -121,19 +121,40 @@ def test_execute_memory_limit_bytes_threaded_to_MHFDataset(simple_case):
             assert call.kwargs["memory_limit_bytes"] == DEFAULT_MEMORY_LIMIT_BYTES
 
 
-def test_execute_memory_limit_bytes_not_yet_enforced_by_preload(simple_case):
-    """
-    Known current limitation, pinned down so a future change doesn't silently
-    alter it either way: memory_limit_bytes reaches MHFDataset correctly (see
-    test_execute_memory_limit_bytes_threaded_to_MHFDataset), but MHFDataset's
-    preload_var_list path -- what every order taken through TSCollection.execute()
-    uses -- does not itself check the limit while preloading. The limit is only
-    enforced by the on-demand __cache_variable fallback, which preload bypasses.
-    An absurdly small limit should therefore NOT prevent a normal run from
-    succeeding today. If this test starts failing because execute() now raises
-    or drops data under a tiny limit, that's preload becoming memory-aware --
-    update this test to assert the new, real enforcement instead of removing it.
-    """
+def test_execute_peak_memory_stays_near_memory_limit(tmp_path):
+    """Regression test for a user-reported OOM on a missing-value clone: the peak of
+    everything allocated while generating time series stays within memory_limit_bytes
+    plus a few write chunks. Lazily cached variables used to carry an uncounted
+    mask array (+25% for float32, full for all-fill data) that pushed the cache past
+    the limit."""
+    import tracemalloc
+    from gents.timeseries import CHUNK_TARGET_BYTES
+
+    hf_dir = tmp_path / "hf"
+    makedirs(hf_dir)
+    dim_shapes = {"time": None, "bnds": 2, "lat": 1000, "lon": 1000, "lev": 1}
+    for findex in range(24):
+        path = str(hf_dir / f"case.cam.h0.{findex:04d}.nc")
+        generate_history_file(path, [findex * 30.0 + 15], [[findex * 30.0, (findex + 1) * 30.0]],
+                              num_vars=0, dim_shapes=dim_shapes)
+        with GenTSDataStore(path, "a") as ds:
+            # Never written, so every value reads back as the NaN fill, as in a clone.
+            for name in ("VAR0", "VAR1"):
+                ds.createVariable(name, "f4", ("time", "lat", "lon"), fill_value=np.nan)
+
+    # Room for one variable (24 x 4 MB = 91.6 MiB) but not both, so VAR1 is cached lazily.
+    limit = 96 * 1024**2
+    ts_collection = TSCollection(HFCollection(hf_dir), tmp_path / "ts", num_processes=1)
+    tracemalloc.start()
+    ts_collection.execute(memory_limit_bytes=limit, show_progress=False)
+    peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    assert peak < limit + 3 * CHUNK_TARGET_BYTES, f"peak {peak / 1024**2:.1f} MiB"
+
+
+def test_execute_tiny_memory_limit_still_writes_every_file(simple_case):
+    """A memory_limit_bytes too small to cache anything still produces every file:
+    open() preloads nothing and each read streams from disk instead."""
     input_head_dir, output_head_dir = simple_case
     hf_collection = HFCollection(input_head_dir, num_processes=1)
     ts_collection = TSCollection(hf_collection, output_head_dir, num_processes=1)

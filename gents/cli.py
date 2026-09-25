@@ -86,7 +86,7 @@ def parse_arguments():
         "--slice_start_year",
         type=int,
         default=None,
-        help="Year to start slice windows at. (Default is start year for history files)"
+        help="Year to align slice windows to; earlier data gets windows on the same alignment. (Default is start year for history files)"
     )
     parser.add_argument(
         "-hc", "--hfcores",
@@ -134,8 +134,10 @@ def parse_arguments():
     parser.add_argument(
         "--align_method",
         type=str,
-        default="midpoint",
-        help="Method to use when aligning the history files by time. ('midpoint', 'direct_time', 'start_bound', 'end_bound')"
+        default=None,
+        choices=["midpoint", "direct_time", "start_bound", "end_bound"],
+        help="Method to use when aligning the history files by time, for slicing and "
+             "output file names. Overrides the model configuration. (Default midpoint)"
     )
     parser.add_argument(
         "--compression",
@@ -247,12 +249,16 @@ def main():
     for slice_batch in slice_batches:
         if args.slice_start_year is not None:
             slice_batch["start_year"] = args.slice_start_year
+        if args.align_method is not None:
+            slice_batch["time_alignment_method"] = args.align_method
         hfc = hfc.slice_groups(**slice_batch)
 
     tsc = TSCollection(hfc, args.outputdir, num_processes=args.tscores)
-
-    if args.compression is not None:
-        tsc = tsc.apply_compression(alg=args.compression, level=args.level, path_glob="*")
+    if args.align_method is not None:
+        # Output file names use the same alignment as the slicing.
+        tsc = tsc.update_ts_orders(time_alignment_method=args.align_method)
+    if args.overwrite:
+        tsc = tsc.apply_overwrite(path_glob="*")
 
     if "path_swaps" in yaml_config["output_ts"]:
         for swap_batch in yaml_config["output_ts"]["path_swaps"]:
@@ -265,6 +271,10 @@ def main():
     if "compression" in yaml_config["output_ts"]:
         for comp_batch in yaml_config["output_ts"]["compression"]:
             tsc = tsc.apply_compression(**comp_batch)
+
+    # After the YAML's, so an explicit --compression wins over the model default.
+    if args.compression is not None:
+        tsc = tsc.apply_compression(alg=args.compression, level=args.level, path_glob="*")
 
     if args.verbose:
         log_hfcollection_info(hfc)

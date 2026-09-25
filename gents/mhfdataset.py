@@ -54,7 +54,7 @@ class MHFDataset:
     variable.
     """
 
-    def __init__(self, hf_paths, preload_var_list=None, memory_limit_bytes=np.inf, load_secondaries=True, preload_primaries=True):
+    def __init__(self, hf_paths, preload_var_list=None, memory_limit_bytes=np.inf, preload_primaries=True):
         """
         Stores the group's paths; opens nothing until :meth:`open` is called.
 
@@ -66,8 +66,6 @@ class MHFDataset:
         :param memory_limit_bytes: Ceiling on cached variable data. Unbounded by
             default.
         :type memory_limit_bytes: float
-        :param load_secondaries: Cache secondary variable data during :meth:`open`.
-        :type load_secondaries: bool
         :param preload_primaries: Cache primary variable data during :meth:`open`.
             ``False`` skips all primary reads up front (``preload_var_list`` is
             ignored); primaries are still read on demand. Used by ``no_data``
@@ -85,16 +83,25 @@ class MHFDataset:
         self.__last_var_read = None
         self.__memory_limit_bytes = memory_limit_bytes
         self.__past_vars_read = []
-        self.__load_secondaries = load_secondaries
         self.__preload_primaries = preload_primaries
         self.__preload_var_list = list(preload_var_list) if preload_var_list is not None else []
         self.__sorted_time_vals = None
         self.__fragmented = None
 
+    def __is_read_once(self, var_name, hf_meta):
+        """
+        Whether a variable is cached once, from the first file: it has no time
+        dimension and isn't a coordinate variable. Coordinate variables stay per
+        file because fragmented groups place each tile by its own coordinates.
+        """
+        dims = hf_meta.get_variable_dims(var_name)
+        return hf_meta.get_time_var_name() not in dims and var_name not in dims
+
     def __estimate_var_bytes(self, var_name, hf_meta):
         """
         Estimates a variable's aggregated size across the group by scaling one
-        file's shape by the file count.
+        file's shape by the file count, or one file's size for a variable cached
+        once (see :meth:`__is_read_once`).
 
         Exact when every file holds the same number of time steps; approximate
         otherwise. Used only to plan the preload cache before the group has been
@@ -102,6 +109,8 @@ class MHFDataset:
         """
         shape = hf_meta.get_variable_shapes(var_name)
         itemsize = hf_meta.get_variable_dtype(var_name).itemsize
+        if self.__is_read_once(var_name, hf_meta):
+            return int(np.prod(shape)) * itemsize
         return int(np.prod(shape)) * itemsize * len(self.__hf_files)
 
     def __plan_cacheable_vars(self, candidate_names, hf_meta, running_total=0):
@@ -131,10 +140,12 @@ class MHFDataset:
         ``sub_time_index`` is that value's position within its own file's time
         array -- precomputed so :meth:`get_var_vals` never rescans a time array.
 
-        Secondary variables are cached per file rather than read once from the
-        first file, since time, bounds and per-tile coordinates differ between
-        files; they are small enough for that to be cheap. Preloaded primaries
-        ride along in the same pass so no file has to be reopened for them.
+        Time-varying secondaries (time, bounds) and coordinate variables are
+        cached per file: fragmented groups place each tile by its own
+        coordinates. Other variables without a time dimension (grids, areas)
+        are cached once, from the first file, the only copy :meth:`get_var_vals`
+        reads. Preloaded primaries ride along in the same pass so no file has to
+        be reopened for them.
 
         :raises Exception: If the spatial fragmentation is not consistent over time.
         """
@@ -153,7 +164,7 @@ class MHFDataset:
                     # group does not actually have.
                     checked_preload_list = []
                     for var_name in self.__preload_var_list:
-                        if self.__load_secondaries and var_name in hf_meta.get_secondary_variables():
+                        if var_name in hf_meta.get_secondary_variables():
                             continue
                         if var_name not in hf_meta.get_variables():
                             raise KeyError(f"Attempted to cache non-existent variable '{var_name}'.")
@@ -169,8 +180,7 @@ class MHFDataset:
                     else:
                         self.__preload_var_list = []
 
-                    secondary_names = list(hf_meta.get_secondary_variables()) if self.__load_secondaries else []
-                    vars_to_cache_secondary = self.__plan_cacheable_vars(secondary_names, hf_meta)
+                    vars_to_cache_secondary = self.__plan_cacheable_vars(list(hf_meta.get_secondary_variables()), hf_meta)
                     secondary_bytes = sum(self.__estimate_var_bytes(name, hf_meta) for name in vars_to_cache_secondary)
                     vars_to_cache_primary = self.__plan_cacheable_vars(self.__preload_var_list, hf_meta, secondary_bytes)
 
@@ -191,17 +201,20 @@ class MHFDataset:
                     else:
                         self.__time_mapping[time] = [(hf_index, sub_t_index)]
 
-                if self.__load_secondaries:
-                    for var_name in vars_to_cache_secondary:
-                        if var_name not in hf_meta.get_secondary_variables():
-                            continue
-                        if var_name in self.__data_secondary_var_cache:
-                            self.__data_secondary_var_cache[var_name].append(hf_ds[var_name][:])
-                        else:
-                            self.__data_secondary_var_cache[var_name] = [hf_ds[var_name][:]]
+                for var_name in vars_to_cache_secondary:
+                    if var_name not in hf_meta.get_secondary_variables():
+                        continue
+                    if hf_index > 0 and self.__is_read_once(var_name, hf_meta):
+                        continue
+                    if var_name in self.__data_secondary_var_cache:
+                        self.__data_secondary_var_cache[var_name].append(hf_ds[var_name][:])
+                    else:
+                        self.__data_secondary_var_cache[var_name] = [hf_ds[var_name][:]]
 
                 for var_name in vars_to_cache_primary:
                     if var_name not in hf_meta.get_primary_variables():
+                        continue
+                    if hf_index > 0 and self.__is_read_once(var_name, hf_meta):
                         continue
                     if var_name in self.__data_var_cache:
                         self.__data_var_cache[var_name].append(hf_ds[var_name][:])
@@ -263,23 +276,22 @@ class MHFDataset:
                     cache_size_b += self.get_var_dsize(nvar_name)
                     vars_to_cache.append(nvar_name)
 
-        # A variable without a time dimension is identical in every file, so it
-        # is read once from the first rather than once per file.
-        notime_vars_to_cache = []
-        time_vars_to_cache = []
+        once_vars_to_cache = []
+        per_file_vars_to_cache = []
         for var_name in vars_to_cache:
-            if self.__time_name in self.get_var_dimensions(var_name):
-                time_vars_to_cache.append(var_name)
+            if self.__is_read_once(var_name, self.__hf_metas[0]):
+                once_vars_to_cache.append(var_name)
             else:
-                notime_vars_to_cache.append(var_name)
+                per_file_vars_to_cache.append(var_name)
 
-        for index, path in enumerate(self.__hf_files):
+        hf_files = self.__hf_files if per_file_vars_to_cache else self.__hf_files[:1]
+        for index, path in enumerate(hf_files):
             with GenTSDataStore(path, 'r') as hf_ds:
+                hf_ds.set_auto_maskandscale(False)
                 if index == 0:
-                    for var_name in notime_vars_to_cache:
-                        self.__data_var_cache[var_name] = hf_ds[var_name][:]
-                
-                for var_name in time_vars_to_cache:
+                    for var_name in once_vars_to_cache:
+                        self.__data_var_cache[var_name] = [hf_ds[var_name][:]]
+                for var_name in per_file_vars_to_cache:
                     if var_name in self.__data_var_cache:
                         self.__data_var_cache[var_name].append(hf_ds[var_name][:])
                     else:
@@ -320,6 +332,7 @@ class MHFDataset:
         else:
             # Too big to cache whole; reread just the requested region.
             with GenTSDataStore(self.__hf_files[index], 'r') as hf_ds:
+                hf_ds.set_auto_maskandscale(False)
                 if time_slice is None:
                     return hf_ds[var_name][:]
                 return hf_ds[var_name][time_slice]
@@ -333,6 +346,15 @@ class MHFDataset:
         :rtype: int
         """
         return np.prod(self.get_var_data_shape(var_name))*self.get_var_dtype(var_name).itemsize
+
+    def get_time_var_name(self):
+        """
+        Returns the name of the group's time variable, as spelled in its files
+        (``time``, ``Time``, ...).
+
+        :rtype: str
+        """
+        return self.__time_name
 
     def get_time_vals(self):
         """
@@ -449,7 +471,7 @@ class MHFDataset:
         if var_name in self.__data_coords:
             return self.__data_coords[var_name]
 
-        if "time" not in self.get_var_dimensions(var_name):
+        if self.__time_name not in self.get_var_dimensions(var_name):
             return self.__get_hf_data(0, var_name)
 
         time_vals = self.get_time_vals()[time_index_start:time_index_end]

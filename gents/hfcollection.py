@@ -63,7 +63,7 @@ def calculate_year_slices(slice_size_years, min_year, max_year):
     """
     if max_year < min_year:
         raise ValueError("Maximum year cannot exceed minimum year.")
-    if slice_size_years >= max_year - min_year:
+    if max_year - min_year < slice_size_years:
         return [(min_year, max_year)]
 
     start_year = min_year
@@ -162,34 +162,61 @@ def get_year_boundary_num(year, units, calendar):
     return get_time_boundary_num(units, calendar, year)
 
 
-def get_year_bounds(hf_to_meta_map):
+def get_aligned_times(meta, time_alignment_method="midpoint"):
+    """
+    Returns one file's representative time for each step, with the reference
+    needed to decode them.
+
+    ``'midpoint'``, ``'start_bound'`` and ``'end_bound'`` pick from the time bounds;
+    ``'direct_time'``, or a file without bounds, uses the time values themselves.
+
+    :param meta: Metadata of the history file.
+    :type meta: gents.meta.netCDFMeta
+    :param time_alignment_method: ``'midpoint'``, ``'start_bound'``,
+        ``'end_bound'`` or ``'direct_time'``.
+    :type time_alignment_method: str
+    :returns: ``(times, units, calendar)``.
+    :rtype: tuple[numpy.ndarray, str, str]
+    :raises ValueError: If ``time_alignment_method`` is not one of those four.
+    """
+    float_bnds = meta.get_float_time_bounds()
+    if float_bnds is None or time_alignment_method == "direct_time":
+        times = np.ma.getdata(np.atleast_1d(meta.get_float_times()))
+        return times, meta.get_time_units(), meta.get_time_calendar()
+
+    bnds = np.ma.getdata(float_bnds)
+    if time_alignment_method == "midpoint":
+        times = bnds[:, 0] + (bnds[:, 1] - bnds[:, 0]) / 2
+    elif time_alignment_method == "start_bound":
+        times = bnds[:, 0]
+    elif time_alignment_method == "end_bound":
+        times = bnds[:, 1]
+    else:
+        raise ValueError(f"'{time_alignment_method}' is an invalid time-alignment method. Valid methods are ['direct_time', 'midpoint', 'start_bound', 'end_bound']")
+    return times, meta.get_time_bounds_units(), meta.get_time_bounds_calendar()
+
+
+def get_year_bounds(hf_to_meta_map, time_alignment_method="midpoint"):
     """
     Returns the ``(min_year, max_year)`` covered by a set of history files.
 
-    A file's year comes from the midpoint of each time bound, or from the time
-    value itself when the file has no bounds.
+    Years come from each step's aligned time (see :func:`get_aligned_times`), the
+    same times :meth:`HFCollection.slice_groups` assigns files to windows by.
 
     :param hf_to_meta_map: ``{path: netCDFMeta}`` mapping to inspect.
     :type hf_to_meta_map: dict
+    :param time_alignment_method: See :func:`get_aligned_times`.
+    :type time_alignment_method: str
     :rtype: tuple[int, int]
     """
     min_year = np.inf
     max_year = -np.inf
 
-    for path in list(hf_to_meta_map.keys()):
-        meta = hf_to_meta_map[path]
-        float_bounds = meta.get_float_time_bounds()
-        # Midpoints are computed on the raw values, which order identically to
-        # their decoded dates, so only the two extremes need decoding per file.
-        if float_bounds is None:
-            midpoints = np.ma.getdata(np.atleast_1d(meta.get_float_times()))
-            decode = meta.decode_time_values
-        else:
-            bounds = np.ma.getdata(float_bounds)
-            midpoints = bounds[:, 0] + (bounds[:, 1] - bounds[:, 0]) / 2
-            decode = meta.decode_time_bounds_values
-
-        extremes = np.atleast_1d(decode(np.array([np.min(midpoints), np.max(midpoints)])))
+    for meta in hf_to_meta_map.values():
+        # Raw values order identically to their decoded dates, so only the two
+        # extremes need decoding per file.
+        times, units, calendar = get_aligned_times(meta, time_alignment_method)
+        extremes = np.atleast_1d(num2date(np.array([np.min(times), np.max(times)]), units=units, calendar=calendar))
         if extremes[-1].year > max_year:
             max_year = extremes[-1].year
         if extremes[0].year < min_year:
@@ -390,8 +417,9 @@ def merge_fragmented_groups(hf_groups, hf_meta_map):
 
     dim_hashes = {}
     for pattern in fragmented_groups:
-        dims = hf_meta_map[fragmented_groups[pattern][0]].get_dim_bounds()
-        dims = {variable: dims[variable] for variable in dims if variable != "time"}
+        init_meta = hf_meta_map[fragmented_groups[pattern][0]]
+        dims = init_meta.get_dim_bounds()
+        dims = {variable: dims[variable] for variable in dims if variable != init_meta.get_time_var_name()}
         dims_hash = str(dims)
 
         if dims_hash not in dim_hashes:
@@ -426,14 +454,16 @@ class HFCollection:
     tree.
     """
 
-    def __init__(self, hf_dir, num_processes=1, meta_map=None, hf_groups=None, step_map=None, hf_glob_pattern="*.nc*", dask_client=None, multistep_slice_map={}):
+    def __init__(self, hf_dir, num_processes=1, meta_map=None, hf_groups=None, step_map=None, hf_glob_pattern="*.nc*", dask_client=None, multistep_slice_map=None):
         """
         Discovers history files under ``hf_dir``, without reading their metadata.
 
         The pre-computed arguments below are how :meth:`copy` hands state to a
         derived collection; callers normally pass only the first few.
 
-        :param hf_dir: Root directory to search for history files.
+        :param hf_dir: Root directory to search for history files. Made absolute
+            (without resolving symlinks), so relative paths are relative to the
+            current directory at construction.
         :type hf_dir: str
         :param num_processes: Worker processes used for parallel metadata reads.
         :type num_processes: int
@@ -443,37 +473,43 @@ class HFCollection:
         :type hf_groups: dict or None
         :param step_map: Pre-computed ``{path: timedelta}`` mapping.
         :type step_map: dict or None
-        :param hf_glob_pattern: ``fnmatch`` pattern used to discover files.
+        :param hf_glob_pattern: ``fnmatch`` pattern used to discover files. Unused
+            when ``meta_map`` is given: its keys are the collection's paths.
         :type hf_glob_pattern: str
         :param multistep_slice_map: Pre-computed slice indices for multi-timestep
             files (see :meth:`get_multistep_slices`).
-        :type multistep_slice_map: dict
+        :type multistep_slice_map: dict or None
         :param dask_client: Deprecated. Pass ``num_processes`` instead.
-        :raises FileNotFoundError: If no file under ``hf_dir`` matches the pattern.
+        :raises FileNotFoundError: If ``meta_map`` is not given and ``hf_dir`` is not
+            an existing directory, or no file under it matches the pattern.
         """
         if dask_client is not None:
             warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism or reference the ReadTheDocs for using Dask..", DeprecationWarning, stacklevel=2)
 
-        self.__raw_paths = find_files(hf_dir, hf_glob_pattern)
+        # Checked before abspath, which would turn "" into the current directory.
+        if meta_map is None and not os.path.isdir(hf_dir):
+            raise FileNotFoundError(f"History file directory '{hf_dir}' does not exist.")
+        # Absolute (symlinks kept), so every path and group key starts with it and
+        # output templates can strip it as a prefix.
+        hf_dir = os.path.abspath(hf_dir)
         self.__num_processes = num_processes
 
-        if len(self.__raw_paths) == 0:
-            raise FileNotFoundError(f"No files matching '{hf_glob_pattern}' found in '{hf_dir}'")
-
-        self.__hf_to_meta_map = {}
-        self.__hf_multistep_slices = multistep_slice_map
         if meta_map is None:
-            for path in self.__raw_paths:
-                self.__hf_to_meta_map[path] = None
-        else:
-            self.__hf_to_meta_map = meta_map
-        
+            meta_map = {path: None for path in find_files(hf_dir, hf_glob_pattern)}
+            if len(meta_map) == 0:
+                raise FileNotFoundError(f"No files matching '{hf_glob_pattern}' found in '{hf_dir}'")
+            if hf_groups is None:
+                logger.info(f"Initialized HFCollection at '{hf_dir}'")
+                logger.info(f"{len(meta_map)} netCDF files found.")
+
+        self.__hf_to_meta_map = meta_map
+        self.__pulled = False
+        self.__hf_multistep_slices = multistep_slice_map
+        if self.__hf_multistep_slices is None:
+            self.__hf_multistep_slices = {}
+
         self.__hf_groups = hf_groups
         self.__hf_dir = Path(hf_dir)
-
-        if meta_map is None and hf_groups is None:
-            logger.info(f"Initialized HFCollection at '{hf_dir}'")
-            logger.info(f"{len(self.__raw_paths)} netCDF files found.")
 
         self.__hf_to_timestep_delta_map = step_map
 
@@ -502,12 +538,14 @@ class HFCollection:
         """
         Returns whether metadata has been loaded for every file in the collection.
 
+        Cached once true: entries only ever go from ``None`` to loaded, so a pulled
+        collection stays pulled. The per-file getters call this once per file.
+
         :rtype: bool
         """
-        for path in self.__hf_to_meta_map:
-            if self.__hf_to_meta_map[path] is None:
-                return False
-        return True
+        if not self.__pulled:
+            self.__pulled = all(meta is not None for meta in self.__hf_to_meta_map.values())
+        return self.__pulled
 
     def get_multistep_slices(self, hf_path):
         """
@@ -587,6 +625,9 @@ class HFCollection:
             meta_map = self.__hf_to_meta_map
         if hf_groups is None and self.is_pulled():
             hf_groups = self.get_groups()
+            if meta_map is not self.__hf_to_meta_map:
+                hf_groups = {group: [path for path in paths if path in meta_map] for group, paths in hf_groups.items()}
+                hf_groups = {group: paths for group, paths in hf_groups.items() if paths}
         if step_map is None:
             step_map = self.__hf_to_timestep_delta_map
         if multistep_slice_map is None:
@@ -841,17 +882,14 @@ class HFCollection:
                 filtered_path_map[path] = self.__hf_to_meta_map[path]
 
         logger.debug(f"Filtered from {start_year}-{start_month:02d}-{start_day:02d} to {end_year}-{end_month:02d}-{end_day:02d} applied to following glob patterns: '{glob_patterns}'")
-        hf_groups = None
-        if self.__hf_groups is not None:
-            hf_groups = sort_hf_groups(list(filtered_path_map.keys()))
-
-        return self.copy(meta_map=filtered_path_map, hf_groups=hf_groups)
+        return self.copy(meta_map=filtered_path_map)
 
     def get_groups(self, check_fragmented=True):
         """
         Returns the collection's ``{group ID: [paths]}`` mapping.
 
-        Groups are built by :func:`sort_hf_groups` on the first call and cached.
+        Groups are built by :func:`sort_hf_groups` on the first call and cached,
+        with each group's paths in time order (by decoded first time value).
 
         :param check_fragmented: Also merge spatially tiled groups via
             :func:`merge_fragmented_groups`, which requires metadata.
@@ -864,8 +902,16 @@ class HFCollection:
             if check_fragmented:
                 self.check_pulled()
                 self.__hf_groups = merge_fragmented_groups(self.__hf_groups, self.__hf_to_meta_map)
+                self.__hf_groups = {
+                    group: sorted(paths, key=self.__first_time)
+                    for group, paths in self.__hf_groups.items()
+                }
 
         return self.__hf_groups
+
+    def __first_time(self, hf_path):
+        meta = self.__hf_to_meta_map[hf_path]
+        return meta.decode_time_values(np.ma.getdata(np.atleast_1d(meta.get_float_times()))[0])
 
     def slice_groups(self, slice_size_years=10, start_year=0, pattern="*", time_alignment_method="midpoint"):
         """
@@ -880,7 +926,9 @@ class HFCollection:
         :param slice_size_years: Maximum width of each window in years.
         :type slice_size_years: int
         :param start_year: Year to align windows to; ``None`` uses the collection's
-            own earliest year.
+            own earliest year. Data before it is still covered, by windows on the
+            same alignment (e.g. ``start_year=1851`` with 2-year slices and data
+            from 1850 gives ``1849-1850``, ``1851-1852``).
         :type start_year: int or None
         :param pattern: One or more ``fnmatch`` globs restricting which groups are
             sliced; a group matching none of them passes through unsliced. A
@@ -920,33 +968,19 @@ class HFCollection:
 
             group_meta_map = {path: self.__hf_to_meta_map[path] for path in hf_paths}
             
-            min_year, max_year = get_year_bounds(group_meta_map)
+            min_year, max_year = get_year_bounds(group_meta_map, time_alignment_method)
             if start_year is not None:
-                min_year = start_year
+                if start_year > min_year:
+                    min_year -= (min_year - start_year) % slice_size_years
+                else:
+                    min_year = start_year
             
             time_slices = calculate_year_slices(slice_size_years, min_year, max_year)
 
             hf_slices = {}
             boundary_cache = {}
             for hf_path in hf_paths:
-                meta_ds = self.__hf_to_meta_map[hf_path]
-                float_bnds = meta_ds.get_float_time_bounds()
-                if float_bnds is None or time_alignment_method == "direct_time":
-                    times = np.ma.getdata(np.atleast_1d(meta_ds.get_float_times()))
-                    ref_units = meta_ds.get_time_units()
-                    ref_calendar = meta_ds.get_time_calendar()
-                else:
-                    bnds = np.ma.getdata(float_bnds)
-                    if time_alignment_method == "midpoint":
-                        times = bnds[:, 0] + (bnds[:, 1] - bnds[:, 0]) / 2
-                    elif time_alignment_method == "start_bound":
-                        times = bnds[:, 0]
-                    elif time_alignment_method == "end_bound":
-                        times = bnds[:, 1]
-                    else:
-                        raise ValueError(f"'{time_alignment_method}' is an invalid time-alignment method. Valid methods are ['direct_time', 'midpoint', 'start_bound', 'end_bound']")
-                    ref_units = meta_ds.get_time_bounds_units()
-                    ref_calendar = meta_ds.get_time_bounds_calendar()
+                times, ref_units, ref_calendar = get_aligned_times(self.__hf_to_meta_map[hf_path], time_alignment_method)
 
                 for time_slice in time_slices:
                     cache_key = (time_slice, ref_units, ref_calendar)
@@ -968,7 +1002,7 @@ class HFCollection:
 
                     if len(times) > 1:
                         past_window = times >= upper_num
-                        end_index = int(np.argmax(past_window)) if past_window.any() else len(times) - 1
+                        end_index = int(np.argmax(past_window)) if past_window.any() else len(times)
                         if start_index != 0 or times[-1] >= upper_num:
                             if hf_path in self.__hf_multistep_slices:
                                 assert f"{time_slice[0]}-{time_slice[1]}" not in self.__hf_multistep_slices[hf_path]

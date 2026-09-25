@@ -790,3 +790,145 @@ def test_skip_existing_ts_string_reflects_trimmed_range(continued_case):
 
     for order in resumed:
         assert order["ts_string"] == "185101-185112"
+
+
+def test_skip_existing_recomputes_cut_indices_for_trimmed_order(straddling_case):
+    """Trimming leading files from an order whose files straddle slice boundaries
+    shifts its time indices onto the trimmed group."""
+    input_head_dir, output_head_dir, write = straddling_case
+
+    def build():
+        hf_collection = HFCollection(input_head_dir)
+        hf_collection.pull_metadata()
+        return TSCollection(hf_collection.slice_groups(slice_size_years=1, start_year=CASE_START_YEAR), str(output_head_dir))
+
+    write(range(5))    # Apr 1850 .. Sep 1852
+    build().execute(raise_errors=True, show_progress=False)
+    write(range(5, 7))  # Oct 1852 .. Sep 1853
+
+    resumed = build().skip_existing()
+
+    # 1852's order was files 3-5 (steps 3..15); files 3-4 are covered, leaving
+    # file 5's first three steps (Oct-Dec 1852).
+    trimmed = [order for order in resumed if order["ts_string"].startswith("1852")][0]
+    assert [Path(path).name for path in trimmed["hf_paths"]] == ["testing.hf.00005.nc"]
+    assert (trimmed["ts_start_index"], trimmed["ts_end_index"]) == (0, 3)
+
+    resumed.execute(raise_errors=True, show_progress=False)
+    with GenTSDataStore(f"{output_head_dir}/testing.hf.VAR0.185210-185212.nc", "r") as ds:
+        assert ds["VAR0"][:, 0, 0].tolist() == [33, 34, 35]
+
+
+def test_trailing_single_file_slice_keeps_last_step(straddling_case):
+    """A slice made of one multi-step file that starts before the window and ends
+    inside it keeps every in-window step, including the file's last."""
+    input_head_dir, output_head_dir, write = straddling_case
+    write(range(4))  # Apr 1850 .. Mar 1852; 1852's slice is file 3's Jan-Mar alone
+
+    hf_collection = HFCollection(input_head_dir)
+    hf_collection.pull_metadata()
+    ts_collection = TSCollection(hf_collection.slice_groups(slice_size_years=1, start_year=CASE_START_YEAR), str(output_head_dir))
+    ts_collection.execute(raise_errors=True, show_progress=False)
+
+    with GenTSDataStore(f"{output_head_dir}/testing.hf.VAR0.185201-185203.nc", "r") as ds:
+        assert ds["VAR0"][:, 0, 0].tolist() == [24, 25, 26]
+
+
+def test_relative_input_dir_keeps_output_names(tmp_path, monkeypatch):
+    """A relative input directory whose name repeats in the file prefix (CESM's
+    archive/<case>/atm/hist/<case>.cam.h0.* run as `run_gents <case>`), or ".",
+    gives the same output template as an absolute one."""
+    hist_dir = tmp_path / "case" / "atm" / "hist"
+    hist_dir.mkdir(parents=True)
+    for index in range(2):
+        generate_history_file(f"{hist_dir}/case.cam.h0.{index:05d}.nc", [(index+0.5)*30], [[index*30, (index+1)*30]], num_vars=1)
+    output_dir = str(tmp_path / "out")
+    expected = f"{output_dir}/atm/hist/case.cam.h0"
+
+    for cwd, input_dir in ((tmp_path, "case"), (tmp_path / "case", ".")):
+        monkeypatch.chdir(cwd)
+        assert TSCollection(HFCollection(input_dir), output_dir)[0]["ts_path_template"] == expected
+
+
+def test_auxiliary_order_keeps_every_step_when_first_variable_is_static(tmp_path):
+    """A group with no primaries writes every time step even when its first variable
+    is static (its first dimension used to become the step count)."""
+    input_dir, output_dir = tmp_path / "hist", tmp_path / "out"
+    input_dir.mkdir()
+    for index in range(12):
+        with GenTSDataStore(f"{input_dir}/testing.hf.{index:05d}.nc", "w") as ds:
+            ds.createDimension("ny", 3)
+            ds.createDimension("time", None)
+            ds.createDimension("nbnd", 2)
+            ds.createVariable("area", float, ("ny",))[:] = [1.0, 2.0, 3.0]
+            time = ds.createVariable("time", float, ("time",))
+            time.units, time.calendar = "days since 1850-01-01", "noleap"
+            time[:] = [(index + 0.5) * 30]
+            ds.createVariable("time_bnds", float, ("time", "nbnd"))[:] = [[index * 30, (index + 1) * 30]]
+
+    ts_collection = TSCollection(HFCollection(input_dir), str(output_dir))
+    assert [order["primary_var"] for order in ts_collection] == ["auxiliary"]
+    ts_collection.execute(raise_errors=True, show_progress=False)
+
+    with GenTSDataStore(f"{output_dir}/testing.hf.auxiliary.185001-185012.nc", "r") as ds:
+        assert len(ds["time"]) == 12
+        assert ds["area"][:].tolist() == [1.0, 2.0, 3.0]
+
+
+def test_groups_follow_time_order_when_file_names_do_not(tmp_path):
+    """Cut indices assume a group's first path is its earliest file, so groups are
+    ordered by time even when file names sort the other way."""
+    input_dir, output_dir = tmp_path / "hist", tmp_path / "out"
+    input_dir.mkdir()
+    for k in range(5):  # 6-step files from April 1850, named in reverse time order
+        months = np.arange(3 + 6*k, 9 + 6*k)
+        path = f"{input_dir}/testing.hf.{9 - k:05d}.nc"
+        generate_history_file(path, (months + 0.5)*30, [[m*30, (m+1)*30] for m in months], num_vars=1)
+        with GenTSDataStore(path, "a") as ds:
+            ds["VAR0"][:] = months[:, None, None] * np.ones((len(months), 3, 4))
+
+    hf_collection = HFCollection(input_dir)
+    hf_collection.pull_metadata()
+    for paths in hf_collection.get_groups().values():
+        first_times = [hf_collection[path].get_float_times()[0] for path in paths]
+        assert first_times == sorted(first_times)
+
+    ts_collection = TSCollection(hf_collection.slice_groups(slice_size_years=1, start_year=CASE_START_YEAR), str(output_dir))
+    ts_collection.execute(raise_errors=True, show_progress=False)
+    with GenTSDataStore(f"{output_dir}/testing.hf.VAR0.185101-185112.nc", "r") as ds:
+        assert ds["VAR0"][:, 0, 0].tolist() == list(range(12, 24))
+
+
+@pytest.mark.parametrize("time_name", ["time", "Time"])
+def test_time_dimension_name_is_not_assumed_lowercase(tmp_path, time_name):
+    """A time dimension spelled 'Time' (MOM6 standalone) is written per step like
+    'time', not treated as static with the first file's data repeated."""
+    for index in range(3):
+        path = f"{tmp_path}/testing.hf.{index:05d}.nc"
+        generate_history_file(path, [(index+0.5)*30], [[index*30, (index+1)*30]], num_vars=1,
+                              time_name=time_name, time_bounds_name=f"{time_name}_bounds")
+        with GenTSDataStore(path, "a") as ds:
+            ds["VAR0"][:] = index
+    output_dir = tmp_path / "out"
+
+    TSCollection(HFCollection(tmp_path), str(output_dir)).execute(raise_errors=True, show_progress=False)
+
+    with GenTSDataStore(f"{output_dir}/testing.hf.VAR0.185001-185003.nc", "r") as ds:
+        assert ds.dimensions[time_name].isunlimited()
+        assert ds["VAR0"][:, 0, 0].tolist() == [0, 1, 2]
+        assert ds[f"{time_name}_bounds"][:].tolist() == [[0, 30], [30, 60], [60, 90]]
+
+
+def test_batched_execute_keeps_per_variable_output_paths(tmp_path):
+    """execute(optimize=True) batches variables that share source files, but each
+    still goes to its own ts_path_template (e.g. a var_glob-limited path swap)."""
+    (tmp_path / "hist").mkdir()
+    for index in range(3):
+        generate_history_file(f"{tmp_path}/hist/testing.hf.{index:05d}.nc", [(index+0.5)*30], [[index*30, (index+1)*30]], num_vars=2)
+    output_dir = tmp_path / "out"
+
+    ts_collection = TSCollection(HFCollection(tmp_path), str(output_dir))
+    ts_collection.apply_path_swap("/hist/", "/swapped/", var_glob="VAR1").execute(raise_errors=True, show_progress=False)
+
+    assert isfile(f"{output_dir}/hist/testing.hf.VAR0.185001-185003.nc")
+    assert isfile(f"{output_dir}/swapped/testing.hf.VAR1.185001-185003.nc")

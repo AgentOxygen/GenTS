@@ -18,6 +18,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import traceback
 import logging
 import copy
+import gc
 import warnings
 
 logger = logging.getLogger(__name__)
@@ -186,18 +187,19 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
 
     if ts_start_index is None:
         ts_start_index = 0
+    if ts_end_index is None:
+        ts_end_index = len(agg_hf_ds.get_time_vals())
+    time_name = agg_hf_ds.get_time_var_name()
 
     with GenTSDataStore(ts_out_path, mode="w") as ts_ds:
         if primary_var != "auxiliary":
             var_shape = agg_hf_ds.get_var_data_shape(primary_var)
             var_dims = agg_hf_ds.get_var_dimensions(primary_var)
             
-            if ts_end_index is None:
-                ts_end_index = var_shape[0]
             var_shape[0] = ts_end_index - ts_start_index
 
             for index, dim in enumerate(var_dims):
-                if dim == "time":
+                if dim == time_name:
                     ts_ds.createDimension(dim, None)
                 else:
                     ts_ds.createDimension(dim, var_shape[index])
@@ -228,7 +230,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
 
             if no_data:
                 pass
-            elif len(var_shape) > 0 and "time" in var_dims:
+            elif len(var_shape) > 0 and time_name in var_dims:
                 for i in range(0, var_shape[0], chunksizes[0]):
                     end = min(i + chunksizes[0], var_shape[0])
                     chunk = agg_hf_ds.get_var_vals(
@@ -245,14 +247,12 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
             var_shape = agg_hf_ds.get_var_data_shape(secondary_var)
             var_dims = agg_hf_ds.get_var_dimensions(secondary_var)
 
-            if ts_end_index is None:
-                ts_end_index = var_shape[0]
-            if "time" in var_dims:
+            if time_name in var_dims:
                 var_shape[0] = ts_end_index - ts_start_index
 
             for index, dim in enumerate(var_dims):
                 if dim not in ts_ds.dimensions:
-                    if dim == "time":
+                    if dim == time_name:
                         ts_ds.createDimension(dim, None)
                     else:
                         ts_ds.createDimension(dim, var_shape[index])
@@ -275,7 +275,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
             ts_ds[secondary_var].setncatts(
                 {key: val for key, val in svar_attrs.items() if key != "_FillValue"}
             )
-            if "time" in var_dims:
+            if time_name in var_dims:
                 svar_vals = secondary_vars_data[secondary_var][ts_start_index:ts_end_index]
             else:
                 svar_vals = secondary_vars_data[secondary_var]
@@ -526,7 +526,7 @@ class TSCollection:
         orders = []
         for index, glob_template in enumerate(self.__groups):
             hf_paths = self.__groups[glob_template]
-            output_template = glob_template.split(str(self.__hf_collection.get_input_dir()))[1]
+            output_template = glob_template.removeprefix(str(self.__hf_collection.get_input_dir()))
             if "[sorting_pivot]" in output_template:
                 output_template, slice_years = output_template.split("[sorting_pivot]")
                 logger.debug(f"Group [{index+1}/{len(self.__groups)}] {len(hf_paths)} files: {output_template}, sliced to [{slice_years}]")
@@ -847,12 +847,18 @@ class TSCollection:
             if latest_existing_time is not None:
                 original_hf_paths = order_dict["hf_paths"]
                 new_hf_paths = []
+                dropped_steps = 0
                 for hf_path in original_hf_paths:
                     hf_times = self.__hf_collection[hf_path].get_float_times()
                     hf_times = np.ma.getdata(np.atleast_1d(hf_times))
 
                     if hf_times[-1] > latest_existing_time:
                         new_hf_paths.append(hf_path)
+                    else:
+                        dropped_steps += hf_times.shape[0]
+                if dropped_steps > 0 and order_dict["ts_end_index"] is not None:
+                    order_dict["ts_start_index"] = 0
+                    order_dict["ts_end_index"] -= dropped_steps
 
                 if new_hf_paths and new_hf_paths != original_hf_paths:
                     first_meta = self.__hf_collection[new_hf_paths[0]]
@@ -923,8 +929,9 @@ class TSCollection:
         """
         Runs every order, writing the time series files.
 
-        Orders sharing a first source file and time slice are batched together so
-        each group of history files is opened once rather than once per variable.
+        Orders sharing source files, time slice, output path template and
+        secondary variables are batched together so each group of history files is
+        opened once rather than once per variable.
         Work runs over a process pool when ``num_processes > 1`` and in-process
         otherwise; per-order failures are logged and the rest of the run continues.
 
@@ -954,10 +961,10 @@ class TSCollection:
         if optimize:
             order_index_merge_map = {}
             for index, order in enumerate(self.__orders):
-                first_hf_path = order["hf_paths"][0]
-                start_index = order["ts_start_index"]
-                end_index = order["ts_end_index"]
-                key = f"{first_hf_path}.{start_index}.{end_index}"
+                key = (
+                    tuple(order["hf_paths"]), order["ts_start_index"], order["ts_end_index"],
+                    order["ts_path_template"], tuple(order["secondary_vars"]),
+                )
                 if key in order_index_merge_map:
                     order_index_merge_map[key].append(index)
                 else:
@@ -1009,18 +1016,25 @@ class TSCollection:
                 })
         prog_bar = ProgressBar(total=len(optimized_orders), label="Generating Timeseries", quiet=not show_progress)
         if self.__num_processes > 1:
-            with ProcessPoolExecutor(max_workers=self.__num_processes) as executor:
-                futures = {executor.submit(generate_time_series, **args): args for args in optimized_orders}
-                for future in as_completed(futures):
-                    try:
-                        results.append(future.result())
-                    except Exception as exc:
-                        order = futures[future]
-                        logger.warning(f"Failed to generate time series for {order['ts_path_template']}: {exc}", exc_info=True)
-                        if raise_errors:
-                            raise
-                    finally:
-                        prog_bar.step()
+            # Forked workers share the parent's heap copy-on-write. Freezing the GC
+            # keeps collections from writing to those pages, so workers don't end up
+            # copying the collection's metadata.
+            gc.freeze()
+            try:
+                with ProcessPoolExecutor(max_workers=self.__num_processes) as executor:
+                    futures = {executor.submit(generate_time_series, **args): args for args in optimized_orders}
+                    for future in as_completed(futures):
+                        try:
+                            results.append(future.result())
+                        except Exception as exc:
+                            order = futures[future]
+                            logger.warning(f"Failed to generate time series for {order['ts_path_template']}: {exc}", exc_info=True)
+                            if raise_errors:
+                                raise
+                        finally:
+                            prog_bar.step()
+            finally:
+                gc.unfreeze()
         else:
             for args in optimized_orders:
                 try:

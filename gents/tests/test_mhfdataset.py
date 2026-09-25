@@ -405,3 +405,73 @@ def test_MHFDataset_memory_limited_reads_correct_slices(tmp_path):
         vals = ds.get_var_vals("VAR0", time_index_start=start, time_index_end=end)
         assert np.array_equal(vals, source[start:end])
     ds.close()
+
+
+def test_MHFDataset_reads_raw_values_on_every_path(tmp_path):
+    """Preloaded, lazily cached and uncacheable direct reads all return the raw on-disk
+    values, as open() does: no scaling (which corrupts packed integers) and no masking
+    (whose uncounted mask array lets the cache overrun memory_limit_bytes)."""
+    raw = np.arange(36, dtype="i2").reshape(3, 3, 4)
+    paths = []
+    for findex in range(3):
+        path = str(tmp_path / f"testing.hf.{findex:05d}.nc")
+        generate_history_file(path, [findex * 30.0], [[findex * 30.0, (findex + 1) * 30.0]], num_vars=1, dtype="i2")
+        with GenTSDataStore(path, "a") as ds:
+            ds["VAR0"].scale_factor = 0.5
+            ds["VAR0"].set_auto_scale(False)
+            ds["VAR0"][:] = raw[findex:findex + 1]
+        paths.append(path)
+
+    preloaded = MHFDataset(paths)
+    lazy = MHFDataset(paths, preload_primaries=False)
+    direct = MHFDataset(paths, memory_limit_bytes=1)
+    for ds in (preloaded, lazy, direct):
+        with ds:
+            assert np.array_equal(ds.get_var_vals("VAR0"), raw)
+            for cached in ds._MHFDataset__data_var_cache.get("VAR0", []):
+                assert not np.ma.isMaskedArray(cached)
+
+
+def test_MHFDataset_uncached_static_variable_reads_whole_array_from_first_file(tmp_path):
+    """A no-time variable too big for the cache is read directly from the first file
+    alone, and whole: not truncated to its first row, and without opening the rest of
+    the group (41 statics x 3,650 daily CICE files was ~150k opens)."""
+    grid = np.arange(20, dtype=float).reshape(4, 5)
+    paths = []
+    for findex in range(3):
+        path = str(tmp_path / f"testing.hf.{findex:05d}.nc")
+        generate_history_file(path, [findex * 30.0], [[findex * 30.0, (findex + 1) * 30.0]], num_vars=1)
+        with GenTSDataStore(path, "a") as ds:
+            ds.createDimension("ny", 4)
+            ds.createDimension("nx", 5)
+            ds.createVariable("grid", float, ("ny", "nx"))[:] = grid
+        paths.append(path)
+
+    # 150 B: under one grid copy (160 B), so it is never cached.
+    with MHFDataset(paths, memory_limit_bytes=150, preload_primaries=False) as ds:
+        assert "grid" not in ds._MHFDataset__data_secondary_var_cache
+        with patch("gents.mhfdataset.GenTSDataStore", wraps=GenTSDataStore) as opens:
+            assert np.array_equal(ds.get_var_vals("grid"), grid)
+        assert opens.call_count == 1
+
+
+def test_MHFDataset_open_caches_static_secondary_once(tmp_path):
+    """open() budgets and caches a no-time secondary as one copy from the first file,
+    so reading it later opens no files."""
+    grid = np.arange(20, dtype=float).reshape(4, 5)
+    paths = []
+    for findex in range(3):
+        path = str(tmp_path / f"testing.hf.{findex:05d}.nc")
+        generate_history_file(path, [findex * 30.0], [[findex * 30.0, (findex + 1) * 30.0]], num_vars=1)
+        with GenTSDataStore(path, "a") as ds:
+            ds.createDimension("ny", 4)
+            ds.createDimension("nx", 5)
+            ds.createVariable("grid", float, ("ny", "nx"))[:] = grid
+        paths.append(path)
+
+    # 300 B fits one grid copy (160 B) plus time and bounds, not one per file (480 B).
+    with MHFDataset(paths, memory_limit_bytes=300, preload_primaries=False) as ds:
+        assert len(ds._MHFDataset__data_secondary_var_cache["grid"]) == 1
+        with patch("gents.mhfdataset.GenTSDataStore", wraps=GenTSDataStore) as opens:
+            assert np.array_equal(ds.get_var_vals("grid"), grid)
+        assert opens.call_count == 0
