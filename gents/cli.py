@@ -86,7 +86,7 @@ def parse_arguments():
         "--slice_start_year",
         type=int,
         default=None,
-        help="Year to start slice windows at. (Default is start year for history files)"
+        help="Year to align slice windows to; earlier data gets windows on the same alignment. (Default is start year for history files)"
     )
     parser.add_argument(
         "-hc", "--hfcores",
