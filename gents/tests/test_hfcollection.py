@@ -27,6 +27,9 @@ def test_calculate_year_slices():
     assert calculate_year_slices(10, 1, 30) == [(1, 10), (11, 20), (21, 30)]
     assert calculate_year_slices(1, 0, 3) == [(0, 0), (1, 1), (2, 2), (3, 3)]
     assert calculate_year_slices(5, 3, 12) == [(3, 7), (8, 12)]
+    assert calculate_year_slices(10, 1, 10) == [(1, 10)]
+    assert calculate_year_slices(10, 1, 11) == [(1, 10), (11, 20)]
+    assert calculate_year_slices(1, 1850, 1851) == [(1850, 1850), (1851, 1851)]
 
 
 def test_hf_sorting(structured_case):
@@ -185,7 +188,7 @@ def test_simple_hfcollection(simple_case, caplog):
         repeat_years = []
         year_slices = calculate_year_slices(slice_size, min_year, max_year)
         for lower, upper in year_slices:
-            assert upper - lower <= slice_size
+            assert upper - lower < slice_size
             assert lower <= upper
             assert lower not in repeat_years
             assert upper not in repeat_years

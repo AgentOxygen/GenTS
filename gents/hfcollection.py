@@ -63,7 +63,7 @@ def calculate_year_slices(slice_size_years, min_year, max_year):
     """
     if max_year < min_year:
         raise ValueError("Maximum year cannot exceed minimum year.")
-    if slice_size_years >= max_year - min_year:
+    if max_year - min_year < slice_size_years:
         return [(min_year, max_year)]
 
     start_year = min_year
