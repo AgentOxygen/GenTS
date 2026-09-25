@@ -758,3 +758,16 @@ def test_include_time_month_granularity(long_case):
     # Only the second half.
     filtered = hf_collection.include_time(CASE_START_YEAR, CASE_START_YEAR + 1, start_month=7, end_month=1)
     assert len(filtered) == 6
+
+
+def test_collections_do_not_share_multistep_slices(straddling_case):
+    """Each new HFCollection starts with its own multistep slice map, so slicing the
+    same files again in one process (e.g. a continued run in a notebook) works."""
+    input_head_dir, output_head_dir, write = straddling_case
+    write(range(5))
+
+    for _ in range(2):
+        hf_collection = HFCollection(input_head_dir)
+        hf_collection.pull_metadata()
+        assert hf_collection.get_multistep_slices(next(iter(hf_collection))) is None
+        hf_collection.slice_groups(slice_size_years=1, start_year=CASE_START_YEAR)

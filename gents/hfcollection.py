@@ -426,7 +426,7 @@ class HFCollection:
     tree.
     """
 
-    def __init__(self, hf_dir, num_processes=1, meta_map=None, hf_groups=None, step_map=None, hf_glob_pattern="*.nc*", dask_client=None, multistep_slice_map={}):
+    def __init__(self, hf_dir, num_processes=1, meta_map=None, hf_groups=None, step_map=None, hf_glob_pattern="*.nc*", dask_client=None, multistep_slice_map=None):
         """
         Discovers history files under ``hf_dir``, without reading their metadata.
 
@@ -447,7 +447,7 @@ class HFCollection:
         :type hf_glob_pattern: str
         :param multistep_slice_map: Pre-computed slice indices for multi-timestep
             files (see :meth:`get_multistep_slices`).
-        :type multistep_slice_map: dict
+        :type multistep_slice_map: dict or None
         :param dask_client: Deprecated. Pass ``num_processes`` instead.
         :raises FileNotFoundError: If no file under ``hf_dir`` matches the pattern.
         """
@@ -462,6 +462,8 @@ class HFCollection:
 
         self.__hf_to_meta_map = {}
         self.__hf_multistep_slices = multistep_slice_map
+        if self.__hf_multistep_slices is None:
+            self.__hf_multistep_slices = {}
         if meta_map is None:
             for path in self.__raw_paths:
                 self.__hf_to_meta_map[path] = None

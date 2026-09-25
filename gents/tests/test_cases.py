@@ -493,6 +493,28 @@ def extraneous_file_case(tmp_path_factory):
 
 
 @pytest.fixture(scope="function")
+def straddling_case(tmp_path_factory):
+    """
+    A callable writing 6-step monthly history files that start in April, so each
+    one straddles a year boundary. File ``k`` holds months ``3+6k .. 8+6k``
+    (month 0 = January of ``CASE_START_YEAR``), and ``VAR0`` holds each step's
+    month index so tests can see which months were written.
+    """
+    head_hf_dir = tmp_path_factory.mktemp("straddling_history_files")
+    head_ts_dir = tmp_path_factory.mktemp("straddling_timeseries_files")
+
+    def write(file_indices):
+        for k in file_indices:
+            months = np.arange(3 + 6*k, 9 + 6*k)
+            path = f"{head_hf_dir}/testing.hf.{str(k).zfill(5)}.nc"
+            generate_history_file(path, (months + 0.5)*30, [[m*30, (m+1)*30] for m in months], num_vars=1)
+            with GenTSDataStore(path, "a") as ds:
+                ds["VAR0"][:] = months[:, None, None] * np.ones((len(months), 3, 4))
+
+    return head_hf_dir, head_ts_dir, write
+
+
+@pytest.fixture(scope="function")
 def continued_case(tmp_path_factory):
     """
     12 monthly history files, plus a callable to append more files continuing
