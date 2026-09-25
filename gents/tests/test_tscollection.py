@@ -790,3 +790,30 @@ def test_skip_existing_ts_string_reflects_trimmed_range(continued_case):
 
     for order in resumed:
         assert order["ts_string"] == "185101-185112"
+
+
+def test_skip_existing_recomputes_cut_indices_for_trimmed_order(straddling_case):
+    """Trimming leading files from an order whose files straddle slice boundaries
+    shifts its time indices onto the trimmed group."""
+    input_head_dir, output_head_dir, write = straddling_case
+
+    def build():
+        hf_collection = HFCollection(input_head_dir)
+        hf_collection.pull_metadata()
+        return TSCollection(hf_collection.slice_groups(slice_size_years=1, start_year=CASE_START_YEAR), str(output_head_dir))
+
+    write(range(5))    # Apr 1850 .. Sep 1852
+    build().execute(raise_errors=True, show_progress=False)
+    write(range(5, 7))  # Oct 1852 .. Sep 1853
+
+    resumed = build().skip_existing()
+
+    # 1852's order was files 3-5 (steps 3..15); files 3-4 are covered, leaving
+    # file 5's first three steps (Oct-Dec 1852).
+    trimmed = [order for order in resumed if order["ts_string"].startswith("1852")][0]
+    assert [Path(path).name for path in trimmed["hf_paths"]] == ["testing.hf.00005.nc"]
+    assert (trimmed["ts_start_index"], trimmed["ts_end_index"]) == (0, 3)
+
+    resumed.execute(raise_errors=True, show_progress=False)
+    with GenTSDataStore(f"{output_head_dir}/testing.hf.VAR0.185210-185212.nc", "r") as ds:
+        assert ds["VAR0"][:, 0, 0].tolist() == [33, 34, 35]

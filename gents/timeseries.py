@@ -848,12 +848,22 @@ class TSCollection:
             if latest_existing_time is not None:
                 original_hf_paths = order_dict["hf_paths"]
                 new_hf_paths = []
+                dropped_steps = 0
                 for hf_path in original_hf_paths:
                     hf_times = self.__hf_collection[hf_path].get_float_times()
                     hf_times = np.ma.getdata(np.atleast_1d(hf_times))
 
                     if hf_times[-1] > latest_existing_time:
                         new_hf_paths.append(hf_path)
+                    else:
+                        dropped_steps += hf_times.shape[0]
+
+                # Cut indices count steps from the original first file. Only that
+                # file can start before the slice, so once it is dropped the
+                # trimmed group starts at step 0.
+                if dropped_steps > 0 and order_dict["ts_end_index"] is not None:
+                    order_dict["ts_start_index"] = 0
+                    order_dict["ts_end_index"] -= dropped_steps
 
                 if new_hf_paths and new_hf_paths != original_hf_paths:
                     first_meta = self.__hf_collection[new_hf_paths[0]]
