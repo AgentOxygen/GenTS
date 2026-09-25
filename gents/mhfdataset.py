@@ -273,7 +273,8 @@ class MHFDataset:
             else:
                 notime_vars_to_cache.append(var_name)
 
-        for index, path in enumerate(self.__hf_files):
+        hf_files = self.__hf_files if time_vars_to_cache else self.__hf_files[:1]
+        for index, path in enumerate(hf_files):
             with GenTSDataStore(path, 'r') as hf_ds:
                 hf_ds.set_auto_maskandscale(False)
                 if index == 0:

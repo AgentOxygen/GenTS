@@ -449,3 +449,23 @@ def test_MHFDataset_static_variable_lazily_cached_returns_whole_array(tmp_path):
     # 300 B: too small to preload grid for 3 files (480 B), big enough to cache it lazily (160 B).
     with MHFDataset(paths, memory_limit_bytes=300) as ds:
         assert np.array_equal(ds.get_var_vals("grid"), grid)
+
+
+def test_MHFDataset_lazily_caching_static_variable_opens_only_first_file(tmp_path):
+    """A no-time variable is read from the first file alone, so caching it lazily
+    doesn't open the rest of the group (41 statics x 3,650 daily CICE files was
+    ~150k opens)."""
+    paths = []
+    for findex in range(3):
+        path = str(tmp_path / f"testing.hf.{findex:05d}.nc")
+        generate_history_file(path, [findex * 30.0], [[findex * 30.0, (findex + 1) * 30.0]], num_vars=1)
+        with GenTSDataStore(path, "a") as ds:
+            ds.createDimension("ny", 4)
+            ds.createDimension("nx", 5)
+            ds.createVariable("grid", float, ("ny", "nx"))[:] = 1.0
+        paths.append(path)
+
+    with MHFDataset(paths, memory_limit_bytes=300, preload_primaries=False) as ds:
+        with patch("gents.mhfdataset.GenTSDataStore", wraps=GenTSDataStore) as opens:
+            ds.get_var_vals("grid")
+        assert opens.call_count == 1
