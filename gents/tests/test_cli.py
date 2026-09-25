@@ -307,3 +307,23 @@ def test_cli_overwrite_rewrites_complete_output(simple_case):
             main()
         with GenTSDataStore(ts_path, "r") as ts_ds:
             assert ("marker" in ts_ds.ncattrs()) == marker_survives
+
+
+def test_cli_compression_overrides_model_config(tmp_path):
+    """--compression/--level win over the model YAML's compression (CESM3: zlib 2)."""
+    hist_dir = tmp_path / "case" / "atm" / "hist"
+    hist_dir.mkdir(parents=True)
+    for index in range(3):
+        generate_history_file(f"{hist_dir}/case.cam.h0.{index:05d}.nc", [(index+0.5)*30], [[index*30, (index+1)*30]], num_vars=1)
+    output_dir = tmp_path / "out"
+
+    with patch.object(sys, "argv", [
+        "run_gents", str(tmp_path / "case"), "-o", str(output_dir), "--model", "CESM3",
+        "--compression", "zlib", "--level", "5"
+    ]):
+        main()
+
+    ts_paths = find_files(output_dir, "*.nc")
+    assert len(ts_paths) == 1
+    with GenTSDataStore(ts_paths[0], "r") as ts_ds:
+        assert ts_ds["VAR0"].filters()["complevel"] == 5

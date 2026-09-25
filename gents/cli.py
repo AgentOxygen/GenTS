@@ -253,9 +253,6 @@ def main():
     if args.overwrite:
         tsc = tsc.apply_overwrite(path_glob="*")
 
-    if args.compression is not None:
-        tsc = tsc.apply_compression(alg=args.compression, level=args.level, path_glob="*")
-
     if "path_swaps" in yaml_config["output_ts"]:
         for swap_batch in yaml_config["output_ts"]["path_swaps"]:
             tsc = tsc.apply_path_swap(**swap_batch)
@@ -267,6 +264,10 @@ def main():
     if "compression" in yaml_config["output_ts"]:
         for comp_batch in yaml_config["output_ts"]["compression"]:
             tsc = tsc.apply_compression(**comp_batch)
+
+    # After the YAML's, so an explicit --compression wins over the model default.
+    if args.compression is not None:
+        tsc = tsc.apply_compression(alg=args.compression, level=args.level, path_glob="*")
 
     if args.verbose:
         log_hfcollection_info(hfc)
