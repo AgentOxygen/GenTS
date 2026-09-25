@@ -41,7 +41,7 @@ Homepage = "https://github.com/AgentOxygen/GenTS"
 Issues = "https://github.com/AgentOxygen/GenTS"
 
 [tool.setuptools]
-packages = ["gents", "gents.configs"]
+packages = ["gents", "gents.configs", "gents.conformity", "gents.conformity.models"]
 
 [tool.setuptools.package-data]
 "gents.configs" = ["*.yaml"]
