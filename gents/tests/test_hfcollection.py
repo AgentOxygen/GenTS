@@ -798,3 +798,17 @@ def test_include_years_keeps_merged_and_sliced_groups(spatial_fragment_case):
 
     assert hf_collection.include_years(0, 99999).get_groups() == hf_collection.get_groups()
     assert sliced.include_years(0, 99999).get_groups() == sliced.get_groups()
+
+
+def test_slice_start_year_after_data_extends_windows_backwards(tmp_path):
+    """start_year aligns windows; data before it gets windows on the same alignment
+    instead of being dropped."""
+    for index in range(36):  # monthly, 1850-1852
+        generate_history_file(f"{tmp_path}/testing.hf.{index:05d}.nc", [(index+0.5)*30], [[index*30, (index+1)*30]], num_vars=1)
+    hf_collection = HFCollection(tmp_path)
+    hf_collection.pull_metadata()
+
+    groups = hf_collection.slice_groups(slice_size_years=2, start_year=CASE_START_YEAR + 1).get_groups()
+
+    assert [group.split("[sorting_pivot]")[1] for group in groups] == ["1849-1850", "1851-1852"]
+    assert sum(len(paths) for paths in groups.values()) == 36

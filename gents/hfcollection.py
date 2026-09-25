@@ -895,7 +895,9 @@ class HFCollection:
         :param slice_size_years: Maximum width of each window in years.
         :type slice_size_years: int
         :param start_year: Year to align windows to; ``None`` uses the collection's
-            own earliest year.
+            own earliest year. Data before it is still covered, by windows on the
+            same alignment (e.g. ``start_year=1851`` with 2-year slices and data
+            from 1850 gives ``1849-1850``, ``1851-1852``).
         :type start_year: int or None
         :param pattern: One or more ``fnmatch`` globs restricting which groups are
             sliced; a group matching none of them passes through unsliced. A
@@ -937,7 +939,10 @@ class HFCollection:
             
             min_year, max_year = get_year_bounds(group_meta_map)
             if start_year is not None:
-                min_year = start_year
+                if start_year > min_year:
+                    min_year -= (min_year - start_year) % slice_size_years
+                else:
+                    min_year = start_year
             
             time_slices = calculate_year_slices(slice_size_years, min_year, max_year)
 
