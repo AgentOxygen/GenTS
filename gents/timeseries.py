@@ -796,6 +796,11 @@ class TSCollection:
         Returns a new collection with each order narrowed to timesteps not
         already covered by existing output, for resuming a continued run.
 
+        Existing output is found with a :class:`~gents.tsinventory.TSInventory`
+        of each order's output directory. Only files that load and carry the
+        ``gents_version`` stamp count as coverage; incomplete or corrupt files
+        are ignored with a warning.
+
         :rtype: TSCollection
         """
         inventories = {}  # parent dir -> unpulled inventory, so each directory is walked once

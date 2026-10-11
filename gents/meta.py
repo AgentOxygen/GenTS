@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Per-file netCDF metadata: variable classification and cached header contents.
+Per-file netCDF metadata: variable classification, cached header contents, and bulk header reads.
 
 Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu

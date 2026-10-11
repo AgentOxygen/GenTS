@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Logging setup, progress reporting, versioning, and collection summaries.
+Logging setup, progress reporting, path filtering, time step labels, versioning, and collection summaries.
 
 Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu

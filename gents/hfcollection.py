@@ -649,8 +649,9 @@ class HFCollection:
         """
         Reads the header of every history file in the collection.
 
-        Runs :func:`~gents.meta.get_meta_from_path` over a process pool when
-        ``num_processes > 1`` and serially otherwise, then computes each group's
+        Reads headers with :func:`~gents.meta.read_meta_map` (running
+        :func:`~gents.meta.get_meta_from_path` over a process pool when
+        ``num_processes > 1`` and serially otherwise), then computes each group's
         timestep delta.
 
         :param check_valid: Run :meth:`check_validity` afterwards, dropping files
