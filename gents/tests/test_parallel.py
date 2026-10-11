@@ -75,7 +75,7 @@ def test_dataset_opens(simple_case):
     input_head_dir, output_head_dir = simple_case
 
     hf_paths = [f"{input_head_dir}/{filename}" for filename in listdir(input_head_dir) if ".nc" in filename]
-    with patch("gents.hfcollection.ProcessPoolExecutor", ThreadPoolExecutor):
+    with patch("gents.meta.ProcessPoolExecutor", ThreadPoolExecutor):
         with patch("gents.meta.GenTSDataStore", wraps=GenTSDataStore) as mock_ds:
             assert mock_ds.call_count == 0
             hf_collection = HFCollection(input_head_dir, num_processes=1)

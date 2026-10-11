@@ -10,9 +10,35 @@ from importlib.metadata import version
 import logging
 import sys
 import datetime
+import fnmatch
 import numpy as np
 
 LOG_LEVEL_IO_WARNING = 5
+
+
+def filter_by_globs(path_map, glob_patterns, keep_matches):
+    """
+    Filters a ``{path: value}`` map by ``fnmatch`` globs tested against the
+    path as a string.
+
+    Shared by the collections' ``include`` (``keep_matches=True``) and
+    ``exclude`` (``keep_matches=False``). An empty pattern list matches nothing.
+
+    :param path_map: Mapping keyed by path; not modified.
+    :type path_map: dict
+    :param glob_patterns: One or more glob patterns; a single string is also accepted.
+    :type glob_patterns: list[str] or str
+    :param keep_matches: Keep paths matching any pattern if ``True``, drop them if ``False``.
+    :type keep_matches: bool
+    :returns: A new dict holding the retained entries.
+    :rtype: dict
+    """
+    if isinstance(glob_patterns, str):
+        glob_patterns = [glob_patterns]
+    return {
+        path: value for path, value in path_map.items()
+        if any(fnmatch.fnmatch(str(path), pattern) for pattern in glob_patterns) == keep_matches
+    }
 
 
 def get_time_stamp():

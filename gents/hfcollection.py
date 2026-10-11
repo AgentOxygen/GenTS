@@ -5,11 +5,10 @@ Discovery, filtering, grouping and slicing of model history files.
 Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
 """
-from gents.meta import get_meta_from_path
-from gents.utils import ProgressBar, LOG_LEVEL_IO_WARNING
+from gents.meta import get_meta_from_path, read_meta_map, split_valid
+from gents.utils import filter_by_globs, LOG_LEVEL_IO_WARNING
 from cftime import num2date
 from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
 import os
 import fnmatch
@@ -672,31 +671,9 @@ class HFCollection:
         logger.info(f"Pulling metadata...")
         paths = list(self.__hf_to_meta_map.keys())
 
-        prog_bar = ProgressBar(total=len(paths), label="Pulling Metadata", quiet=not show_progress)
-        if self.__num_processes > 1:
-            with ProcessPoolExecutor(max_workers=self.__num_processes) as executor:
-                futures = {executor.submit(get_meta_from_path, path): path for path in paths}
-                for future in as_completed(futures):
-                    path = futures[future]
-                    try:
-                        result = future.result()
-                        self.__hf_to_meta_map[path] = result
-                    except Exception as exc:
-                        logger.warning(f"Failed to load metadata for {path}: {exc}", exc_info=True)
-                        if raise_errors:
-                            raise
-                    finally:
-                        prog_bar.step()
-        else:
-            for path in paths:
-                try:
-                    self.__hf_to_meta_map[path] = get_meta_from_path(path)
-                except Exception as exc:
-                    logger.warning(f"Failed to load metadata for {path}: {exc}", exc_info=True)
-                    if raise_errors:
-                        raise
-                finally:
-                    prog_bar.step()
+        self.__hf_to_meta_map.update(read_meta_map(
+            paths, get_meta_from_path, self.__num_processes, raise_errors, show_progress
+        ))
 
         if check_valid:
             self.check_validity()
@@ -725,14 +702,7 @@ class HFCollection:
         :rtype: dict
         """
         logger.debug(f"Validating metadata...")
-        new_map = {}
-        removed = {}
-        for path in self.__hf_to_meta_map:
-            if self.__hf_to_meta_map[path] is not None and self.__hf_to_meta_map[path].is_valid():
-                new_map[path] = self.__hf_to_meta_map[path]
-            else:
-                removed[path] = self.__hf_to_meta_map[path]
-                logger.warning(f"Could not pull valid/complete metadata for '{path}'.")
+        new_map, removed = split_valid(self.__hf_to_meta_map, lambda meta: meta.is_valid())
         self.__hf_to_meta_map = new_map
         logger.debug(f"{len(new_map)} files valdiated ({len(removed)} removed).")
         return removed
@@ -765,15 +735,7 @@ class HFCollection:
         :type glob_patterns: list[str] or str
         :rtype: HFCollection
         """
-        if type(glob_patterns) is str:
-            glob_patterns = [glob_patterns]
-
-        filtered_path_map = {}
-        for path in self.__hf_to_meta_map:
-            for pattern in glob_patterns:
-                if fnmatch.fnmatch(str(path), pattern):
-                    filtered_path_map[path] = self.__hf_to_meta_map[path]
-                    break
+        filtered_path_map = filter_by_globs(self.__hf_to_meta_map, glob_patterns, keep_matches=True)
         logger.debug(f"Inclusive filter(s) applied: '{glob_patterns}'")
         return self.copy(meta_map=filtered_path_map)
 
@@ -788,18 +750,7 @@ class HFCollection:
         :type glob_patterns: list[str] or str
         :rtype: HFCollection
         """
-        if type(glob_patterns) is str:
-            glob_patterns = [glob_patterns]
-
-        filtered_path_map = {}
-        for path in self.__hf_to_meta_map:
-            matches = False
-            for pattern in glob_patterns:
-                if fnmatch.fnmatch(str(path), pattern):
-                    matches = True
-                
-            if not matches:
-                filtered_path_map[path] = self.__hf_to_meta_map[path]
+        filtered_path_map = filter_by_globs(self.__hf_to_meta_map, glob_patterns, keep_matches=False)
         logger.debug(f"Exclusive filter(s) applied: '{glob_patterns}'")
         return self.copy(meta_map=filtered_path_map)
 

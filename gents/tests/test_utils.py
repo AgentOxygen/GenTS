@@ -157,7 +157,17 @@ def test_log_hfcollection_info_show_progress_reaches_metadata_pull(simple_case):
     hf_collection = HFCollection(input_head_dir)
     assert not hf_collection.is_pulled()
 
-    with patch("gents.hfcollection.ProgressBar") as mock_bar:
+    with patch("gents.meta.ProgressBar") as mock_bar:
         log_hfcollection_info(hf_collection, show_progress=False)
 
     assert mock_bar.call_args.kwargs["quiet"] is True
+
+
+def test_filter_by_globs():
+    """filter_by_globs() keeps or drops matches, accepts a str or list, and leaves its input untouched."""
+    path_map = {"/a/0_dir/x.nc": 1, "/a/1_dir/y.nc": 2, "/a/2_dir/z.nc": 3}
+    assert list(filter_by_globs(path_map, "*/0_dir/*", True)) == ["/a/0_dir/x.nc"]
+    assert list(filter_by_globs(path_map, ["*/0_dir/*", "*/1_dir/*"], False)) == ["/a/2_dir/z.nc"]
+    assert filter_by_globs(path_map, [], True) == {}
+    assert filter_by_globs(path_map, [], False) == path_map
+    assert len(path_map) == 3
