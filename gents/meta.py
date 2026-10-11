@@ -1,13 +1,18 @@
 #!/usr/bin/env python
 """
-Per-file netCDF metadata: variable classification and cached header contents.
+Per-file netCDF metadata: variable classification, cached header contents, and bulk header reads.
 
 Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
 """
+import logging
 import numpy as np
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from cftime import num2date
 from gents.datastore import GenTSDataStore
+from gents.utils import ProgressBar
+
+logger = logging.getLogger(__name__)
 
 
 def is_var_secondary(variable,
@@ -515,3 +520,79 @@ def get_meta_from_path(path: str):
         raise type(e)(f"{e} Path: {path}") from e
 
     return ds_meta
+
+
+def read_meta_map(paths, factory, num_processes=1, raise_errors=False, show_progress=True):
+    """
+    Reads the metadata of many files, in parallel when ``num_processes > 1``.
+
+    Shared by the collections' ``pull_metadata``. A file that fails to load is
+    logged and left out of the result, so the caller's entry for it stays
+    unloaded.
+
+    :param paths: Files to read.
+    :type paths: list[pathlib.Path]
+    :param factory: Picklable callable mapping a path to its metadata, such as
+        :func:`get_meta_from_path`.
+    :type factory: callable
+    :param num_processes: Worker processes; ``1`` reads serially in-process.
+    :type num_processes: int
+    :param raise_errors: Raise the first per-file failure instead of logging it.
+    :type raise_errors: bool
+    :param show_progress: If ``False``, suppress the stdout progress bar.
+    :type show_progress: bool
+    :returns: ``{path: metadata}`` for every file that loaded.
+    :rtype: dict
+    """
+    loaded = {}
+    prog_bar = ProgressBar(total=len(paths), label="Pulling Metadata", quiet=not show_progress)
+    if num_processes > 1:
+        with ProcessPoolExecutor(max_workers=num_processes) as executor:
+            futures = {executor.submit(factory, path): path for path in paths}
+            for future in as_completed(futures):
+                path = futures[future]
+                try:
+                    loaded[path] = future.result()
+                except Exception as exc:
+                    logger.warning(f"Failed to load metadata for {path}: {exc}", exc_info=True)
+                    if raise_errors:
+                        raise
+                finally:
+                    prog_bar.step()
+    else:
+        for path in paths:
+            try:
+                loaded[path] = factory(path)
+            except Exception as exc:
+                logger.warning(f"Failed to load metadata for {path}: {exc}", exc_info=True)
+                if raise_errors:
+                    raise
+            finally:
+                prog_bar.step()
+    return loaded
+
+
+def split_valid(meta_map, is_valid_fn):
+    """
+    Splits a ``{path: metadata}`` map into usable and unusable entries.
+
+    An entry is unusable if its metadata is ``None`` (never loaded, or the read
+    failed) or ``is_valid_fn`` rejects it. Warns about each unusable entry.
+
+    :param meta_map: Metadata by path; not modified.
+    :type meta_map: dict
+    :param is_valid_fn: Predicate taking one metadata object, such as
+        :meth:`netCDFMeta.is_valid`.
+    :type is_valid_fn: callable
+    :returns: ``(kept, removed)`` dicts of ``{path: metadata}``.
+    :rtype: tuple[dict, dict]
+    """
+    kept = {}
+    removed = {}
+    for path, meta in meta_map.items():
+        if meta is not None and is_valid_fn(meta):
+            kept[path] = meta
+        else:
+            removed[path] = meta
+            logger.warning(f"Could not pull valid/complete metadata for '{path}'.")
+    return kept, removed

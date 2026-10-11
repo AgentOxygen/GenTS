@@ -7,13 +7,15 @@ Contact: cameron.cummins@utexas.edu
 """
 import numpy as np
 import fnmatch
+import glob
 from os.path import isfile
 from os import remove, makedirs, listdir
 from pathlib import Path
 from gents.meta import get_attributes, get_meta_from_path
 from gents.mhfdataset import MHFDataset
+from gents.tsinventory import TSInventory
 from gents.datastore import GenTSDataStore
-from gents.utils import get_version, LOG_LEVEL_IO_WARNING, ProgressBar
+from gents.utils import get_version, get_timestep_label, LOG_LEVEL_IO_WARNING, ProgressBar
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import traceback
 import logging
@@ -375,34 +377,6 @@ def get_timestamp_format(dt, subhour_format="%Y%m%d%H%M%S", hourly_format="%Y%m%
         time_format = yearly_format
     
     return time_format
-
-
-def get_timestep_label(dt):
-    """
-    Returns the frequency label for a time-step duration: ``'hour_N'``,
-    ``'day_N'``, ``'month_N'``, ``'year_N'``, or ``'unsorted'`` if unknown.
-
-    Used by :meth:`TSCollection.append_timestep_dirs` as a directory name.
-
-    :param dt: Duration of a single model time step, or ``None`` if unknown.
-    :type dt: datetime.timedelta or None
-    :rtype: str
-    """
-    if dt is None:
-        return "unsorted"
-
-    hours = np.rint(dt.total_seconds() / 60.0 / 60.0)
-    days = np.rint(hours / 24.0)
-    months = np.rint(days / 30)
-    years = np.rint(months / 12)
-
-    if hours < 24:
-        return f"hour_{int(hours)}"
-    elif days < 28:
-        return f"day_{int(days)}"
-    elif months < 12:
-        return f"month_{int(months)}"
-    return f"year_{int(years)}"
 
 
 def _matches_any(value, globs):
@@ -822,27 +796,29 @@ class TSCollection:
         Returns a new collection with each order narrowed to timesteps not
         already covered by existing output, for resuming a continued run.
 
+        Existing output is found with a :class:`~gents.tsinventory.TSInventory`
+        of each order's output directory. Only files that load and carry the
+        ``gents_version`` stamp count as coverage; incomplete or corrupt files
+        are ignored with a warning.
+
         :rtype: TSCollection
         """
+        inventories = {}  # parent dir -> unpulled inventory, so each directory is walked once
+        latest_times = {}  # (parent dir, file prefix, variable) -> latest covered time, so each file is read once
         new_orders = []
         for order_dict in copy.deepcopy(self.__orders):
             template = Path(order_dict["ts_path_template"])
             var_name = order_dict["primary_var"]
-            name_glob = f"{template.name}.{var_name}.*.nc"
-            latest_existing_time = None
+            key = (template.parent, template.name, var_name)
 
-            if template.parent.is_dir():
-                for name in listdir(template.parent):
-                    if not fnmatch.fnmatch(name, name_glob):
-                        continue
-                    candidate_path = str(template.parent / name)
-                    if not check_timeseries_integrity(candidate_path):
-                        continue
-                    ts_times = get_meta_from_path(candidate_path).get_float_times()
-                    ts_times = np.ma.getdata(np.atleast_1d(ts_times))
-
-                    if latest_existing_time is None or ts_times[-1] > latest_existing_time:
-                        latest_existing_time = ts_times[-1]
+            if key not in latest_times:
+                if template.parent not in inventories:
+                    inventories[template.parent] = TSInventory(str(template.parent))
+                prefix = glob.escape(str(template.parent / f"{template.name}.{var_name}"))
+                existing = inventories[template.parent].include(f"{prefix}.*.nc")
+                existing.pull_metadata(show_progress=False)
+                latest_times[key] = existing.get_latest_time()
+            latest_existing_time = latest_times[key]
 
             if latest_existing_time is not None:
                 original_hf_paths = order_dict["hf_paths"]

@@ -41,14 +41,15 @@ verified against the source; when docs and code disagree, trust the code and fix
 ## Repository map
 
 ```
-gents/                  Package source (7 pipeline modules ~3,700 lines, + conformity/)
+gents/                  Package source (8 pipeline modules ~4,000 lines, + conformity/)
   hfcollection.py       HFCollection: discover/filter/group/slice history files
   timeseries.py         TSCollection: build + execute time-series "orders"; file writing
   meta.py               netCDFMeta: cached per-file metadata; primary/secondary classification
+  tsinventory.py        TSInventory: index of existing time series files (used by skip_existing)
   mhfdataset.py         MHFDataset: virtual aggregated dataset over a file group, with cache
   datastore.py          GenTSDataStore: thin context-manager wrapper around netCDF4.Dataset
   cli.py                argparse CLI + YAML-config-driven main()
-  utils.py              logging setup, ProgressBar, version, collection info loggers
+  utils.py              logging setup, ProgressBar, path-glob filter, timestep label, version, collection info loggers
   configs/              Bundled YAML model configs (gents_example.yaml, gents_cesm3.yaml)
   conformity/           End-to-end verification against real model cases. Outside the
                         pipeline; separate from unit tests. See its own README.md.
@@ -56,7 +57,7 @@ gents/                  Package source (7 pipeline modules ~3,700 lines, + confo
     check.py              gents_conform — run a model spec against generated output
     report.py             pass/fail/skip collector; text + JSON rendering
     models/cesm3.py       what correct CESM3 output looks like (the file that matters)
-  tests/                pytest suite (284 tests); test_cases.py generates synthetic fixtures
+  tests/                pytest suite (335 tests); test_cases.py generates synthetic fixtures
 docs/                   Sphinx docs (index/install/user/dev/api .rst)
 benchmarks/             ASV performance benchmarks + fixtures.build_bench_case()
 pipeline_bench.py       Standalone py-spy profiling driver (repo root, not an ASV suite)
@@ -82,7 +83,7 @@ group once into a memory-bounded cache) and writing one netCDF file per variable
 
 ```bash
 pip install -e ".[dev]"          # editable install with test/docs/bench extras
-pytest gents/tests/              # full test suite (284 tests, ~35 s)
+pytest gents/tests/              # full test suite (335 tests, ~40 s)
 docker build --target test -t gents-tests . && docker run --rm gents-tests   # CI-equivalent
 run_gents <hf_dir> --model CESM3 --dryrun   # CLI dry run (read-only validation)
 ```

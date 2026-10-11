@@ -1,5 +1,5 @@
 from gents.tests.test_cases import *
-from gents.meta import netCDFMeta, is_var_secondary, get_attributes, get_time_variables_names, get_meta_from_path
+from gents.meta import netCDFMeta, is_var_secondary, get_attributes, get_time_variables_names, get_meta_from_path, read_meta_map, split_valid
 from gents.datastore import GenTSDataStore
 import numpy as np
 import pytest
@@ -415,3 +415,27 @@ def test_netcdfmeta_is_valid_does_not_decode(tmp_path):
     with patch("gents.meta.num2date") as mock_num2date:
         assert meta.is_valid() is True
         mock_num2date.assert_not_called()
+
+
+@pytest.mark.parametrize("num_processes", [1, 2])
+def test_read_meta_map(tmp_path, num_processes):
+    """read_meta_map() returns metadata for loadable files and omits (not raises on) failures, serially and in a pool."""
+    good = tmp_path / "good.nc"
+    generate_history_file(str(good), [15.0], [[0.0, 30.0]])
+    missing = tmp_path / "missing.nc"
+
+    loaded = read_meta_map([good, missing], get_meta_from_path, num_processes=num_processes, show_progress=False)
+    assert list(loaded) == [good]
+    assert isinstance(loaded[good], netCDFMeta)
+
+    with pytest.raises(Exception):
+        read_meta_map([missing], get_meta_from_path, num_processes=num_processes, raise_errors=True, show_progress=False)
+
+
+def test_split_valid():
+    """split_valid() keeps entries the predicate accepts and removes both rejected and None entries."""
+    meta_map = {"a": 1, "b": 2, "c": None}
+    kept, removed = split_valid(meta_map, lambda meta: meta == 1)
+    assert kept == {"a": 1}
+    assert removed == {"b": 2, "c": None}
+    assert meta_map == {"a": 1, "b": 2, "c": None}

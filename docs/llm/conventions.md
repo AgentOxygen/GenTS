@@ -16,13 +16,23 @@
   Path-glob filters must stay usable *before* the pull (that's the performance model:
   filter first, read headers second). Methods needing metadata call `check_pulled()`,
   which auto-pulls.
+- **`TSInventory` follows the same model.** It is the output-side mirror of `HFCollection`:
+  lazy `None` metadata, immutable `include`/`exclude` via `.copy()`, and `pull_metadata`/
+  `check_validity` mutating in place (the same internal exception). It may import from
+  `hfcollection`; `hfcollection` must never import `tsinventory`.
+- **Collection plumbing is shared, not duplicated.** `include`/`exclude` go through
+  `utils.filter_by_globs`, the metadata pull through `meta.read_meta_map`, and validity
+  filtering through `meta.split_valid`, for both `HFCollection` and `TSInventory`. Fix a bug
+  there once. Tests that mock the pool or progress bar must patch `gents.meta.ProcessPoolExecutor`
+  / `gents.meta.ProgressBar`, not the names in `gents.hfcollection`.
 - **Copies inherit metadata.** Filtering a pulled collection yields pulled
   sub-collections; never re-read headers that a parent already read. (They also inherit
   the parent's *groups*, which is a bug — see "`include()`/`exclude()` after a pull"
   below.)
 - **Worker picklability.** Anything submitted to `ProcessPoolExecutor` must be a
-  module-level function with picklable args. `get_meta_from_path` exists precisely as
-  the picklable factory for `netCDFMeta`; keep that pattern.
+  module-level function with picklable args. `get_meta_from_path` (history files) and
+  `tsinventory.get_ts_meta_from_path` (time series files) exist precisely as the picklable
+  factories for `netCDFMeta`; keep that pattern.
 - **`num_processes <= 1` means no pool at all.** Both `pull_metadata` and `execute`
   branch to a plain serial loop rather than a one-worker pool. Profiling depends on it
   (see [workflows.md](workflows.md)); keep both branches in step, including their error

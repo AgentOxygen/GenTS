@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Logging setup, progress reporting, versioning, and collection summaries.
+Logging setup, progress reporting, path filtering, time step labels, versioning, and collection summaries.
 
 Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
@@ -10,9 +10,64 @@ from importlib.metadata import version
 import logging
 import sys
 import datetime
+import fnmatch
 import numpy as np
 
 LOG_LEVEL_IO_WARNING = 5
+
+
+def filter_by_globs(path_map, glob_patterns, keep_matches):
+    """
+    Filters a ``{path: value}`` map by ``fnmatch`` globs tested against the
+    path as a string.
+
+    Shared by the collections' ``include`` (``keep_matches=True``) and
+    ``exclude`` (``keep_matches=False``). An empty pattern list matches nothing.
+
+    :param path_map: Mapping keyed by path; not modified.
+    :type path_map: dict
+    :param glob_patterns: One or more glob patterns; a single string is also accepted.
+    :type glob_patterns: list[str] or str
+    :param keep_matches: Keep paths matching any pattern if ``True``, drop them if ``False``.
+    :type keep_matches: bool
+    :returns: A new dict holding the retained entries.
+    :rtype: dict
+    """
+    if isinstance(glob_patterns, str):
+        glob_patterns = [glob_patterns]
+    return {
+        path: value for path, value in path_map.items()
+        if any(fnmatch.fnmatch(str(path), pattern) for pattern in glob_patterns) == keep_matches
+    }
+
+
+def get_timestep_label(dt):
+    """
+    Returns the frequency label for a time-step duration: ``'hour_N'``,
+    ``'day_N'``, ``'month_N'``, ``'year_N'``, or ``'unsorted'`` if unknown.
+
+    Used by :meth:`~gents.timeseries.TSCollection.append_timestep_dirs` as a
+    directory name, and by :class:`~gents.tsinventory.TSInventory` to group files.
+
+    :param dt: Duration of a single model time step, or ``None`` if unknown.
+    :type dt: datetime.timedelta or None
+    :rtype: str
+    """
+    if dt is None:
+        return "unsorted"
+
+    hours = np.rint(dt.total_seconds() / 60.0 / 60.0)
+    days = np.rint(hours / 24.0)
+    months = np.rint(days / 30)
+    years = np.rint(months / 12)
+
+    if hours < 24:
+        return f"hour_{int(hours)}"
+    elif days < 28:
+        return f"day_{int(days)}"
+    elif months < 12:
+        return f"month_{int(months)}"
+    return f"year_{int(years)}"
 
 
 def get_time_stamp():

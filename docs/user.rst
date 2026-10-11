@@ -228,6 +228,24 @@ The above code will print the list of time series dictionaries. By default, ``TS
 
     ts_collection.execute()
 
+Inspecting Existing Output with ``TSInventory``
+-----------------------------------------------
+
+The ``gents.tsinventory.TSInventory`` class is the counterpart of ``HFCollection`` for time series files that already exist on disk. It finds the files under a directory, reads their headers on request, and groups the files that GenTS wrote by variable and frequency. A missing or empty directory gives an empty inventory instead of an error. ``TSCollection.skip_existing`` uses it to find what has already been generated.
+
+.. code-block:: python
+
+    from gents.tsinventory import TSInventory
+
+    inventory = TSInventory("my/file/system/scratch/GCM_run/timeseries/", num_processes=8)
+    inventory = inventory.include("*/atm/*")
+    inventory.pull_metadata()
+
+    for variable, paths in inventory.get_variables().items():
+        print(variable, len(paths))
+
+Like ``HFCollection``, ``include`` and ``exclude`` return copies and are applied to the path string before any header is read. ``pull_metadata`` drops files that were not produced by GenTS or were not completely written (those missing the ``gents_version`` attribute). Each entry of ``get_variables`` is keyed as ``<variable>.<frequency>`` (e.g. ``TS.month_1``) and its paths are ordered by start time.
+
 Custom Dask Workflows with ``TSCollection``
 -------------------------------------------
 
