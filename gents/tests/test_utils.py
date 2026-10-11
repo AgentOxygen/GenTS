@@ -3,6 +3,7 @@ from gents.tests.test_cases import *
 from gents.hfcollection import HFCollection
 from gents.timeseries import TSCollection
 import pytest
+from datetime import timedelta
 
 LOGGER_HEADER_NUM_LINES = 2
 
@@ -171,3 +172,27 @@ def test_filter_by_globs():
     assert filter_by_globs(path_map, [], True) == {}
     assert filter_by_globs(path_map, [], False) == path_map
     assert len(path_map) == 3
+
+
+def test_get_timestep_label_unknown_delta():
+    """An unknown timestep duration is labelled 'unsorted' rather than guessed at."""
+    assert get_timestep_label(None) == "unsorted"
+
+
+@pytest.mark.parametrize("delta, label", [
+    (timedelta(hours=1), "hour_1"),
+    (timedelta(hours=6), "hour_6"),
+    (timedelta(hours=23), "hour_23"),
+    (timedelta(hours=24), "day_1"),
+    (timedelta(days=27), "day_27"),
+    (timedelta(days=28), "month_1"),
+    (timedelta(days=31), "month_1"),
+    (timedelta(days=90), "month_3"),
+    (timedelta(days=335), "month_11"),
+    (timedelta(days=360), "year_1"),
+    (timedelta(days=365), "year_1"),
+    (timedelta(days=3650), "year_10"),
+])
+def test_get_timestep_label(delta, label):
+    """get_timestep_label() maps a step duration to its frequency label, including the hour/day/month/year boundaries."""
+    assert get_timestep_label(delta) == label

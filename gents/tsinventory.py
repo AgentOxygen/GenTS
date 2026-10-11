@@ -8,8 +8,7 @@ Contact: cameron.cummins@utexas.edu
 from gents.datastore import GenTSDataStore
 from gents.hfcollection import find_files, get_group_timestep_delta
 from gents.meta import netCDFMeta, read_meta_map, split_valid
-from gents.timeseries import get_timestep_label
-from gents.utils import filter_by_globs
+from gents.utils import filter_by_globs, get_timestep_label
 import numpy as np
 import logging
 
@@ -335,3 +334,26 @@ class TSInventory:
                 self.__ts_var_map = pruned
 
         return self.__ts_var_map
+
+    def get_latest_time(self):
+        """
+        Returns the latest raw time value covered by any file in the inventory,
+        pulling metadata first if necessary.
+
+        Raw floats are comparable only between files sharing ``units`` and
+        ``calendar``, as the output of one order's template and variable does.
+
+        :returns: The latest time value, or ``None`` if no file has a usable time
+            coordinate (including an empty inventory).
+        :rtype: float or None
+        """
+        self.check_pulled()
+        latest = None
+        for meta in self.__ts_to_meta_map.values():
+            float_times = meta.get_float_times()
+            if float_times is None:
+                continue
+            ts_times = np.ma.getdata(np.atleast_1d(float_times))
+            if ts_times.shape[0] > 0 and (latest is None or ts_times[-1] > latest):
+                latest = ts_times[-1]
+        return latest

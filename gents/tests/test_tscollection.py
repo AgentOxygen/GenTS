@@ -436,11 +436,6 @@ def test_tscollection_add_attrs(simple_case):
             assert ts_ds.getncattr("gents_test_key2") == "gents_test_val2"
 
 
-def test_get_timestep_label_unknown_delta():
-    """An unknown timestep duration is labelled 'unsorted' rather than guessed at."""
-    assert get_timestep_label(None) == "unsorted"
-
-
 def test_update_ts_orders_no_full_time_decoding(multistep_large_case):
     """TSCollection construction (sorting + order building) decodes at most the
     per-file endpoint candidates, never a full time array."""
@@ -932,3 +927,15 @@ def test_batched_execute_keeps_per_variable_output_paths(tmp_path):
 
     assert isfile(f"{output_dir}/hist/testing.hf.VAR0.185001-185003.nc")
     assert isfile(f"{output_dir}/swapped/testing.hf.VAR1.185001-185003.nc")
+
+
+def test_skip_existing_output_dir_with_glob_characters(continued_case):
+    """Glob characters in the output path are matched literally, so existing output there is still found."""
+    input_head_dir, output_head_dir, extend = continued_case
+    special_dir = Path(output_head_dir) / "run[1]*"
+    TSCollection(HFCollection(input_head_dir), str(special_dir)).execute()
+    assert len(listdir(special_dir)) == CONTINUED_NUM_VARS
+
+    resumed = TSCollection(HFCollection(input_head_dir), str(special_dir)).skip_existing()
+
+    assert len(resumed) == 0

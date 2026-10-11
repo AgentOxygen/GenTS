@@ -41,6 +41,35 @@ def filter_by_globs(path_map, glob_patterns, keep_matches):
     }
 
 
+def get_timestep_label(dt):
+    """
+    Returns the frequency label for a time-step duration: ``'hour_N'``,
+    ``'day_N'``, ``'month_N'``, ``'year_N'``, or ``'unsorted'`` if unknown.
+
+    Used by :meth:`~gents.timeseries.TSCollection.append_timestep_dirs` as a
+    directory name, and by :class:`~gents.tsinventory.TSInventory` to group files.
+
+    :param dt: Duration of a single model time step, or ``None`` if unknown.
+    :type dt: datetime.timedelta or None
+    :rtype: str
+    """
+    if dt is None:
+        return "unsorted"
+
+    hours = np.rint(dt.total_seconds() / 60.0 / 60.0)
+    days = np.rint(hours / 24.0)
+    months = np.rint(days / 30)
+    years = np.rint(months / 12)
+
+    if hours < 24:
+        return f"hour_{int(hours)}"
+    elif days < 28:
+        return f"day_{int(days)}"
+    elif months < 12:
+        return f"month_{int(months)}"
+    return f"year_{int(years)}"
+
+
 def get_time_stamp():
     """
     Returns the current date and time as a ``'YYYY-MM-DD HH:MM'`` string.
