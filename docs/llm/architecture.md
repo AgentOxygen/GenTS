@@ -25,7 +25,8 @@ TSCollection — list of order dicts                 gents/timeseries.py
    │  modifiers: include/exclude, add_args, apply_compression,
    │             apply_chunk_target_bytes, apply_path_swap, apply_overwrite,
    │             append_timestep_dirs, add_attrs, skip_existing (resume a
-   │             continued run -- narrows/drops orders against existing output)
+   │             continued run -- narrows/drops orders against existing output,
+   │             found via a TSInventory of the output directory)
    │  .execute() — batches orders sharing source files (optimize=True),
    │               pool (or in-process) → generate_time_series() per batch
    ▼
@@ -46,14 +47,17 @@ bundled YAML config (`gents/configs/*.yaml`) merged with command-line flags.
 | Module | Owns | Depends on |
 |---|---|---|
 | `datastore.py` | `GenTSDataStore` — the *only* place `netCDF4.Dataset` is constructed in the pipeline; context manager + delegation | netCDF4 |
-| `meta.py` | `netCDFMeta` (cached header metadata, with opt-out load flags), `is_var_secondary` (primary/secondary rules), `get_meta_from_path` (picklable factory), `get_attributes`, `get_time_variables_names` | datastore |
+| `meta.py` | `netCDFMeta` (cached header metadata, with opt-out load flags), `is_var_secondary` (primary/secondary rules), `get_meta_from_path` (picklable factory), `read_meta_map` (pool-or-serial bulk read, shared by both collections), `split_valid` (drop unloaded/invalid entries), `get_attributes`, `get_time_variables_names` | datastore, utils |
 | `hfcollection.py` | `HFCollection` + module-level helpers for discovery, grouping, date math (`get_time_boundary_num`, `get_year_boundary_num`), fragmentation merging | meta, utils |
 | `mhfdataset.py` | `MHFDataset` — presents a file group as one virtual dataset; time→file mapping; memory-bounded variable cache; tile reassembly | datastore, meta |
-| `timeseries.py` | `TSCollection` (including `skip_existing`, the resume modifier), order construction/execution, `write_timeseries_file`, `compute_chunksizes`, `CHUNK_TARGET_BYTES`, `check_timeseries_integrity`, `check_timeseries_conform`, `get_timestamp_format`, `get_timestep_label` | mhfdataset, datastore, meta, utils |
+| `timeseries.py` | `TSCollection` (including `skip_existing`, the resume modifier), order construction/execution, `write_timeseries_file`, `compute_chunksizes`, `CHUNK_TARGET_BYTES`, `check_timeseries_integrity`, `check_timeseries_conform`, `get_timestamp_format` | mhfdataset, tsinventory, datastore, meta, utils |
+| `tsinventory.py` | `TSInventory` — index of *existing* time series files (the output-side mirror of `HFCollection`): lazy metadata, `include`/`exclude`, `get_variables()` grouping by `<var>.<frequency>`, `get_latest_time()`. Keeps only files carrying `gents_version`. An empty or missing directory is an empty inventory, not an error. Also `get_ts_meta_from_path` (its picklable factory) | hfcollection (`find_files`, `get_group_timestep_delta`), meta, datastore, utils |
 | `cli.py` | argparse, YAML config loading/merging, `check_config`, `main()` | hfcollection, timeseries, utils |
-| `utils.py` | `enable_logging`, `ProgressBar`, `get_version`, `get_time_stamp`, `log_hfcollection_info`, `log_tscollection_info`, `LOG_LEVEL_IO_WARNING = 5` | — |
+| `utils.py` | `enable_logging`, `ProgressBar`, `filter_by_globs` (path-glob filter behind both collections' `include`/`exclude`), `get_timestep_label`, `get_version`, `get_time_stamp`, `log_hfcollection_info`, `log_tscollection_info`, `LOG_LEVEL_IO_WARNING = 5` | — |
 
-Dependency direction is one-way: `cli → (hfcollection, timeseries) → (meta, mhfdataset) → datastore`.
+Dependency direction is one-way: `cli → (hfcollection, timeseries) → (meta, mhfdataset) → datastore`,
+and `timeseries → tsinventory → hfcollection`. `hfcollection` must never import `tsinventory`
+(nor `timeseries`), which is what keeps `timeseries ↔ tsinventory` from becoming a cycle.
 `utils` is a leaf used by the upper layers. Keep it that way.
 
 ## Conformity subsystem (`gents/conformity/`)
@@ -184,9 +188,10 @@ number of simultaneously open handles is therefore 1, independent of group size.
 sub-minute `%Y%m%d%H%M%S`, hourly `%Y%m%d%H`, daily `%Y%m%d`, monthly `%Y%m`,
 yearly `%Y`. `ts_string` is `f"{start.strftime(fmt)}-{end.strftime(fmt)}"` using the
 chosen time-alignment method; `update_ts_orders` finds the range on raw float times
-(alignment applied vectorized) and decodes only each file's two endpoint candidates. `get_timestep_label` maps the same delta to a frequency
+(alignment applied vectorized) and decodes only each file's two endpoint candidates. `utils.get_timestep_label` maps the same delta to a frequency
 label (`hour_6`, `day_1`, `month_1`, `year_1`, or `unsorted`), used by
-`append_timestep_dirs` and by `case_builder.log_case_summary`.
+`append_timestep_dirs`, `TSInventory.get_variables`, and `case_builder.log_case_summary`
+(still importable as `gents.timeseries.get_timestep_label`).
 
 ## Parallelism model
 
@@ -203,7 +208,9 @@ makes `py-spy` see real frames (see the profiling section of
 [workflows.md](workflows.md)).
 
 Everything submitted to a pool must be picklable: module-level functions
-(`get_meta_from_path`, `generate_time_series`) with plain-data arguments. Failures in
+(`get_meta_from_path`, `get_ts_meta_from_path`, `generate_time_series`) with plain-data arguments.
+The metadata pull itself (pool/serial split, progress bar, per-file error handling) lives once in
+`meta.read_meta_map`, which `HFCollection` and `TSInventory` both call. Failures in
 workers are logged (`raise_errors=False` default) rather than raised, so a bad file
 doesn't kill a long batch job. Dask was removed; `dask_client` kwargs remain only as
 deprecation shims.

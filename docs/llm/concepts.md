@@ -65,10 +65,11 @@
 - **Resume / incremental generation (`TSCollection.skip_existing`):** Narrows each
   already-built order to the HF source files not yet covered by existing output, for a
   CESM/E3SM run that was continued from a restart after time series were already generated
-  for the earlier portion. Scans the output directory (its own directory only, not
-  recursively) for files matching `{ts_path_template}.{primary_var}.*.nc`, and takes the
-  latest raw time any *complete* (`check_timeseries_integrity`-passing) match covers as the
-  cutoff. Drops each `hf_paths` entry *whole* if its own last raw time step does not exceed
+  for the earlier portion. Builds a `TSInventory` of the order's output directory (one per
+  directory, walked once) and narrows it to files matching
+  `{ts_path_template}.{primary_var}.*.nc`; the latest raw time any *complete* match covers
+  (`TSInventory.get_latest_time`) is the cutoff. Complete means the file loads and carries
+  `gents_version`; anything else is dropped with a warning and counts as no coverage. Drops each `hf_paths` entry *whole* if its own last raw time step does not exceed
   that cutoff, keeps it whole otherwise — **file granularity, not step granularity**: a
   continued run always starts a fresh HF file at the restart boundary (a stream's step count
   can't change mid-run without a namelist edit and a fresh run), so no single file can

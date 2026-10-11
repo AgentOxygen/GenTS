@@ -15,7 +15,7 @@ pip install -r requirements.txt && pip install -e .
 ## Testing
 
 ```bash
-pytest gents/tests/                         # full suite (284 tests, ~35 s)
+pytest gents/tests/                         # full suite (335 tests, ~40 s)
 pytest gents/tests/test_workflow.py         # one file
 ```
 
