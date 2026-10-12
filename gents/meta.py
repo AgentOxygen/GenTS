@@ -172,7 +172,10 @@ class netCDFMeta:
             self.__time_vals = np.array([self.__time_vals])
 
         if 'calendar' not in ds[time_eqv].ncattrs() or 'units' not in ds[time_eqv].ncattrs():
-            raise AttributeError(f"Unable to pull 'calendar' and/or 'units' attributes from '{time_eqv}' time-equivalent variable. Path: {self.__path}")
+            raise AttributeError(
+                f"Unable to pull 'calendar' and/or 'units' attributes from '{time_eqv}' time-equivalent variable. "
+                f"Path: {self.__path}"
+            )
 
         self.__time_units = ds[time_eqv].units
         self.__time_calendar = ds[time_eqv].calendar
@@ -190,7 +193,10 @@ class netCDFMeta:
             elif len(self.__time_bounds_vals.shape) == 1:
                 self.__time_bounds_vals = np.array([self.__time_bounds_vals])
             elif len(self.__time_bounds_vals.shape) == 0:
-                raise ValueError(f"Found a 'time_bounds' equivalent variable, but it was a single value. It must have two values (one for each boundary). Path: {self.__path}")
+                raise ValueError(
+                    "Found a 'time_bounds' equivalent variable, but it was a single value. It must have two values "
+                    f"(one for each boundary). Path: {self.__path}"
+                )
 
             try:
                 self.__time_bounds_units = ds[time_bnds_eqv].units

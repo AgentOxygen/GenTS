@@ -129,7 +129,20 @@ def _is_missing(arr, fill_value):
     return bool(np.all(arr == fill_value))
 
 
-def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_data, overwrite=False, complevel=0, compression=None, ts_start_index=None, ts_end_index=None, append_attrs=None, no_data=False, chunk_target_bytes=CHUNK_TARGET_BYTES):
+def write_timeseries_file(
+    agg_hf_ds,
+    ts_out_path,
+    primary_var,
+    secondary_vars_data,
+    overwrite=False,
+    complevel=0,
+    compression=None,
+    ts_start_index=None,
+    ts_end_index=None,
+    append_attrs=None,
+    no_data=False,
+    chunk_target_bytes=CHUNK_TARGET_BYTES,
+):
     """
     Writes one time series file, holding one primary variable and every secondary.
 
@@ -289,7 +302,9 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
     return ts_out_path
 
 
-def generate_time_series(hf_paths, ts_path_template, secondary_vars, ts_args, no_data=False, memory_limit_bytes=DEFAULT_MEMORY_LIMIT_BYTES):
+def generate_time_series(
+    hf_paths, ts_path_template, secondary_vars, ts_args, no_data=False, memory_limit_bytes=DEFAULT_MEMORY_LIMIT_BYTES
+):
     """
     Generates every time series file for one group of history files.
 
@@ -341,7 +356,14 @@ def generate_time_series(hf_paths, ts_path_template, secondary_vars, ts_args, no
     return ts_paths
 
 
-def get_timestamp_format(dt, subhour_format="%Y%m%d%H%M%S", hourly_format="%Y%m%d%H", daily_format="%Y%m%d", monthly_format="%Y%m", yearly_format="%Y"):
+def get_timestamp_format(
+    dt,
+    subhour_format="%Y%m%d%H%M%S",
+    hourly_format="%Y%m%d%H",
+    daily_format="%Y%m%d",
+    monthly_format="%Y%m",
+    yearly_format="%Y",
+):
     """
     Returns the ``strftime`` format to timestamp output files of a given frequency.
 
@@ -423,7 +445,12 @@ class TSCollection:
         :param dask_client: Deprecated. Pass ``num_processes`` instead.
         """
         if dask_client is not None:
-            warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism or reference the ReadTheDocs for using Dask.", DeprecationWarning, stacklevel=2)
+            warnings.warn(
+                "Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism or "
+                "reference the ReadTheDocs for using Dask.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         self.__num_processes = 1
         if num_processes is not None:
@@ -512,14 +539,23 @@ class TSCollection:
             output_template = glob_template.removeprefix(str(self.__hf_collection.get_input_dir()))
             if "[sorting_pivot]" in output_template:
                 output_template, slice_years = output_template.split("[sorting_pivot]")
-                logger.debug("Group [%s/%s] %s files: %s, sliced to [%s]", index+1, len(self.__groups), len(hf_paths), output_template, slice_years)
+                logger.debug(
+                    "Group [%s/%s] %s files: %s, sliced to [%s]",
+                    index + 1,
+                    len(self.__groups),
+                    len(hf_paths),
+                    output_template,
+                    slice_years,
+                )
             else:
                 logger.debug("Group [%s/%s] %s files: %s", index+1, len(self.__groups), len(hf_paths), output_template)
             ts_path_template = f"{self.__output_dir}{output_template}"
 
             primary_vars = self.__hf_collection[hf_paths[0]].get_primary_variables()
             secondary_vars = self.__hf_collection[hf_paths[0]].get_secondary_variables()
-            time_format = get_timestamp_format(self.__hf_collection.get_timestep_delta(hf_paths[0]), **(strfrmt_kwargs or {}))
+            time_format = get_timestamp_format(
+                self.__hf_collection.get_timestep_delta(hf_paths[0]), **(strfrmt_kwargs or {})
+            )
 
             start_time = None
             end_time = None
@@ -558,7 +594,10 @@ class TSCollection:
                     elif time_alignment_method == "end_bound":
                         aligned_times = bnds[:, 1]
                     else:
-                        raise ValueError(f"'{time_alignment_method}' is an invalid time-alignment method. Valid methods are ['direct_time', 'midpoint', 'start_bound', 'end_bound']")
+                        raise ValueError(
+                            f"'{time_alignment_method}' is an invalid time-alignment method. Valid methods are "
+                            "['direct_time', 'midpoint', 'start_bound', 'end_bound']"
+                        )
                     decode = meta_ds.decode_time_bounds_values
 
                 if aligned_times.shape[0] > 0:
@@ -625,7 +664,9 @@ class TSCollection:
         if num_processes is None:
             num_processes = self.__num_processes
 
-        return TSCollection(hf_collection=hf_collection, output_dir=output_dir, ts_orders=ts_orders, num_processes=num_processes)
+        return TSCollection(
+            hf_collection=hf_collection, output_dir=output_dir, ts_orders=ts_orders, num_processes=num_processes
+        )
 
     def include(self, path_glob, var_glob="*"):
         """
@@ -715,7 +756,16 @@ class TSCollection:
                     order_dict["chunk_target_bytes"] = chunk_target_bytes
             new_orders.append(order_dict)
 
-        logger.debug("Arguments applied (excluding None): ['level': %s, 'alg': %s, 'overwrite': %s, 'chunk_target_bytes': %s] to history files matching '%s' and variables matching '%s'.", level, alg, overwrite, chunk_target_bytes, path_glob, var_glob)
+        logger.debug(
+            "Arguments applied (excluding None): ['level': %s, 'alg': %s, 'overwrite': %s, 'chunk_target_bytes': %s] "
+            "to history files matching '%s' and variables matching '%s'.",
+            level,
+            alg,
+            overwrite,
+            chunk_target_bytes,
+            path_glob,
+            var_glob,
+        )
         return self.copy(ts_orders=new_orders)
 
     def apply_path_swap(self, string_match, string_swap, path_glob="*", var_glob="*"):
@@ -745,7 +795,13 @@ class TSCollection:
                 order_dict["ts_path_template"] = order_dict["ts_path_template"].replace(string_match, string_swap)
             new_orders.append(order_dict)
 
-        logger.debug("Path swap '%s' -> '%s' to history files matching '%s' and variables matching '%s'.", string_match, string_swap, path_glob, var_glob)
+        logger.debug(
+            "Path swap '%s' -> '%s' to history files matching '%s' and variables matching '%s'.",
+            string_match,
+            string_swap,
+            path_glob,
+            var_glob,
+        )
         return self.copy(ts_orders=new_orders)
 
     def apply_compression(self, level, alg, path_glob, var_glob="*"):
@@ -910,7 +966,15 @@ class TSCollection:
         for order_dict in self.__orders:
             makedirs(Path(order_dict['ts_path_template']).parent, exist_ok=exist_ok)
 
-    def execute(self, optimize=True, optimize_batch_n=200, raise_errors=False, no_data=False, show_progress=True, memory_limit_bytes=DEFAULT_MEMORY_LIMIT_BYTES):
+    def execute(
+        self,
+        optimize=True,
+        optimize_batch_n=200,
+        raise_errors=False,
+        no_data=False,
+        show_progress=True,
+        memory_limit_bytes=DEFAULT_MEMORY_LIMIT_BYTES,
+    ):
         """
         Runs every order, writing the time series files.
 
@@ -1012,7 +1076,12 @@ class TSCollection:
                             results.append(future.result())
                         except Exception as exc:
                             order = futures[future]
-                            logger.warning("Failed to generate time series for %s: %s", order['ts_path_template'], exc, exc_info=True)
+                            logger.warning(
+                                "Failed to generate time series for %s: %s",
+                                order['ts_path_template'],
+                                exc,
+                                exc_info=True,
+                            )
                             if raise_errors:
                                 raise
                         finally:
@@ -1024,7 +1093,9 @@ class TSCollection:
                 try:
                     results.append(generate_time_series(**args))
                 except Exception as exc:
-                    logger.warning("Failed to generate time series for %s: %s", args['ts_path_template'], exc, exc_info=True)
+                    logger.warning(
+                        "Failed to generate time series for %s: %s", args['ts_path_template'], exc, exc_info=True
+                    )
                     if raise_errors:
                         raise
                 finally:

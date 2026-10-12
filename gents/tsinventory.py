@@ -294,7 +294,9 @@ class TSInventory:
         if check_valid:
             self.check_validity()
         else:
-            logger.warning("Skipping metadata validation may result in errors due to missing attributes or coordinate data.")
+            logger.warning(
+                "Skipping metadata validation may result in errors due to missing attributes or coordinate data."
+            )
         logger.info("Metadata pulled.")
         return self
 
@@ -324,7 +326,10 @@ class TSInventory:
                     continue
                 if len(primary_vars) > 1:
                     logger.warning(
-                        "Expected one primary variable per time series file, found %s in '%s': %s.", len(primary_vars), path, primary_vars
+                        "Expected one primary variable per time series file, found %s in '%s': %s.",
+                        len(primary_vars),
+                        path,
+                        primary_vars,
                     )
 
                 timestep_label = get_meta_timestep_label(meta)

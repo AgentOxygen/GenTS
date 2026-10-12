@@ -253,7 +253,11 @@ def log_hfcollection_info(hfc, show_progress=True):
     logger.info("Total data mapped (TB): %s", total_data_tb)
     logger.info("Total data mapped (GB): %s", total_data_tb * 1024)
     logger.info("Largest group by number of variables: %s variables for %s", largest_num_vars, largest_group_num_vars)
-    logger.info("Largest group by number of files: %s files for %s", largest_timestep_group_num_hf_count, largest_timestep_group_num_hf)
+    logger.info(
+        "Largest group by number of files: %s files for %s",
+        largest_timestep_group_num_hf_count,
+        largest_timestep_group_num_hf,
+    )
     logger.info(
         "Largest variable timestep (memory footprint) \n" +
         f"    Group: {largest_timestep_group}\n" +

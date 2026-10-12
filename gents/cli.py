@@ -88,7 +88,10 @@ def parse_arguments():
         "--slice_start_year",
         type=int,
         default=None,
-        help="Year to align slice windows to; earlier data gets windows on the same alignment. (Default is start year for history files)"
+        help=(
+            "Year to align slice windows to; earlier data gets windows on the same alignment. (Default is start year "
+            "for history files)"
+        ),
     )
     parser.add_argument(
         "-hc", "--hfcores",
@@ -181,7 +184,9 @@ def main():
     if args.compression is not None and args.level is None:
         raise ValueError(f"Compression '{args.compression}' selected, please specifiy a level using `--level`")
 
-    memory_limit_bytes = args.memory_limit_gb * (1024**3) if args.memory_limit_gb is not None else DEFAULT_MEMORY_LIMIT_BYTES
+    memory_limit_bytes = (
+        args.memory_limit_gb * (1024**3) if args.memory_limit_gb is not None else DEFAULT_MEMORY_LIMIT_BYTES
+    )
 
     if args.verbose:
         print(f"  Input (HF) directory path    : {args.hf_head_dir}")

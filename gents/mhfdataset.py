@@ -185,9 +185,13 @@ class MHFDataset:
                     else:
                         self.__preload_var_list = []
 
-                    vars_to_cache_secondary = self.__plan_cacheable_vars(list(hf_meta.get_secondary_variables()), hf_meta)
+                    vars_to_cache_secondary = self.__plan_cacheable_vars(
+                        list(hf_meta.get_secondary_variables()), hf_meta
+                    )
                     secondary_bytes = sum(self.__estimate_var_bytes(name, hf_meta) for name in vars_to_cache_secondary)
-                    vars_to_cache_primary = self.__plan_cacheable_vars(self.__preload_var_list, hf_meta, secondary_bytes)
+                    vars_to_cache_primary = self.__plan_cacheable_vars(
+                        self.__preload_var_list, hf_meta, secondary_bytes
+                    )
 
                 self.__data_coords = extend_coords(hf_ds, self.__data_coords)
 
@@ -268,7 +272,10 @@ class MHFDataset:
         cache_size_b = self.__get_cache_dsize() + self.get_var_dsize(target_var_name)
 
         if cache_size_b > self.__memory_limit_bytes:
-            raise MemoryError(f"Cache size of {cache_size_b / (1024**3)}GB with '{target_var_name}' exceeds limit of {self.__memory_limit_bytes / (1024**3)}GB.")
+            raise MemoryError(
+                f"Cache size of {cache_size_b / (1024**3)}GB with '{target_var_name}' exceeds limit of "
+                f"{self.__memory_limit_bytes / (1024**3)}GB."
+            )
 
         if cache_ahead:
             for nvar_name in self.__preload_var_list:
@@ -443,7 +450,9 @@ class MHFDataset:
         dim_shape = []
         if self.__time_name in init_meta.get_variable_dims(var_name):
             dim_shape.append(len(self.get_time_vals()))
-        dim_shape += [len(self.__data_coords[dim]) for dim in init_meta.get_variable_dims(var_name) if dim != self.__time_name]
+        dim_shape += [
+            len(self.__data_coords[dim]) for dim in init_meta.get_variable_dims(var_name) if dim != self.__time_name
+        ]
         return dim_shape
 
     def get_var_vals(self, var_name, time_index_start=0, time_index_end=None):
@@ -495,7 +504,10 @@ class MHFDataset:
             for time_index, time_val in enumerate(time_vals):
                 for hf_index, sub_t_index in self.__time_mapping[time_val]:
                     var_data = self.__get_hf_data(hf_index, var_name)
-                    if self.__time_name in self.get_var_dimensions(var_name) and self.get_var_data_shape(self.__time_name)[0] > 1:
+                    if (
+                        self.__time_name in self.get_var_dimensions(var_name)
+                        and self.get_var_data_shape(self.__time_name)[0] > 1
+                    ):
                         hf_data_fragment = var_data[sub_t_index]
                     else:
                         hf_data_fragment = var_data[0]

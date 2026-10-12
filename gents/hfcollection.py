@@ -192,7 +192,10 @@ def get_aligned_times(meta, time_alignment_method="midpoint"):
     elif time_alignment_method == "end_bound":
         times = bnds[:, 1]
     else:
-        raise ValueError(f"'{time_alignment_method}' is an invalid time-alignment method. Valid methods are ['direct_time', 'midpoint', 'start_bound', 'end_bound']")
+        raise ValueError(
+            f"'{time_alignment_method}' is an invalid time-alignment method. Valid methods are ['direct_time', "
+            "'midpoint', 'start_bound', 'end_bound']"
+        )
     return times, meta.get_time_bounds_units(), meta.get_time_bounds_calendar()
 
 
@@ -371,9 +374,18 @@ def check_groups_by_variables(sliced_groups):
             filtered_sliced_groups[group] = sort_metas_by_time(majority)
             if others is not None:
                 for meta_ds in others:
-                    logger.log(LOG_LEVEL_IO_WARNING, "Dataset has inconsistent variable list with directory group: %s", meta_ds.get_path())
+                    logger.log(
+                        LOG_LEVEL_IO_WARNING,
+                        "Dataset has inconsistent variable list with directory group: %s",
+                        meta_ds.get_path(),
+                    )
         else:
-            logger.log(LOG_LEVEL_IO_WARNING, "Unable to determine majority dataset, check variable configurations between directory groups, group ID: %s", group)
+            logger.log(
+                LOG_LEVEL_IO_WARNING,
+                "Unable to determine majority dataset, check variable configurations between directory groups, group "
+                "ID: %s",
+                group,
+            )
     return filtered_sliced_groups
 
 
@@ -425,7 +437,10 @@ def merge_fragmented_groups(hf_groups, hf_meta_map):
         if label not in new_groups:
             new_groups[label] = paths
         else:
-            raise KeyError(f"Fragmentation merge failed! History file group '{label}' already exists. Try filtering to fragmented files only to minimize confusion with non-fragmented history files.")
+            raise KeyError(
+                f"Fragmentation merge failed! History file group '{label}' already exists. Try filtering to fragmented "
+                "files only to minimize confusion with non-fragmented history files."
+            )
 
     return new_groups
 
@@ -445,7 +460,17 @@ class HFCollection:
     tree.
     """
 
-    def __init__(self, hf_dir, num_processes=1, meta_map=None, hf_groups=None, step_map=None, hf_glob_pattern="*.nc*", dask_client=None, multistep_slice_map=None):
+    def __init__(
+        self,
+        hf_dir,
+        num_processes=1,
+        meta_map=None,
+        hf_groups=None,
+        step_map=None,
+        hf_glob_pattern="*.nc*",
+        dask_client=None,
+        multistep_slice_map=None,
+    ):
         """
         Discovers history files under ``hf_dir``, without reading their metadata.
 
@@ -475,7 +500,12 @@ class HFCollection:
             an existing directory, or no file under it matches the pattern.
         """
         if dask_client is not None:
-            warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism or reference the ReadTheDocs for using Dask..", DeprecationWarning, stacklevel=2)
+            warnings.warn(
+                "Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism or "
+                "reference the ReadTheDocs for using Dask..",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         # Checked before abspath, which would turn "" into the current directory.
         if meta_map is None and not os.path.isdir(hf_dir):
@@ -637,7 +667,14 @@ class HFCollection:
             step_map = self.__hf_to_timestep_delta_map
         if multistep_slice_map is None:
             multistep_slice_map = self.__hf_multistep_slices
-        return HFCollection(self.__hf_dir, num_processes=num_processes, meta_map=meta_map, hf_groups=hf_groups, step_map=step_map, multistep_slice_map=multistep_slice_map)
+        return HFCollection(
+            self.__hf_dir,
+            num_processes=num_processes,
+            meta_map=meta_map,
+            hf_groups=hf_groups,
+            step_map=step_map,
+            multistep_slice_map=multistep_slice_map,
+        )
 
     def sort_along_time(self):
         """
@@ -685,7 +722,9 @@ class HFCollection:
         if check_valid:
             self.check_validity()
         else:
-            logger.warning("Skipping metadata validation may result in errors due to missing attributes or coordinate data.")
+            logger.warning(
+                "Skipping metadata validation may result in errors due to missing attributes or coordinate data."
+            )
         logger.info("Metadata pulled.")
 
         if self.__hf_to_timestep_delta_map is None:
@@ -784,7 +823,9 @@ class HFCollection:
         """
         return self.include_time(start_year, end_year + 1, glob_patterns=glob_patterns)
 
-    def include_time(self, start_year, end_year, start_month=1, start_day=1, end_month=1, end_day=1, glob_patterns=("*",)):
+    def include_time(
+        self, start_year, end_year, start_month=1, start_day=1, end_month=1, end_day=1, glob_patterns=("*",)
+    ):
         """
         Returns a new collection holding only files within a date range.
 
@@ -833,13 +874,30 @@ class HFCollection:
                 ref_units = meta_ds.get_time_units()
                 ref_calendar = meta_ds.get_time_calendar()
 
-            lower_num = -np.inf if start_year is None else get_time_boundary_num(ref_units, ref_calendar, start_year, start_month, start_day)
-            upper_num = np.inf if end_year is None else get_time_boundary_num(ref_units, ref_calendar, end_year, end_month, end_day)
+            lower_num = (
+                -np.inf
+                if start_year is None
+                else get_time_boundary_num(ref_units, ref_calendar, start_year, start_month, start_day)
+            )
+            upper_num = (
+                np.inf
+                if end_year is None
+                else get_time_boundary_num(ref_units, ref_calendar, end_year, end_month, end_day)
+            )
 
             if lower_num <= midpoint < upper_num:
                 filtered_path_map[path] = self.__hf_to_meta_map[path]
 
-        logger.debug("Filtered from %s-%02d-%02d to %s-%02d-%02d applied to following glob patterns: '%s'", start_year, start_month, start_day, end_year, end_month, end_day, glob_patterns)
+        logger.debug(
+            "Filtered from %s-%02d-%02d to %s-%02d-%02d applied to following glob patterns: '%s'",
+            start_year,
+            start_month,
+            start_day,
+            end_year,
+            end_month,
+            end_day,
+            glob_patterns,
+        )
         return self.copy(meta_map=filtered_path_map)
 
     def get_groups(self, check_fragmented=True):
@@ -938,7 +996,9 @@ class HFCollection:
             hf_slices = {}
             boundary_cache = {}
             for hf_path in hf_paths:
-                times, ref_units, ref_calendar = get_aligned_times(self.__hf_to_meta_map[hf_path], time_alignment_method)
+                times, ref_units, ref_calendar = get_aligned_times(
+                    self.__hf_to_meta_map[hf_path], time_alignment_method
+                )
 
                 for time_slice in time_slices:
                     cache_key = (time_slice, ref_units, ref_calendar)
@@ -964,9 +1024,14 @@ class HFCollection:
                         if start_index != 0 or times[-1] >= upper_num:
                             if hf_path in self.__hf_multistep_slices:
                                 assert f"{time_slice[0]}-{time_slice[1]}" not in self.__hf_multistep_slices[hf_path]
-                                self.__hf_multistep_slices[hf_path][f"{time_slice[0]}-{time_slice[1]}"] = (start_index, end_index)
+                                self.__hf_multistep_slices[hf_path][f"{time_slice[0]}-{time_slice[1]}"] = (
+                                    start_index,
+                                    end_index,
+                                )
                             else:
-                                self.__hf_multistep_slices[hf_path] = {f"{time_slice[0]}-{time_slice[1]}": (start_index, end_index)}
+                                self.__hf_multistep_slices[hf_path] = {
+                                    f"{time_slice[0]}-{time_slice[1]}": (start_index, end_index)
+                                }
             for time_slice, slice_paths in hf_slices.items():
                 sliced_groups[f"{group}[sorting_pivot]{time_slice[0]}-{time_slice[1]}"] = slice_paths
         logger.debug("Slicing groups into %s year long slices for '%s'.", slice_size_years, pattern)
