@@ -13,7 +13,7 @@ from gents.datastore import GenTSDataStore
 from gents.meta import netCDFMeta
 
 
-def extend_coords(ds, dim_coords={}):
+def extend_coords(ds, dim_coords=None):
     """
     Folds one dataset's coordinates into a combined coordinate map.
 
@@ -23,11 +23,14 @@ def extend_coords(ds, dim_coords={}):
 
     :param ds: Open dataset to merge in.
     :type ds: gents.datastore.GenTSDataStore or netCDF4.Dataset
-    :param dim_coords: Coordinate map accumulated from earlier files.
-    :type dim_coords: dict
+    :param dim_coords: Coordinate map accumulated from earlier files; updated in
+        place. A new empty map is started if ``None``.
+    :type dim_coords: dict or None
     :returns: The updated ``{dimension: coordinate array}`` map.
     :rtype: dict
     """
+    if dim_coords is None:
+        dim_coords = {}
     for dim in ds.dimensions:
         if dim in ds.variables and dim in dim_coords:
             dim_coords[dim] = np.unique(np.concat([ds[dim][:], dim_coords[dim]]))

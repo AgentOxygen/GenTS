@@ -6,6 +6,7 @@ Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
 """
 import logging
+from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
@@ -18,10 +19,10 @@ logger = logging.getLogger(__name__)
 
 
 def is_var_secondary(variable,
-                     secondary_vars: list = ["time_bnds", "time_bnd", "time_bounds", "time_bound"],
-                     secondary_dims: list = ["nbnd", "chars", "string_length", "hist_interval"],
+                     secondary_vars: Sequence[str] = ("time_bnds", "time_bnd", "time_bounds", "time_bound"),
+                     secondary_dims: Sequence[str] = ("nbnd", "chars", "string_length", "hist_interval"),
                      max_num_dims: int = 1,
-                     primary_dims: list = ["time"]) -> bool:
+                     primary_dims: Sequence[str] = ("time",)) -> bool:
     """
     Classifies a netCDF variable as secondary or primary.
 
@@ -37,13 +38,13 @@ def is_var_secondary(variable,
     :param variable: netCDF4 variable object to classify.
     :type variable: netCDF4._netCDF4.Variable
     :param secondary_vars: Variable names that are unconditionally secondary.
-    :type secondary_vars: list
+    :type secondary_vars: Sequence[str]
     :param secondary_dims: Dimension names whose presence makes a variable secondary.
-    :type secondary_dims: list
+    :type secondary_dims: Sequence[str]
     :param max_num_dims: Dimension count at or below which a variable is secondary.
     :type max_num_dims: int
     :param primary_dims: Dimension names whose presence keeps a variable primary.
-    :type primary_dims: list
+    :type primary_dims: Sequence[str]
     :returns: ``True`` if the variable is secondary, ``False`` if primary.
     :rtype: bool
     """

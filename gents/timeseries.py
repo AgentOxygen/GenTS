@@ -486,7 +486,7 @@ class TSCollection:
         """
         return self.__output_dir
 
-    def update_ts_orders(self, strfrmt_kwargs={}, time_alignment_method="midpoint"):
+    def update_ts_orders(self, strfrmt_kwargs=None, time_alignment_method="midpoint"):
         """
         Rebuilds the order list and returns a new ``TSCollection``.
 
@@ -497,7 +497,7 @@ class TSCollection:
 
         :param strfrmt_kwargs: Timestamp format overrides forwarded to
             :func:`get_timestamp_format`, e.g. ``{'monthly_format': '%Y%m%d'}``.
-        :type strfrmt_kwargs: dict
+        :type strfrmt_kwargs: dict or None
         :param time_alignment_method: How to pick the representative time for the
             filename timestamp: ``'midpoint'`` of the time bound, ``'direct_time'``
             (ignoring bounds), ``'start_bound'`` or ``'end_bound'``.
@@ -519,7 +519,7 @@ class TSCollection:
 
             primary_vars = self.__hf_collection[hf_paths[0]].get_primary_variables()
             secondary_vars = self.__hf_collection[hf_paths[0]].get_secondary_variables()
-            time_format = get_timestamp_format(self.__hf_collection.get_timestep_delta(hf_paths[0]), **strfrmt_kwargs)
+            time_format = get_timestamp_format(self.__hf_collection.get_timestep_delta(hf_paths[0]), **(strfrmt_kwargs or {}))
 
             start_time = None
             end_time = None

@@ -761,7 +761,7 @@ class HFCollection:
         logger.debug("Exclusive filter(s) applied: '%s'", glob_patterns)
         return self.copy(meta_map=filtered_path_map)
 
-    def include_years(self, start_year, end_year, glob_patterns=["*"]):
+    def include_years(self, start_year, end_year, glob_patterns=("*",)):
         """
         Returns a new collection holding only files within a year range.
 
@@ -784,7 +784,7 @@ class HFCollection:
         """
         return self.include_time(start_year, end_year + 1, glob_patterns=glob_patterns)
 
-    def include_time(self, start_year, end_year, start_month=1, start_day=1, end_month=1, end_day=1, glob_patterns=["*"]):
+    def include_time(self, start_year, end_year, start_month=1, start_day=1, end_month=1, end_day=1, glob_patterns=("*",)):
         """
         Returns a new collection holding only files within a date range.
 
