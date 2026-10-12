@@ -688,7 +688,7 @@ def run(ts_dir, hf_dir, report):
     # Open the CESM3 configuration file that GenTS itself uses. It lives at
     # gents/configs/gents_cesm3.yaml, three folders up from this one.
     config_path = Path(__file__).parent.parent.parent / "configs" / "gents_cesm3.yaml"
-    with open(config_path, "r") as config_file:
+    with open(config_path, "r", encoding="utf-8") as config_file:
         config = yaml.safe_load(config_file)
 
     # Work out which streams exist in the output already.

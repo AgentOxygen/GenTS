@@ -342,7 +342,7 @@ def record_clone_command(out_dir: Path):
     )
 
     command_path = out_dir / CLONE_COMMAND_FILENAME
-    with open(command_path, "a") as command_file:
+    with open(command_path, "a", encoding="utf-8") as command_file:
         command_file.write(provenance + "\n")
         command_file.write(shlex.join(argv) + "\n")
 
