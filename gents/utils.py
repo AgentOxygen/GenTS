@@ -209,7 +209,7 @@ def log_hfcollection_info(hfc, show_progress=True):
     logger.info("=============================================")
     logger.info("Input Directory: %s", hfc.get_input_dir())
     logger.info("Number history files found: %s", len(hfc))
-    
+
     hf_groups = hfc.get_groups()
     logger.info("Output Groups formed: %s", len(hf_groups))
 
@@ -242,7 +242,7 @@ def log_hfcollection_info(hfc, show_progress=True):
             var_dtype = hf_meta.get_variable_dtype(var_name)
             var_data_size_mb = var_dtype.itemsize * np.prod(var_shape) / (1024**2)
             total_data_tb += (var_data_size_mb / (1024**2))*len(hf_groups[hf_group_name])
-            
+
             if var_data_size_mb > largest_timestep_mb:
                 largest_timestep_group = hf_group_name
                 largest_timestep_mb = var_data_size_mb
@@ -255,7 +255,7 @@ def log_hfcollection_info(hfc, show_progress=True):
     logger.info("Largest group by number of variables: %s variables for %s", largest_num_vars, largest_group_num_vars)
     logger.info("Largest group by number of files: %s files for %s", largest_timestep_group_num_hf_count, largest_timestep_group_num_hf)
     logger.info(
-        f"Largest variable timestep (memory footprint) \n" +
+        "Largest variable timestep (memory footprint) \n" +
         f"    Group: {largest_timestep_group}\n" +
         f"    Variable: {largest_timestep_var}\n" +
         f"    Shape: {largest_timestep_shape}\n" +
@@ -315,9 +315,9 @@ def log_tscollection_info(tsc, show_progress=True):
                 largest_ts_shape = var_shape
                 largest_ts_dims = var_dims
                 largest_ts_num_files = len(order["hf_paths"])
-        
+
     logger.info(
-        f"Largest time series file (minimum memory requirement) \n" +
+        "Largest time series file (minimum memory requirement) \n" +
         f"    Sample HF path: {largest_ts_hf_sample}\n" +
         f"    Variable: {largest_ts_variable}\n" +
         f"    Shape: {largest_ts_shape}\n" +

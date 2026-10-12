@@ -10,17 +10,16 @@ import fnmatch
 import gc
 import glob
 import logging
-import traceback
 import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from os import listdir, makedirs, remove
+from os import makedirs, remove
 from os.path import isfile
 from pathlib import Path
 
 import numpy as np
 
 from gents.datastore import GenTSDataStore
-from gents.meta import get_attributes, get_meta_from_path
+from gents.meta import get_attributes
 from gents.mhfdataset import MHFDataset
 from gents.tsinventory import TSInventory
 from gents.utils import LOG_LEVEL_IO_WARNING, ProgressBar, get_timestep_label, get_version
@@ -96,7 +95,7 @@ def check_timeseries_conform(ts_path: str):
         for variable in ts_ds.variables:
             if list(ts_ds[variable].chunking()) == list(ts_ds[variable].shape):
                 continue
-                
+
             if "time" not in ts_ds[variable].dimensions or len(ts_ds[variable].shape) == 1:
                 return False
             else:
@@ -105,7 +104,7 @@ def check_timeseries_conform(ts_path: str):
                 bumped_size = np.prod(chunking)*ts_ds[variable].dtype.itemsize
                 if bumped_size < CHUNK_TARGET_BYTES:
                     return False
-        
+
     return True
 
 
@@ -199,7 +198,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
         if primary_var != "auxiliary":
             var_shape = agg_hf_ds.get_var_data_shape(primary_var)
             var_dims = agg_hf_ds.get_var_dimensions(primary_var)
-            
+
             var_shape[0] = ts_end_index - ts_start_index
 
             for index, dim in enumerate(var_dims):
@@ -260,7 +259,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
                         ts_ds.createDimension(dim, None)
                     else:
                         ts_ds.createDimension(dim, var_shape[index])
-            
+
             svar_attrs = agg_hf_ds.get_var_attrs(secondary_var)
             svar_fill = svar_attrs.get("_FillValue", None)
 
@@ -285,7 +284,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
                 svar_vals = secondary_vars_data[secondary_var]
             if not _is_missing(svar_vals, svar_fill):
                 svar_data[:] = svar_vals
-        
+
         if append_attrs is None:
             append_attrs = {}
         ts_ds.setncatts(global_attrs | append_attrs | {"gents_version": str(get_version())})
@@ -377,7 +376,7 @@ def get_timestamp_format(dt, subhour_format="%Y%m%d%H%M%S", hourly_format="%Y%m%
         time_format = monthly_format
     else:
         time_format = yearly_format
-    
+
     return time_format
 
 
@@ -431,13 +430,13 @@ class TSCollection:
         self.__num_processes = 1
         if num_processes is not None:
             self.__num_processes = num_processes
-        
+
         hf_collection = hf_collection.sort_along_time()
 
         self.__hf_collection = hf_collection
         self.__groups = self.__hf_collection.get_groups()
         self.__output_dir = output_dir
-        
+
         if ts_orders is None:
             self.__orders = list(self.update_ts_orders())
             logger.debug("TSCollection initialized at '%s'.", self.__output_dir)
@@ -462,7 +461,7 @@ class TSCollection:
 
     def values(self):
         return self.__orders
-    
+
     def get_hf_collection(self):
         """
         Returns the ``HFCollection`` this collection was derived from.
@@ -513,7 +512,7 @@ class TSCollection:
             primary_vars = self.__hf_collection[hf_paths[0]].get_primary_variables()
             secondary_vars = self.__hf_collection[hf_paths[0]].get_secondary_variables()
             time_format = get_timestamp_format(self.__hf_collection.get_timestep_delta(hf_paths[0]), **strfrmt_kwargs)
-            
+
             start_time = None
             end_time = None
             total_steps = 0
@@ -737,10 +736,10 @@ class TSCollection:
             if path_matched and _matches_any(order_dict["primary_var"], var_glob):
                 order_dict["ts_path_template"] = order_dict["ts_path_template"].replace(string_match, string_swap)
             new_orders.append(order_dict)
-    
+
         logger.debug("Path swap '%s' -> '%s' to history files matching '%s' and variables matching '%s'.", string_match, string_swap, path_glob, var_glob)
         return self.copy(ts_orders=new_orders)
-        
+
     def apply_compression(self, level, alg, path_glob, var_glob="*"):
         """
         Applies compression settings to matching orders (see :meth:`add_args`).
@@ -947,7 +946,7 @@ class TSCollection:
                     order_index_merge_map[key].append(index)
                 else:
                     order_index_merge_map[key] = [index]
-            
+
             batched_index_lists = []
             for key in order_index_merge_map:
                 indices = order_index_merge_map[key]
@@ -1023,7 +1022,7 @@ class TSCollection:
                         raise
                 finally:
                     prog_bar.step()
-        
+
         output_paths = []
         for result in results:
             for path in result:

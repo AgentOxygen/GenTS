@@ -105,7 +105,7 @@ def get_time_variables_names(ds):
             time_bnds_eqv = var_name
         elif lowercase_name == 'time_bound':
             time_bnds_eqv = var_name
-    
+
     return time_eqv, time_bnds_eqv
 
 

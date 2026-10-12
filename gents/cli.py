@@ -174,7 +174,7 @@ def main():
 
     if args.outputdir is None:
         args.outputdir = args.hf_head_dir
-    
+
     if args.model is not None:
         args.model = args.model.lower()
 
@@ -212,7 +212,7 @@ def main():
     if args.model not in model_config_files:
         raise ValueError(f"No GenTS configuration available for model '{args.model}'.")
 
-    with open(str(config_dir / model_config_files[args.model]), 'r') as file:
+    with open(str(config_dir / model_config_files[args.model]), 'r', encoding="utf-8") as file:
         yaml_config = yaml.safe_load(file)
 
     check_config(yaml_config)

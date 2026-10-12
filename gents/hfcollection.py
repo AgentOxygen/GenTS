@@ -5,7 +5,6 @@ Discovery, filtering, grouping and slicing of model history files.
 Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
 """
-import copy
 import fnmatch
 import logging
 import os
@@ -75,7 +74,7 @@ def calculate_year_slices(slice_size_years, min_year, max_year):
         ranges.append((int(year), int(year+slice_size_years-1)))
         if year >= max_year or year+slice_size_years-1 >= max_year:
             break
-    
+
     return ranges
 
 
@@ -320,7 +319,7 @@ def filter_by_variables(meta_datasets):
 
     majority = None
     others = None
-    
+
     if len(variable_sets) > 1:
         counts = []
         for var_set in variable_sets:
@@ -329,7 +328,7 @@ def filter_by_variables(meta_datasets):
         majority_index = np.argmax(counts)
         if np.sum(counts[majority_index] == np.array(counts)) == 1:
             majority_set = list(variable_sets)[majority_index]
-    
+
             majority = []
             others = []
             for index in range(len(meta_datasets)):
@@ -339,7 +338,7 @@ def filter_by_variables(meta_datasets):
                     others.append(meta_datasets[index])
     else:
         majority = meta_datasets
-    
+
     return (majority, others)
 
 
@@ -358,7 +357,7 @@ def sort_metas_by_time(metas):
         key=lambda meta: meta.decode_time_values(np.ma.getdata(np.atleast_1d(meta.get_float_times()))[0]),
     )
 
-    
+
 def check_groups_by_variables(sliced_groups):
     """
     Drops files whose variable set differs from the majority of their group.
@@ -425,7 +424,7 @@ def merge_fragmented_groups(hf_groups, hf_meta_map):
 
         if dims_hash not in dim_hashes:
             dim_hashes[dims_hash] = []
-        
+
         for path in fragmented_groups[pattern]:
             dim_hashes[dims_hash].append(path)
 
@@ -646,7 +645,7 @@ class HFCollection:
         sorted_map = dict(sorted(self.__hf_to_meta_map.items(), key=lambda item: item[1].get_float_times()[0]))
         logger.info("Sorted along time.")
         return self.copy(meta_map=sorted_map)
-    
+
     def pull_metadata(self, check_valid=True, raise_errors=False, show_progress=True):
         """
         Reads the header of every history file in the collection.
@@ -709,7 +708,7 @@ class HFCollection:
         self.__hf_to_meta_map = new_map
         logger.debug("%s files valdiated (%s removed).", len(new_map), len(removed))
         return removed
-    
+
     def include_patterns(self, glob_patterns):
         """
         .. deprecated::
@@ -852,7 +851,7 @@ class HFCollection:
         """
         if self.__hf_groups is None:
             self.__hf_groups = sort_hf_groups(list(self.__hf_to_meta_map.keys()))
-        
+
             if check_fragmented:
                 self.check_pulled()
                 self.__hf_groups = merge_fragmented_groups(self.__hf_groups, self.__hf_to_meta_map)
@@ -921,14 +920,14 @@ class HFCollection:
                 continue
 
             group_meta_map = {path: self.__hf_to_meta_map[path] for path in hf_paths}
-            
+
             min_year, max_year = get_year_bounds(group_meta_map, time_alignment_method)
             if start_year is not None:
                 if start_year > min_year:
                     min_year -= (min_year - start_year) % slice_size_years
                 else:
                     min_year = start_year
-            
+
             time_slices = calculate_year_slices(slice_size_years, min_year, max_year)
 
             hf_slices = {}

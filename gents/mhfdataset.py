@@ -269,7 +269,7 @@ class MHFDataset:
 
         if cache_size_b > self.__memory_limit_bytes:
             raise MemoryError(f"Cache size of {cache_size_b / (1024**3)}GB with '{target_var_name}' exceeds limit of {self.__memory_limit_bytes / (1024**3)}GB.")
-        
+
         if cache_ahead:
             for nvar_name in self.__preload_var_list:
                 if self.get_var_dsize(nvar_name) + cache_size_b > self.__memory_limit_bytes:
@@ -504,7 +504,7 @@ class MHFDataset:
                         hf_data_fragment = var_data[sub_t_index]
                     else:
                         hf_data_fragment = var_data[0]
-                    
+
                     index_ranges = []
                     for dim_index, dim in enumerate(self.get_var_dimensions(var_name)):
                         if dim == self.__time_name:
@@ -521,7 +521,7 @@ class MHFDataset:
                             index_ranges.append(0)
                         else:
                             index_ranges.append(slice(0, var_vals.shape[dim_index]))
-                    
+
                     var_vals[tuple(index_ranges)] = np.squeeze(hf_data_fragment)
         return var_vals
 
@@ -552,6 +552,6 @@ class MHFDataset:
 
     def __len__(self):
         return len(self.__hf_files)
-    
+
     def __getitem__(self, item):
         return self.__hf_files[item]
