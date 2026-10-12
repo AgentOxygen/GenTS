@@ -69,6 +69,15 @@ Then execute the tests using ``pytest``:
 
     pytest gents/tests/
 
+Linting
+-------
+
+`Pylint <https://pylint.readthedocs.io/>`_ is included in the ``dev`` extras (``pip install -e ".[dev]"``). Run it from the repository root:
+
+.. code-block:: console
+
+    pylint gents
+
 Benchmarking
 ------------
 

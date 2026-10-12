@@ -7,7 +7,7 @@
 
 ```bash
 # Local editable install (inside a venv/conda env)
-pip install -e ".[dev]"        # extras: test, docs, bench
+pip install -e ".[dev]"        # extras: test, docs, bench, lint
 # or minimal:
 pip install -r requirements.txt && pip install -e .
 ```
@@ -17,6 +17,7 @@ pip install -r requirements.txt && pip install -e .
 ```bash
 pytest gents/tests/                         # full suite (335 tests, ~40 s)
 pytest gents/tests/test_workflow.py         # one file
+pylint gents                                # linter (in the lint/dev extras)
 ```
 
 CI-equivalent (what `.github/workflows/tests.yml` runs):
