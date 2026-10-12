@@ -5,17 +5,19 @@ Discovery, filtering, grouping and slicing of model history files.
 Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
 """
-from gents.meta import get_meta_from_path, read_meta_map, split_valid
-from gents.utils import filter_by_globs, LOG_LEVEL_IO_WARNING
-from cftime import num2date
-from pathlib import Path
-import numpy as np
-import os
-import fnmatch
-import cftime
-import warnings
-import logging
 import copy
+import fnmatch
+import logging
+import os
+import warnings
+from pathlib import Path
+
+import cftime
+import numpy as np
+from cftime import num2date
+
+from gents.meta import get_meta_from_path, read_meta_map, split_valid
+from gents.utils import LOG_LEVEL_IO_WARNING, filter_by_globs
 
 logging.captureWarnings(True)
 logger = logging.getLogger(__name__)
@@ -377,9 +379,9 @@ def check_groups_by_variables(sliced_groups):
             filtered_sliced_groups[group] = sort_metas_by_time(majority)
             if others is not None:
                 for meta_ds in others:
-                    logger.log(LOG_LEVEL_IO_WARNING, f"Dataset has inconsistent variable list with directory group: {meta_ds.get_path()}")
+                    logger.log(LOG_LEVEL_IO_WARNING, "Dataset has inconsistent variable list with directory group: %s", meta_ds.get_path())
         else:
-            logger.log(LOG_LEVEL_IO_WARNING, f"Unable to determine majority dataset, check variable configurations between directory groups, group ID: {group}")
+            logger.log(LOG_LEVEL_IO_WARNING, "Unable to determine majority dataset, check variable configurations between directory groups, group ID: %s", group)
     return filtered_sliced_groups
 
 
@@ -412,7 +414,7 @@ def merge_fragmented_groups(hf_groups, hf_meta_map):
 
     if len(fragmented_groups) > 0:
         num_fragmented_files = sum([len(fragmented_groups[pattern]) for pattern in fragmented_groups])
-        logger.info(f"Found {num_fragmented_files} spatially fragmented files in {len(fragmented_groups)} groups.")
+        logger.info("Found %s spatially fragmented files in %s groups.", num_fragmented_files, len(fragmented_groups))
 
     dim_hashes = {}
     for pattern in fragmented_groups:
@@ -498,8 +500,8 @@ class HFCollection:
             if len(meta_map) == 0:
                 raise FileNotFoundError(f"No files matching '{hf_glob_pattern}' found in '{hf_dir}'")
             if hf_groups is None:
-                logger.info(f"Initialized HFCollection at '{hf_dir}'")
-                logger.info(f"{len(meta_map)} netCDF files found.")
+                logger.info("Initialized HFCollection at '%s'", hf_dir)
+                logger.info("%s netCDF files found.", len(meta_map))
 
         self.__hf_to_meta_map = meta_map
         self.__pulled = False
@@ -642,7 +644,7 @@ class HFCollection:
         self.check_pulled()
 
         sorted_map = dict(sorted(self.__hf_to_meta_map.items(), key=lambda item: item[1].get_float_times()[0]))
-        logger.info(f"Sorted along time.")
+        logger.info("Sorted along time.")
         return self.copy(meta_map=sorted_map)
     
     def pull_metadata(self, check_valid=True, raise_errors=False, show_progress=True):
@@ -669,7 +671,7 @@ class HFCollection:
         :raises ValueError: If any group holds fewer than two time steps in total,
             regardless of ``raise_errors``.
         """
-        logger.info(f"Pulling metadata...")
+        logger.info("Pulling metadata...")
         paths = list(self.__hf_to_meta_map.keys())
 
         self.__hf_to_meta_map.update(read_meta_map(
@@ -679,8 +681,8 @@ class HFCollection:
         if check_valid:
             self.check_validity()
         else:
-            logger.warning(f"Skipping metadata validation may result in errors due to missing attributes or coordinate data.")
-        logger.info(f"Metadata pulled.")
+            logger.warning("Skipping metadata validation may result in errors due to missing attributes or coordinate data.")
+        logger.info("Metadata pulled.")
 
         if self.__hf_to_timestep_delta_map is None:
             self.__hf_to_timestep_delta_map = {}
@@ -702,10 +704,10 @@ class HFCollection:
         :returns: The removed ``{path: metadata}`` entries.
         :rtype: dict
         """
-        logger.debug(f"Validating metadata...")
+        logger.debug("Validating metadata...")
         new_map, removed = split_valid(self.__hf_to_meta_map, lambda meta: meta.is_valid())
         self.__hf_to_meta_map = new_map
-        logger.debug(f"{len(new_map)} files valdiated ({len(removed)} removed).")
+        logger.debug("%s files valdiated (%s removed).", len(new_map), len(removed))
         return removed
     
     def include_patterns(self, glob_patterns):
@@ -737,7 +739,7 @@ class HFCollection:
         :rtype: HFCollection
         """
         filtered_path_map = filter_by_globs(self.__hf_to_meta_map, glob_patterns, keep_matches=True)
-        logger.debug(f"Inclusive filter(s) applied: '{glob_patterns}'")
+        logger.debug("Inclusive filter(s) applied: '%s'", glob_patterns)
         return self.copy(meta_map=filtered_path_map)
 
     def exclude(self, glob_patterns):
@@ -752,7 +754,7 @@ class HFCollection:
         :rtype: HFCollection
         """
         filtered_path_map = filter_by_globs(self.__hf_to_meta_map, glob_patterns, keep_matches=False)
-        logger.debug(f"Exclusive filter(s) applied: '{glob_patterns}'")
+        logger.debug("Exclusive filter(s) applied: '%s'", glob_patterns)
         return self.copy(meta_map=filtered_path_map)
 
     def include_years(self, start_year, end_year, glob_patterns=["*"]):
@@ -833,7 +835,7 @@ class HFCollection:
             if lower_num <= midpoint < upper_num:
                 filtered_path_map[path] = self.__hf_to_meta_map[path]
 
-        logger.debug(f"Filtered from {start_year}-{start_month:02d}-{start_day:02d} to {end_year}-{end_month:02d}-{end_day:02d} applied to following glob patterns: '{glob_patterns}'")
+        logger.debug("Filtered from %s-%02d-%02d to %s-%02d-%02d applied to following glob patterns: '%s'", start_year, start_month, start_day, end_year, end_month, end_day, glob_patterns)
         return self.copy(meta_map=filtered_path_map)
 
     def get_groups(self, check_fragmented=True):
@@ -963,5 +965,5 @@ class HFCollection:
                                 self.__hf_multistep_slices[hf_path] = {f"{time_slice[0]}-{time_slice[1]}": (start_index, end_index)}
             for time_slice in hf_slices:
                 sliced_groups[f"{group}[sorting_pivot]{time_slice[0]}-{time_slice[1]}"] = hf_slices[time_slice]
-        logger.debug(f"Slicing groups into {slice_size_years} year long slices for '{pattern}'.")
+        logger.debug("Slicing groups into %s year long slices for '%s'.", slice_size_years, pattern)
         return self.copy(hf_groups=sliced_groups)

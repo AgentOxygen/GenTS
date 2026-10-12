@@ -116,8 +116,8 @@ def enable_logging(verbose=False, output_path=None):
 
     logger.addHandler(stdout_handler)
 
-    logger.info(f"GenTS version {get_version()}")
-    logger.info(f"Logging enabled (verbose={verbose}, output_path={output_path})")
+    logger.info("GenTS version %s", get_version())
+    logger.info("Logging enabled (verbose=%s, output_path=%s)", verbose, output_path)
 
 
 def is_terminal(stream):
@@ -204,14 +204,14 @@ def log_hfcollection_info(hfc, show_progress=True):
     logger = logging.getLogger("gents")
 
     hfc.check_pulled(show_progress=show_progress)
-    logger.info(f"=============================================")
-    logger.info(f"              HFCollection Info              ")
-    logger.info(f"=============================================")
-    logger.info(f"Input Directory: {hfc.get_input_dir()}")
-    logger.info(f"Number history files found: {len(hfc)}")
+    logger.info("=============================================")
+    logger.info("              HFCollection Info              ")
+    logger.info("=============================================")
+    logger.info("Input Directory: %s", hfc.get_input_dir())
+    logger.info("Number history files found: %s", len(hfc))
     
     hf_groups = hfc.get_groups()
-    logger.info(f"Output Groups formed: {len(hf_groups)}")
+    logger.info("Output Groups formed: %s", len(hf_groups))
 
     prog_bar = ProgressBar(total=len(hf_groups), label="Calculating HFCollection Statistics", quiet=not show_progress)
     total_data_tb = 0
@@ -250,10 +250,10 @@ def log_hfcollection_info(hfc, show_progress=True):
                 largest_timestep_shape = var_shape
                 largest_timestep_dims = var_dims
 
-    logger.info(f"Total data mapped (TB): {total_data_tb}")
-    logger.info(f"Total data mapped (GB): {total_data_tb * 1024}")
-    logger.info(f"Largest group by number of variables: {largest_num_vars} variables for {largest_group_num_vars}")
-    logger.info(f"Largest group by number of files: {largest_timestep_group_num_hf_count} files for {largest_timestep_group_num_hf}")
+    logger.info("Total data mapped (TB): %s", total_data_tb)
+    logger.info("Total data mapped (GB): %s", total_data_tb * 1024)
+    logger.info("Largest group by number of variables: %s variables for %s", largest_num_vars, largest_group_num_vars)
+    logger.info("Largest group by number of files: %s files for %s", largest_timestep_group_num_hf_count, largest_timestep_group_num_hf)
     logger.info(
         f"Largest variable timestep (memory footprint) \n" +
         f"    Group: {largest_timestep_group}\n" +
@@ -279,11 +279,11 @@ def log_tscollection_info(tsc, show_progress=True):
     """
     logger = logging.getLogger("gents")
 
-    logger.info(f"=============================================")
-    logger.info(f"              TSCollection Info              ")
-    logger.info(f"=============================================")
-    logger.info(f"Output Directory: {tsc.get_output_dir()}")
-    logger.info(f"Number time series files to generate: {len(tsc)}")
+    logger.info("=============================================")
+    logger.info("              TSCollection Info              ")
+    logger.info("=============================================")
+    logger.info("Output Directory: %s", tsc.get_output_dir())
+    logger.info("Number time series files to generate: %s", len(tsc))
 
     total_files_in = 0
     total_data_out_mb = 0

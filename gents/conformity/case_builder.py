@@ -6,22 +6,24 @@ nothing for them and returns their fill value on read. A multi-GB case therefore
 mirrors down to KB while staying structurally identical, which is what makes
 end-to-end conformity testing against real cases affordable.
 """
-from gents.hfcollection import find_files, sort_hf_groups
-from gents.meta import is_var_secondary, get_time_variables_names
-from gents.datastore import GenTSDataStore
-from gents.timeseries import get_timestep_label
-from gents.utils import enable_logging, ProgressBar, get_time_stamp, get_version
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from pathlib import Path
-from netCDF4 import Dataset
-from cftime import num2date
-from fnmatch import fnmatch
-import numpy as np
 import argparse
 import logging
 import shlex
 import socket
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from fnmatch import fnmatch
+from pathlib import Path
+
+import numpy as np
+from cftime import num2date
+from netCDF4 import Dataset
+
+from gents.datastore import GenTSDataStore
+from gents.hfcollection import find_files, sort_hf_groups
+from gents.meta import get_time_variables_names, is_var_secondary
+from gents.timeseries import get_timestep_label
+from gents.utils import ProgressBar, enable_logging, get_time_stamp, get_version
 
 logger = logging.getLogger(__name__)
 
@@ -344,7 +346,7 @@ def record_clone_command(out_dir: Path):
         command_file.write(provenance + "\n")
         command_file.write(shlex.join(argv) + "\n")
 
-    logger.info(f"Recorded clone command in '{command_path}'.")
+    logger.info("Recorded clone command in '%s'.", command_path)
 
 
 def _summarize_case_file(path):
@@ -442,7 +444,7 @@ def log_case_summary(src_paths, num_processes=1):
             try:
                 variable_names, earliest, latest_values, reference = future.result()
             except Exception as exc:
-                logger.warning(f"Could not summarise '{path}': {exc}")
+                logger.warning("Could not summarise '%s': %s", path, exc)
                 continue
             finally:
                 prog_bar.step()
@@ -550,7 +552,7 @@ def main():
             try:
                 future.result()
             except Exception as exc:
-                logger.warning(f"Failed to clone {src_path}: {exc}", exc_info=True)
+                logger.warning("Failed to clone %s: %s", src_path, exc, exc_info=True)
             finally:
                 prog_bar.step()
 

@@ -6,9 +6,11 @@ Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
 """
 import logging
-import numpy as np
 from concurrent.futures import ProcessPoolExecutor, as_completed
+
+import numpy as np
 from cftime import num2date
+
 from gents.datastore import GenTSDataStore
 from gents.utils import ProgressBar
 
@@ -554,7 +556,7 @@ def read_meta_map(paths, factory, num_processes=1, raise_errors=False, show_prog
                 try:
                     loaded[path] = future.result()
                 except Exception as exc:
-                    logger.warning(f"Failed to load metadata for {path}: {exc}", exc_info=True)
+                    logger.warning("Failed to load metadata for %s: %s", path, exc, exc_info=True)
                     if raise_errors:
                         raise
                 finally:
@@ -564,7 +566,7 @@ def read_meta_map(paths, factory, num_processes=1, raise_errors=False, show_prog
             try:
                 loaded[path] = factory(path)
             except Exception as exc:
-                logger.warning(f"Failed to load metadata for {path}: {exc}", exc_info=True)
+                logger.warning("Failed to load metadata for %s: %s", path, exc, exc_info=True)
                 if raise_errors:
                     raise
             finally:
@@ -594,5 +596,5 @@ def split_valid(meta_map, is_valid_fn):
             kept[path] = meta
         else:
             removed[path] = meta
-            logger.warning(f"Could not pull valid/complete metadata for '{path}'.")
+            logger.warning("Could not pull valid/complete metadata for '%s'.", path)
     return kept, removed

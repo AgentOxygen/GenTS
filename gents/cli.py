@@ -4,11 +4,13 @@
 """
 import argparse
 import sys
-import yaml
-from gents.utils import get_version, log_hfcollection_info, log_tscollection_info, enable_logging
-from gents.hfcollection import HFCollection
-from gents.timeseries import TSCollection, DEFAULT_MEMORY_LIMIT_BYTES
 from pathlib import Path
+
+import yaml
+
+from gents.hfcollection import HFCollection
+from gents.timeseries import DEFAULT_MEMORY_LIMIT_BYTES, TSCollection
+from gents.utils import enable_logging, get_version, log_hfcollection_info, log_tscollection_info
 
 
 def check_config(config_dict):

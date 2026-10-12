@@ -5,23 +5,25 @@ Construction and execution of time series generation orders, and file writing.
 Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
 """
-import numpy as np
+import copy
 import fnmatch
+import gc
 import glob
+import logging
+import traceback
+import warnings
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from os import listdir, makedirs, remove
 from os.path import isfile
-from os import remove, makedirs, listdir
 from pathlib import Path
+
+import numpy as np
+
+from gents.datastore import GenTSDataStore
 from gents.meta import get_attributes, get_meta_from_path
 from gents.mhfdataset import MHFDataset
 from gents.tsinventory import TSInventory
-from gents.datastore import GenTSDataStore
-from gents.utils import get_version, get_timestep_label, LOG_LEVEL_IO_WARNING, ProgressBar
-from concurrent.futures import ProcessPoolExecutor, as_completed
-import traceback
-import logging
-import copy
-import gc
-import warnings
+from gents.utils import LOG_LEVEL_IO_WARNING, ProgressBar, get_timestep_label, get_version
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +73,7 @@ def check_timeseries_integrity(ts_path: str):
         if "gents_version" in attrs:
             return True
     except OSError:
-        logger.log(LOG_LEVEL_IO_WARNING, f"Corrupt timeseries output: '{ts_path}'")
+        logger.log(LOG_LEVEL_IO_WARNING, "Corrupt timeseries output: '%s'", ts_path)
     return False
 
 
@@ -438,8 +440,8 @@ class TSCollection:
         
         if ts_orders is None:
             self.__orders = list(self.update_ts_orders())
-            logger.debug(f"TSCollection initialized at '{self.__output_dir}'.")
-            logger.debug(f"{len(self.__orders)} timeseries orders generated.")
+            logger.debug("TSCollection initialized at '%s'.", self.__output_dir)
+            logger.debug("%s timeseries orders generated.", len(self.__orders))
         else:
             self.__orders = ts_orders
 
@@ -503,9 +505,9 @@ class TSCollection:
             output_template = glob_template.removeprefix(str(self.__hf_collection.get_input_dir()))
             if "[sorting_pivot]" in output_template:
                 output_template, slice_years = output_template.split("[sorting_pivot]")
-                logger.debug(f"Group [{index+1}/{len(self.__groups)}] {len(hf_paths)} files: {output_template}, sliced to [{slice_years}]")
+                logger.debug("Group [%s/%s] %s files: %s, sliced to [%s]", index+1, len(self.__groups), len(hf_paths), output_template, slice_years)
             else:
-                logger.debug(f"Group [{index+1}/{len(self.__groups)}] {len(hf_paths)} files: {output_template}")
+                logger.debug("Group [%s/%s] %s files: %s", index+1, len(self.__groups), len(hf_paths), output_template)
             ts_path_template = f"{self.__output_dir}{output_template}"
 
             primary_vars = self.__hf_collection[hf_paths[0]].get_primary_variables()
@@ -639,7 +641,7 @@ class TSCollection:
 
             if path_matched and _matches_any(order_dict["primary_var"], var_glob):
                 filtered_orders.append(order_dict)
-        logger.debug(f"Inclusive filter(s) applied: '{var_glob}' to history files matching '{path_glob}'")
+        logger.debug("Inclusive filter(s) applied: '%s' to history files matching '%s'", var_glob, path_glob)
         return self.copy(ts_orders=filtered_orders)
 
     def exclude(self, path_glob, var_glob="*"):
@@ -664,7 +666,7 @@ class TSCollection:
 
             if not (path_matched and _matches_any(order_dict["primary_var"], var_glob)):
                 filtered_orders.append(order_dict)
-        logger.debug(f"Exclusive filter(s) applied: '{var_glob}' to history files matching '{path_glob}'")
+        logger.debug("Exclusive filter(s) applied: '%s' to history files matching '%s'", var_glob, path_glob)
         return self.copy(ts_orders=filtered_orders)
 
     def add_args(self, path_glob="*", var_glob="*", level=None, alg=None, overwrite=None, chunk_target_bytes=None):
@@ -706,7 +708,7 @@ class TSCollection:
                     order_dict["chunk_target_bytes"] = chunk_target_bytes
             new_orders.append(order_dict)
 
-        logger.debug(f"Arguments applied (excluding None): ['level': {level}, 'alg': {alg}, 'overwrite': {overwrite}, 'chunk_target_bytes': {chunk_target_bytes}] to history files matching '{path_glob}' and variables matching '{var_glob}'.")
+        logger.debug("Arguments applied (excluding None): ['level': %s, 'alg': %s, 'overwrite': %s, 'chunk_target_bytes': %s] to history files matching '%s' and variables matching '%s'.", level, alg, overwrite, chunk_target_bytes, path_glob, var_glob)
         return self.copy(ts_orders=new_orders)
 
     def apply_path_swap(self, string_match, string_swap, path_glob="*", var_glob="*"):
@@ -736,7 +738,7 @@ class TSCollection:
                 order_dict["ts_path_template"] = order_dict["ts_path_template"].replace(string_match, string_swap)
             new_orders.append(order_dict)
     
-        logger.debug(f"Path swap '{string_match}' -> '{string_swap}' to history files matching '{path_glob}' and variables matching '{var_glob}'.")
+        logger.debug("Path swap '%s' -> '%s' to history files matching '%s' and variables matching '%s'.", string_match, string_swap, path_glob, var_glob)
         return self.copy(ts_orders=new_orders)
         
     def apply_compression(self, level, alg, path_glob, var_glob="*"):
@@ -849,7 +851,7 @@ class TSCollection:
             if len(order_dict["hf_paths"]) > 0:
                 new_orders.append(order_dict)
 
-        logger.debug(f"skip_existing() kept {len(new_orders)} of {len(self.__orders)} order(s).")
+        logger.debug("skip_existing() kept %s of %s order(s).", len(new_orders), len(self.__orders))
         return self.copy(ts_orders=new_orders)
 
     def append_timestep_dirs(self, var_glob="*"):
@@ -1004,7 +1006,7 @@ class TSCollection:
                             results.append(future.result())
                         except Exception as exc:
                             order = futures[future]
-                            logger.warning(f"Failed to generate time series for {order['ts_path_template']}: {exc}", exc_info=True)
+                            logger.warning("Failed to generate time series for %s: %s", order['ts_path_template'], exc, exc_info=True)
                             if raise_errors:
                                 raise
                         finally:
@@ -1016,7 +1018,7 @@ class TSCollection:
                 try:
                     results.append(generate_time_series(**args))
                 except Exception as exc:
-                    logger.warning(f"Failed to generate time series for {args['ts_path_template']}: {exc}", exc_info=True)
+                    logger.warning("Failed to generate time series for %s: %s", args['ts_path_template'], exc, exc_info=True)
                     if raise_errors:
                         raise
                 finally:

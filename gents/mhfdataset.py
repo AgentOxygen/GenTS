@@ -5,10 +5,12 @@ Virtual dataset presenting a group of history files as one aggregated whole.
 Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
 """
-from gents.datastore import GenTSDataStore
 from pathlib import Path
-from gents.meta import netCDFMeta
+
 import numpy as np
+
+from gents.datastore import GenTSDataStore
+from gents.meta import netCDFMeta
 
 
 def extend_coords(ds, dim_coords={}):
