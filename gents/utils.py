@@ -63,9 +63,9 @@ def get_timestep_label(dt):
 
     if hours < 24:
         return f"hour_{int(hours)}"
-    elif days < 28:
+    if days < 28:
         return f"day_{int(days)}"
-    elif months < 12:
+    if months < 12:
         return f"month_{int(months)}"
     return f"year_{int(years)}"
 

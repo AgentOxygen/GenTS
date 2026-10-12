@@ -217,10 +217,8 @@ def get_year_bounds(hf_to_meta_map, time_alignment_method="midpoint"):
         # extremes need decoding per file.
         times, units, calendar = get_aligned_times(meta, time_alignment_method)
         extremes = np.atleast_1d(num2date(np.array([np.min(times), np.max(times)]), units=units, calendar=calendar))
-        if extremes[-1].year > max_year:
-            max_year = extremes[-1].year
-        if extremes[0].year < min_year:
-            min_year = extremes[0].year
+        max_year = max(max_year, extremes[-1].year)
+        min_year = min(min_year, extremes[0].year)
     return min_year, max_year
 
 
@@ -288,10 +286,7 @@ def is_ds_within_years(ds_meta, min_year, max_year):
     else:
         year = ds_meta.get_cftimes()[0]
 
-    if min_year <= year <= max_year:
-        return True
-    else:
-        return False
+    return min_year <= year <= max_year
 
 
 def filter_by_variables(meta_datasets):
@@ -308,8 +303,8 @@ def filter_by_variables(meta_datasets):
     :rtype: tuple[list or None, list or None]
     """
     variable_sets = {}
-    for index in range(len(meta_datasets)):
-        var_set = meta_datasets[index].get_variables()
+    for index, meta in enumerate(meta_datasets):
+        var_set = meta.get_variables()
         var_set.sort()
 
         if str(var_set) in variable_sets:
@@ -321,9 +316,7 @@ def filter_by_variables(meta_datasets):
     others = None
 
     if len(variable_sets) > 1:
-        counts = []
-        for var_set in variable_sets:
-            counts.append(len(variable_sets[var_set]))
+        counts = [len(indices) for indices in variable_sets.values()]
 
         majority_index = np.argmax(counts)
         if np.sum(counts[majority_index] == np.array(counts)) == 1:
@@ -331,11 +324,11 @@ def filter_by_variables(meta_datasets):
 
             majority = []
             others = []
-            for index in range(len(meta_datasets)):
+            for index, meta in enumerate(meta_datasets):
                 if index in variable_sets[majority_set]:
-                    majority.append(meta_datasets[index])
+                    majority.append(meta)
                 else:
-                    others.append(meta_datasets[index])
+                    others.append(meta)
     else:
         majority = meta_datasets
 
@@ -412,12 +405,12 @@ def merge_fragmented_groups(hf_groups, hf_meta_map):
             fragmented_groups[pattern] = hf_groups[pattern]
 
     if len(fragmented_groups) > 0:
-        num_fragmented_files = sum([len(fragmented_groups[pattern]) for pattern in fragmented_groups])
+        num_fragmented_files = sum(len(paths) for paths in fragmented_groups.values())
         logger.info("Found %s spatially fragmented files in %s groups.", num_fragmented_files, len(fragmented_groups))
 
     dim_hashes = {}
-    for pattern in fragmented_groups:
-        init_meta = hf_meta_map[fragmented_groups[pattern][0]]
+    for paths in fragmented_groups.values():
+        init_meta = hf_meta_map[paths[0]]
         dims = init_meta.get_dim_bounds()
         dims = {variable: dims[variable] for variable in dims if variable != init_meta.get_time_var_name()}
         dims_hash = str(dims)
@@ -425,12 +418,10 @@ def merge_fragmented_groups(hf_groups, hf_meta_map):
         if dims_hash not in dim_hashes:
             dim_hashes[dims_hash] = []
 
-        for path in fragmented_groups[pattern]:
-            dim_hashes[dims_hash].append(path)
+        dim_hashes[dims_hash].extend(paths)
 
-    for dim_hash in dim_hashes:
-        paths = dim_hashes[dim_hash]
-        label = str(paths[0]).split(".nc")[0] + "*"
+    for paths in dim_hashes.values():
+        label = str(paths[0]).split(".nc", maxsplit=1)[0] + "*"
         if label not in new_groups:
             new_groups[label] = paths
         else:
@@ -562,10 +553,9 @@ class HFCollection:
         self.check_pulled()
         if hf_path in self.__hf_multistep_slices:
             return self.__hf_multistep_slices[hf_path]
-        elif hf_path not in self.__hf_to_meta_map:
+        if hf_path not in self.__hf_to_meta_map:
             raise KeyError(f"History file '{hf_path}' not found in HFCollection")
-        else:
-            return None
+        return None
 
     def get_timestep_delta(self, hf_path):
         """
@@ -962,7 +952,7 @@ class HFCollection:
                                 self.__hf_multistep_slices[hf_path][f"{time_slice[0]}-{time_slice[1]}"] = (start_index, end_index)
                             else:
                                 self.__hf_multistep_slices[hf_path] = {f"{time_slice[0]}-{time_slice[1]}": (start_index, end_index)}
-            for time_slice in hf_slices:
-                sliced_groups[f"{group}[sorting_pivot]{time_slice[0]}-{time_slice[1]}"] = hf_slices[time_slice]
+            for time_slice, slice_paths in hf_slices.items():
+                sliced_groups[f"{group}[sorting_pivot]{time_slice[0]}-{time_slice[1]}"] = slice_paths
         logger.debug("Slicing groups into %s year long slices for '%s'.", slice_size_years, pattern)
         return self.copy(hf_groups=sliced_groups)

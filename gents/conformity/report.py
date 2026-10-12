@@ -120,7 +120,6 @@ class Report:
         :type reason: str
         """
         self.results.append(CheckResult(description, SKIP, reason))
-        return None
 
     def count(self, status):
         """Number of results with the given status."""

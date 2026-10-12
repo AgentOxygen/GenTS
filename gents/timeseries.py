@@ -98,12 +98,11 @@ def check_timeseries_conform(ts_path: str):
 
             if "time" not in ts_ds[variable].dimensions or len(ts_ds[variable].shape) == 1:
                 return False
-            else:
-                chunking = list(ts_ds[variable].chunking())
-                chunking[0] += 1
-                bumped_size = np.prod(chunking)*ts_ds[variable].dtype.itemsize
-                if bumped_size < CHUNK_TARGET_BYTES:
-                    return False
+            chunking = list(ts_ds[variable].chunking())
+            chunking[0] += 1
+            bumped_size = np.prod(chunking)*ts_ds[variable].dtype.itemsize
+            if bumped_size < CHUNK_TARGET_BYTES:
+                return False
 
     return True
 
@@ -185,8 +184,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
     elif not overwrite and isfile(ts_out_path):
         if check_timeseries_integrity(ts_out_path):
             return ts_out_path
-        else:
-            remove(ts_out_path)
+        remove(ts_out_path)
 
     if ts_start_index is None:
         ts_start_index = 0
@@ -948,8 +946,7 @@ class TSCollection:
                     order_index_merge_map[key] = [index]
 
             batched_index_lists = []
-            for key in order_index_merge_map:
-                indices = order_index_merge_map[key]
+            for indices in order_index_merge_map.values():
                 chunked_indices = [indices[i:i+optimize_batch_n] for i in range(0, len(indices), optimize_batch_n)]
                 for index_list in chunked_indices:
                     batched_index_lists.append(index_list)

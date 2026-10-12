@@ -475,9 +475,9 @@ class netCDFMeta:
         """
         if self.get_float_time_bounds() is None and self.get_float_times() is None:
             return False
-        elif len(self.get_primary_variables()) + len(self.get_secondary_variables()) == 0:
+        if len(self.get_primary_variables()) + len(self.get_secondary_variables()) == 0:
             return False
-        elif "gents_version" in self.get_attributes():
+        if "gents_version" in self.get_attributes():
             return False
         return True
 

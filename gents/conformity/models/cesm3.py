@@ -456,7 +456,7 @@ def run(ts_dir, hf_dir, report):
         bad_files = []
         for ts_file in hourly_files:
             how_many_digits = len(get_start_date(ts_file))
-            if how_many_digits != 10 and how_many_digits != 14:
+            if how_many_digits not in (10, 14):
                 bad_files.append(ts_file.name)
 
         report.check(
