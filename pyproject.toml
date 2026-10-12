@@ -55,4 +55,5 @@ gents_conform = "gents.conformity.check:main"
 test = ["pytest"]
 docs = ["sphinx", "sphinx-autobuild"]
 bench = ["asv", "py-spy"]
-dev = ["GenTS[test,docs,bench]"]
+lint = ["pylint"]
+dev = ["GenTS[test,docs,bench,lint]"]

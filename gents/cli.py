@@ -4,11 +4,13 @@
 """
 import argparse
 import sys
-import yaml
-from gents.utils import get_version, log_hfcollection_info, log_tscollection_info, enable_logging
-from gents.hfcollection import HFCollection
-from gents.timeseries import TSCollection, DEFAULT_MEMORY_LIMIT_BYTES
 from pathlib import Path
+
+import yaml
+
+from gents.hfcollection import HFCollection
+from gents.timeseries import DEFAULT_MEMORY_LIMIT_BYTES, TSCollection
+from gents.utils import enable_logging, get_version, log_hfcollection_info, log_tscollection_info
 
 
 def check_config(config_dict):
@@ -86,7 +88,10 @@ def parse_arguments():
         "--slice_start_year",
         type=int,
         default=None,
-        help="Year to align slice windows to; earlier data gets windows on the same alignment. (Default is start year for history files)"
+        help=(
+            "Year to align slice windows to; earlier data gets windows on the same alignment. (Default is start year "
+            "for history files)"
+        ),
     )
     parser.add_argument(
         "-hc", "--hfcores",
@@ -172,14 +177,16 @@ def main():
 
     if args.outputdir is None:
         args.outputdir = args.hf_head_dir
-    
+
     if args.model is not None:
         args.model = args.model.lower()
 
     if args.compression is not None and args.level is None:
         raise ValueError(f"Compression '{args.compression}' selected, please specifiy a level using `--level`")
 
-    memory_limit_bytes = args.memory_limit_gb * (1024**3) if args.memory_limit_gb is not None else DEFAULT_MEMORY_LIMIT_BYTES
+    memory_limit_bytes = (
+        args.memory_limit_gb * (1024**3) if args.memory_limit_gb is not None else DEFAULT_MEMORY_LIMIT_BYTES
+    )
 
     if args.verbose:
         print(f"  Input (HF) directory path    : {args.hf_head_dir}")
@@ -210,7 +217,7 @@ def main():
     if args.model not in model_config_files:
         raise ValueError(f"No GenTS configuration available for model '{args.model}'.")
 
-    with open(str(config_dir / model_config_files[args.model]), 'r') as file:
+    with open(str(config_dir / model_config_files[args.model]), 'r', encoding="utf-8") as file:
         yaml_config = yaml.safe_load(file)
 
     check_config(yaml_config)

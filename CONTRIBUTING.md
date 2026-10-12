@@ -55,6 +55,12 @@ docker run --rm -v .:/usr/local/gents -t gents pytest gents/tests/
 pytest gents/tests/
 ```
 
+Lint with pylint (installed by the `dev` extra):
+
+```bash
+pylint gents
+```
+
 Unit tests live in `gents/tests/` and rely on `gents/tests/test_cases.py` to generate
 sample history files.
 

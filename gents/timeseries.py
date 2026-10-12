@@ -5,23 +5,24 @@ Construction and execution of time series generation orders, and file writing.
 Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
 """
-import numpy as np
+import copy
 import fnmatch
+import gc
 import glob
+import logging
+import warnings
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from os import makedirs, remove
 from os.path import isfile
-from os import remove, makedirs, listdir
 from pathlib import Path
-from gents.meta import get_attributes, get_meta_from_path
+
+import numpy as np
+
+from gents.datastore import GenTSDataStore
+from gents.meta import get_attributes
 from gents.mhfdataset import MHFDataset
 from gents.tsinventory import TSInventory
-from gents.datastore import GenTSDataStore
-from gents.utils import get_version, get_timestep_label, LOG_LEVEL_IO_WARNING, ProgressBar
-from concurrent.futures import ProcessPoolExecutor, as_completed
-import traceback
-import logging
-import copy
-import gc
-import warnings
+from gents.utils import LOG_LEVEL_IO_WARNING, ProgressBar, get_timestep_label, get_version
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ def check_timeseries_integrity(ts_path: str):
         if "gents_version" in attrs:
             return True
     except OSError:
-        logger.log(LOG_LEVEL_IO_WARNING, f"Corrupt timeseries output: '{ts_path}'")
+        logger.log(LOG_LEVEL_IO_WARNING, "Corrupt timeseries output: '%s'", ts_path)
     return False
 
 
@@ -94,16 +95,15 @@ def check_timeseries_conform(ts_path: str):
         for variable in ts_ds.variables:
             if list(ts_ds[variable].chunking()) == list(ts_ds[variable].shape):
                 continue
-                
+
             if "time" not in ts_ds[variable].dimensions or len(ts_ds[variable].shape) == 1:
                 return False
-            else:
-                chunking = list(ts_ds[variable].chunking())
-                chunking[0] += 1
-                bumped_size = np.prod(chunking)*ts_ds[variable].dtype.itemsize
-                if bumped_size < CHUNK_TARGET_BYTES:
-                    return False
-        
+            chunking = list(ts_ds[variable].chunking())
+            chunking[0] += 1
+            bumped_size = np.prod(chunking)*ts_ds[variable].dtype.itemsize
+            if bumped_size < CHUNK_TARGET_BYTES:
+                return False
+
     return True
 
 
@@ -129,7 +129,20 @@ def _is_missing(arr, fill_value):
     return bool(np.all(arr == fill_value))
 
 
-def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_data, overwrite=False, complevel=0, compression=None, ts_start_index=None, ts_end_index=None, append_attrs=None, no_data=False, chunk_target_bytes=CHUNK_TARGET_BYTES):
+def write_timeseries_file(
+    agg_hf_ds,
+    ts_out_path,
+    primary_var,
+    secondary_vars_data,
+    overwrite=False,
+    complevel=0,
+    compression=None,
+    ts_start_index=None,
+    ts_end_index=None,
+    append_attrs=None,
+    no_data=False,
+    chunk_target_bytes=CHUNK_TARGET_BYTES,
+):
     """
     Writes one time series file, holding one primary variable and every secondary.
 
@@ -184,8 +197,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
     elif not overwrite and isfile(ts_out_path):
         if check_timeseries_integrity(ts_out_path):
             return ts_out_path
-        else:
-            remove(ts_out_path)
+        remove(ts_out_path)
 
     if ts_start_index is None:
         ts_start_index = 0
@@ -197,7 +209,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
         if primary_var != "auxiliary":
             var_shape = agg_hf_ds.get_var_data_shape(primary_var)
             var_dims = agg_hf_ds.get_var_dimensions(primary_var)
-            
+
             var_shape[0] = ts_end_index - ts_start_index
 
             for index, dim in enumerate(var_dims):
@@ -258,7 +270,7 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
                         ts_ds.createDimension(dim, None)
                     else:
                         ts_ds.createDimension(dim, var_shape[index])
-            
+
             svar_attrs = agg_hf_ds.get_var_attrs(secondary_var)
             svar_fill = svar_attrs.get("_FillValue", None)
 
@@ -283,14 +295,16 @@ def write_timeseries_file(agg_hf_ds, ts_out_path, primary_var, secondary_vars_da
                 svar_vals = secondary_vars_data[secondary_var]
             if not _is_missing(svar_vals, svar_fill):
                 svar_data[:] = svar_vals
-        
+
         if append_attrs is None:
             append_attrs = {}
         ts_ds.setncatts(global_attrs | append_attrs | {"gents_version": str(get_version())})
     return ts_out_path
 
 
-def generate_time_series(hf_paths, ts_path_template, secondary_vars, ts_args, no_data=False, memory_limit_bytes=DEFAULT_MEMORY_LIMIT_BYTES):
+def generate_time_series(
+    hf_paths, ts_path_template, secondary_vars, ts_args, no_data=False, memory_limit_bytes=DEFAULT_MEMORY_LIMIT_BYTES
+):
     """
     Generates every time series file for one group of history files.
 
@@ -342,7 +356,14 @@ def generate_time_series(hf_paths, ts_path_template, secondary_vars, ts_args, no
     return ts_paths
 
 
-def get_timestamp_format(dt, subhour_format="%Y%m%d%H%M%S", hourly_format="%Y%m%d%H", daily_format="%Y%m%d", monthly_format="%Y%m", yearly_format="%Y"):
+def get_timestamp_format(
+    dt,
+    subhour_format="%Y%m%d%H%M%S",
+    hourly_format="%Y%m%d%H",
+    daily_format="%Y%m%d",
+    monthly_format="%Y%m",
+    yearly_format="%Y",
+):
     """
     Returns the ``strftime`` format to timestamp output files of a given frequency.
 
@@ -375,7 +396,7 @@ def get_timestamp_format(dt, subhour_format="%Y%m%d%H%M%S", hourly_format="%Y%m%
         time_format = monthly_format
     else:
         time_format = yearly_format
-    
+
     return time_format
 
 
@@ -389,7 +410,7 @@ def _matches_any(value, globs):
     :type globs: list[str] or str
     :rtype: bool
     """
-    if type(globs) is str:
+    if isinstance(globs, str):
         globs = [globs]
     return any(fnmatch.fnmatch(value, glob) for glob in globs)
 
@@ -424,22 +445,27 @@ class TSCollection:
         :param dask_client: Deprecated. Pass ``num_processes`` instead.
         """
         if dask_client is not None:
-            warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism or reference the ReadTheDocs for using Dask.", DeprecationWarning, stacklevel=2)
+            warnings.warn(
+                "Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism or "
+                "reference the ReadTheDocs for using Dask.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         self.__num_processes = 1
         if num_processes is not None:
             self.__num_processes = num_processes
-        
+
         hf_collection = hf_collection.sort_along_time()
 
         self.__hf_collection = hf_collection
         self.__groups = self.__hf_collection.get_groups()
         self.__output_dir = output_dir
-        
+
         if ts_orders is None:
             self.__orders = list(self.update_ts_orders())
-            logger.debug(f"TSCollection initialized at '{self.__output_dir}'.")
-            logger.debug(f"{len(self.__orders)} timeseries orders generated.")
+            logger.debug("TSCollection initialized at '%s'.", self.__output_dir)
+            logger.debug("%s timeseries orders generated.", len(self.__orders))
         else:
             self.__orders = ts_orders
 
@@ -456,11 +482,21 @@ class TSCollection:
         return len(self.__orders)
 
     def items(self):
+        """
+        Returns the list of timeseries orders (identical to :meth:`values`; orders are not keyed).
+
+        :rtype: list
+        """
         return self.__orders
 
     def values(self):
+        """
+        Returns the list of timeseries orders.
+
+        :rtype: list
+        """
         return self.__orders
-    
+
     def get_hf_collection(self):
         """
         Returns the ``HFCollection`` this collection was derived from.
@@ -477,7 +513,7 @@ class TSCollection:
         """
         return self.__output_dir
 
-    def update_ts_orders(self, strfrmt_kwargs={}, time_alignment_method="midpoint"):
+    def update_ts_orders(self, strfrmt_kwargs=None, time_alignment_method="midpoint"):
         """
         Rebuilds the order list and returns a new ``TSCollection``.
 
@@ -488,7 +524,7 @@ class TSCollection:
 
         :param strfrmt_kwargs: Timestamp format overrides forwarded to
             :func:`get_timestamp_format`, e.g. ``{'monthly_format': '%Y%m%d'}``.
-        :type strfrmt_kwargs: dict
+        :type strfrmt_kwargs: dict or None
         :param time_alignment_method: How to pick the representative time for the
             filename timestamp: ``'midpoint'`` of the time bound, ``'direct_time'``
             (ignoring bounds), ``'start_bound'`` or ``'end_bound'``.
@@ -503,15 +539,24 @@ class TSCollection:
             output_template = glob_template.removeprefix(str(self.__hf_collection.get_input_dir()))
             if "[sorting_pivot]" in output_template:
                 output_template, slice_years = output_template.split("[sorting_pivot]")
-                logger.debug(f"Group [{index+1}/{len(self.__groups)}] {len(hf_paths)} files: {output_template}, sliced to [{slice_years}]")
+                logger.debug(
+                    "Group [%s/%s] %s files: %s, sliced to [%s]",
+                    index + 1,
+                    len(self.__groups),
+                    len(hf_paths),
+                    output_template,
+                    slice_years,
+                )
             else:
-                logger.debug(f"Group [{index+1}/{len(self.__groups)}] {len(hf_paths)} files: {output_template}")
+                logger.debug("Group [%s/%s] %s files: %s", index+1, len(self.__groups), len(hf_paths), output_template)
             ts_path_template = f"{self.__output_dir}{output_template}"
 
             primary_vars = self.__hf_collection[hf_paths[0]].get_primary_variables()
             secondary_vars = self.__hf_collection[hf_paths[0]].get_secondary_variables()
-            time_format = get_timestamp_format(self.__hf_collection.get_timestep_delta(hf_paths[0]), **strfrmt_kwargs)
-            
+            time_format = get_timestamp_format(
+                self.__hf_collection.get_timestep_delta(hf_paths[0]), **(strfrmt_kwargs or {})
+            )
+
             start_time = None
             end_time = None
             total_steps = 0
@@ -549,7 +594,10 @@ class TSCollection:
                     elif time_alignment_method == "end_bound":
                         aligned_times = bnds[:, 1]
                     else:
-                        raise ValueError(f"'{time_alignment_method}' is an invalid time-alignment method. Valid methods are ['direct_time', 'midpoint', 'start_bound', 'end_bound']")
+                        raise ValueError(
+                            f"'{time_alignment_method}' is an invalid time-alignment method. Valid methods are "
+                            "['direct_time', 'midpoint', 'start_bound', 'end_bound']"
+                        )
                     decode = meta_ds.decode_time_bounds_values
 
                 if aligned_times.shape[0] > 0:
@@ -616,7 +664,9 @@ class TSCollection:
         if num_processes is None:
             num_processes = self.__num_processes
 
-        return TSCollection(hf_collection=hf_collection, output_dir=output_dir, ts_orders=ts_orders, num_processes=num_processes)
+        return TSCollection(
+            hf_collection=hf_collection, output_dir=output_dir, ts_orders=ts_orders, num_processes=num_processes
+        )
 
     def include(self, path_glob, var_glob="*"):
         """
@@ -639,7 +689,7 @@ class TSCollection:
 
             if path_matched and _matches_any(order_dict["primary_var"], var_glob):
                 filtered_orders.append(order_dict)
-        logger.debug(f"Inclusive filter(s) applied: '{var_glob}' to history files matching '{path_glob}'")
+        logger.debug("Inclusive filter(s) applied: '%s' to history files matching '%s'", var_glob, path_glob)
         return self.copy(ts_orders=filtered_orders)
 
     def exclude(self, path_glob, var_glob="*"):
@@ -664,7 +714,7 @@ class TSCollection:
 
             if not (path_matched and _matches_any(order_dict["primary_var"], var_glob)):
                 filtered_orders.append(order_dict)
-        logger.debug(f"Exclusive filter(s) applied: '{var_glob}' to history files matching '{path_glob}'")
+        logger.debug("Exclusive filter(s) applied: '%s' to history files matching '%s'", var_glob, path_glob)
         return self.copy(ts_orders=filtered_orders)
 
     def add_args(self, path_glob="*", var_glob="*", level=None, alg=None, overwrite=None, chunk_target_bytes=None):
@@ -706,7 +756,16 @@ class TSCollection:
                     order_dict["chunk_target_bytes"] = chunk_target_bytes
             new_orders.append(order_dict)
 
-        logger.debug(f"Arguments applied (excluding None): ['level': {level}, 'alg': {alg}, 'overwrite': {overwrite}, 'chunk_target_bytes': {chunk_target_bytes}] to history files matching '{path_glob}' and variables matching '{var_glob}'.")
+        logger.debug(
+            "Arguments applied (excluding None): ['level': %s, 'alg': %s, 'overwrite': %s, 'chunk_target_bytes': %s] "
+            "to history files matching '%s' and variables matching '%s'.",
+            level,
+            alg,
+            overwrite,
+            chunk_target_bytes,
+            path_glob,
+            var_glob,
+        )
         return self.copy(ts_orders=new_orders)
 
     def apply_path_swap(self, string_match, string_swap, path_glob="*", var_glob="*"):
@@ -735,10 +794,16 @@ class TSCollection:
             if path_matched and _matches_any(order_dict["primary_var"], var_glob):
                 order_dict["ts_path_template"] = order_dict["ts_path_template"].replace(string_match, string_swap)
             new_orders.append(order_dict)
-    
-        logger.debug(f"Path swap '{string_match}' -> '{string_swap}' to history files matching '{path_glob}' and variables matching '{var_glob}'.")
+
+        logger.debug(
+            "Path swap '%s' -> '%s' to history files matching '%s' and variables matching '%s'.",
+            string_match,
+            string_swap,
+            path_glob,
+            var_glob,
+        )
         return self.copy(ts_orders=new_orders)
-        
+
     def apply_compression(self, level, alg, path_glob, var_glob="*"):
         """
         Applies compression settings to matching orders (see :meth:`add_args`).
@@ -849,7 +914,7 @@ class TSCollection:
             if len(order_dict["hf_paths"]) > 0:
                 new_orders.append(order_dict)
 
-        logger.debug(f"skip_existing() kept {len(new_orders)} of {len(self.__orders)} order(s).")
+        logger.debug("skip_existing() kept %s of %s order(s).", len(new_orders), len(self.__orders))
         return self.copy(ts_orders=new_orders)
 
     def append_timestep_dirs(self, var_glob="*"):
@@ -901,7 +966,15 @@ class TSCollection:
         for order_dict in self.__orders:
             makedirs(Path(order_dict['ts_path_template']).parent, exist_ok=exist_ok)
 
-    def execute(self, optimize=True, optimize_batch_n=200, raise_errors=False, no_data=False, show_progress=True, memory_limit_bytes=DEFAULT_MEMORY_LIMIT_BYTES):
+    def execute(
+        self,
+        optimize=True,
+        optimize_batch_n=200,
+        raise_errors=False,
+        no_data=False,
+        show_progress=True,
+        memory_limit_bytes=DEFAULT_MEMORY_LIMIT_BYTES,
+    ):
         """
         Runs every order, writing the time series files.
 
@@ -945,10 +1018,9 @@ class TSCollection:
                     order_index_merge_map[key].append(index)
                 else:
                     order_index_merge_map[key] = [index]
-            
+
             batched_index_lists = []
-            for key in order_index_merge_map:
-                indices = order_index_merge_map[key]
+            for indices in order_index_merge_map.values():
                 chunked_indices = [indices[i:i+optimize_batch_n] for i in range(0, len(indices), optimize_batch_n)]
                 for index_list in chunked_indices:
                     batched_index_lists.append(index_list)
@@ -1004,7 +1076,12 @@ class TSCollection:
                             results.append(future.result())
                         except Exception as exc:
                             order = futures[future]
-                            logger.warning(f"Failed to generate time series for {order['ts_path_template']}: {exc}", exc_info=True)
+                            logger.warning(
+                                "Failed to generate time series for %s: %s",
+                                order['ts_path_template'],
+                                exc,
+                                exc_info=True,
+                            )
                             if raise_errors:
                                 raise
                         finally:
@@ -1016,12 +1093,14 @@ class TSCollection:
                 try:
                     results.append(generate_time_series(**args))
                 except Exception as exc:
-                    logger.warning(f"Failed to generate time series for {args['ts_path_template']}: {exc}", exc_info=True)
+                    logger.warning(
+                        "Failed to generate time series for %s: %s", args['ts_path_template'], exc, exc_info=True
+                    )
                     if raise_errors:
                         raise
                 finally:
                     prog_bar.step()
-        
+
         output_paths = []
         for result in results:
             for path in result:
