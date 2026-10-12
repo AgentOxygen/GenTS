@@ -811,7 +811,7 @@ class HFCollection:
         :type glob_patterns: list[str] or str
         :rtype: HFCollection
         """
-        if type(glob_patterns) is str:
+        if isinstance(glob_patterns, str):
             glob_patterns = [glob_patterns]
 
         self.check_pulled()
@@ -900,7 +900,7 @@ class HFCollection:
         :raises ValueError: If ``time_alignment_method`` is not one of those four,
             or if ``pattern`` matches a group that a previous call already sliced.
         """
-        if type(pattern) is str:
+        if isinstance(pattern, str):
             pattern = [pattern]
 
         sliced_groups = {}

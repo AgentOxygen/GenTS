@@ -388,7 +388,7 @@ def _matches_any(value, globs):
     :type globs: list[str] or str
     :rtype: bool
     """
-    if type(globs) is str:
+    if isinstance(globs, str):
         globs = [globs]
     return any(fnmatch.fnmatch(value, glob) for glob in globs)
 
