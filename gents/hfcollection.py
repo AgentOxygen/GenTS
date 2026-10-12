@@ -517,12 +517,27 @@ class HFCollection:
         return len(self.__hf_to_meta_map)
 
     def items(self):
+        """
+        Returns ``(path, metadata)`` pairs for every history file in the collection.
+
+        :rtype: dict_items
+        """
         return self.__hf_to_meta_map.items()
 
     def values(self):
+        """
+        Returns the metadata of every history file; entries are ``None`` until pulled.
+
+        :rtype: dict_values
+        """
         return self.__hf_to_meta_map.values()
 
     def keys(self):
+        """
+        Returns the paths of every history file in the collection.
+
+        :rtype: dict_keys
+        """
         return self.__hf_to_meta_map.keys()
 
     def is_pulled(self):

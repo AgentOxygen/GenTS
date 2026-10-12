@@ -143,12 +143,27 @@ class TSInventory:
         return len(self.__ts_to_meta_map)
 
     def items(self):
+        """
+        Returns ``(path, metadata)`` pairs for every indexed time series file.
+
+        :rtype: dict_items
+        """
         return self.__ts_to_meta_map.items()
 
     def values(self):
+        """
+        Returns the metadata of every indexed time series file.
+
+        :rtype: dict_values
+        """
         return self.__ts_to_meta_map.values()
 
     def keys(self):
+        """
+        Returns the paths of every indexed time series file.
+
+        :rtype: dict_keys
+        """
         return self.__ts_to_meta_map.keys()
 
     def include(self, glob_patterns):

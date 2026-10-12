@@ -455,9 +455,19 @@ class TSCollection:
         return len(self.__orders)
 
     def items(self):
+        """
+        Returns the list of timeseries orders (identical to :meth:`values`; orders are not keyed).
+
+        :rtype: list
+        """
         return self.__orders
 
     def values(self):
+        """
+        Returns the list of timeseries orders.
+
+        :rtype: list
+        """
         return self.__orders
 
     def get_hf_collection(self):
