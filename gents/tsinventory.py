@@ -5,12 +5,14 @@ Discovery, filtering, and indexing of existing GenTS time series files.
 Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
 """
+import logging
+
+import numpy as np
+
 from gents.datastore import GenTSDataStore
 from gents.hfcollection import find_files, get_group_timestep_delta
 from gents.meta import netCDFMeta, read_meta_map, split_valid
 from gents.utils import filter_by_globs, get_timestep_label
-import numpy as np
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -123,8 +125,8 @@ class TSInventory:
 
         if meta_map is None:
             self.__ts_to_meta_map = {path: None for path in find_files(ts_head_dir, ts_glob_pattern)}
-            logger.info(f"Initialized TSInventory at '{ts_head_dir}'")
-            logger.info(f"{len(self.__ts_to_meta_map)} netCDF files found.")
+            logger.info("Initialized TSInventory at '%s'", ts_head_dir)
+            logger.info("%s netCDF files found.", len(self.__ts_to_meta_map))
         else:
             self.__ts_to_meta_map = meta_map
 
@@ -141,12 +143,27 @@ class TSInventory:
         return len(self.__ts_to_meta_map)
 
     def items(self):
+        """
+        Returns ``(path, metadata)`` pairs for every indexed time series file.
+
+        :rtype: dict_items
+        """
         return self.__ts_to_meta_map.items()
 
     def values(self):
+        """
+        Returns the metadata of every indexed time series file.
+
+        :rtype: dict_values
+        """
         return self.__ts_to_meta_map.values()
 
     def keys(self):
+        """
+        Returns the paths of every indexed time series file.
+
+        :rtype: dict_keys
+        """
         return self.__ts_to_meta_map.keys()
 
     def include(self, glob_patterns):
@@ -162,7 +179,7 @@ class TSInventory:
         :rtype: TSInventory
         """
         filtered_path_map = filter_by_globs(self.__ts_to_meta_map, glob_patterns, keep_matches=True)
-        logger.debug(f"Inclusive filter(s) applied: '{glob_patterns}'")
+        logger.debug("Inclusive filter(s) applied: '%s'", glob_patterns)
         return self.copy(meta_map=filtered_path_map)
 
     def exclude(self, glob_patterns):
@@ -177,7 +194,7 @@ class TSInventory:
         :rtype: TSInventory
         """
         filtered_path_map = filter_by_globs(self.__ts_to_meta_map, glob_patterns, keep_matches=False)
-        logger.debug(f"Exclusive filter(s) applied: '{glob_patterns}'")
+        logger.debug("Exclusive filter(s) applied: '%s'", glob_patterns)
         return self.copy(meta_map=filtered_path_map)
 
     def is_pulled(self):
@@ -242,11 +259,11 @@ class TSInventory:
         :returns: The removed ``{path: metadata}`` entries.
         :rtype: dict
         """
-        logger.debug(f"Validating metadata...")
+        logger.debug("Validating metadata...")
         new_map, removed = split_valid(self.__ts_to_meta_map, is_gents_output)
         self.__ts_to_meta_map = new_map
         self.__ts_var_map = None
-        logger.debug(f"{len(new_map)} files validated ({len(removed)} removed).")
+        logger.debug("%s files validated (%s removed).", len(new_map), len(removed))
         return removed
 
     def pull_metadata(self, check_valid=True, raise_errors=False, show_progress=True):
@@ -266,7 +283,7 @@ class TSInventory:
         :returns: This inventory, mutated in place, so the call can be chained.
         :rtype: TSInventory
         """
-        logger.info(f"Pulling metadata...")
+        logger.info("Pulling metadata...")
         self.__ts_var_map = None
         paths = list(self.__ts_to_meta_map.keys())
 
@@ -277,8 +294,10 @@ class TSInventory:
         if check_valid:
             self.check_validity()
         else:
-            logger.warning(f"Skipping metadata validation may result in errors due to missing attributes or coordinate data.")
-        logger.info(f"Metadata pulled.")
+            logger.warning(
+                "Skipping metadata validation may result in errors due to missing attributes or coordinate data."
+            )
+        logger.info("Metadata pulled.")
         return self
 
     def get_variables(self):
@@ -303,12 +322,14 @@ class TSInventory:
                 primary_vars = meta.get_primary_variables()
 
                 if len(primary_vars) == 0:
-                    logger.warning(f"No primary variable found for '{path}', skipping.")
+                    logger.warning("No primary variable found for '%s', skipping.", path)
                     continue
                 if len(primary_vars) > 1:
                     logger.warning(
-                        f"Expected one primary variable per time series file, "
-                        f"found {len(primary_vars)} in '{path}': {primary_vars}."
+                        "Expected one primary variable per time series file, found %s in '%s': %s.",
+                        len(primary_vars),
+                        path,
+                        primary_vars,
                     )
 
                 timestep_label = get_meta_timestep_label(meta)
@@ -319,7 +340,7 @@ class TSInventory:
                 key: [path for path, _ in sorted(entries, key=lambda entry: get_time_sort_key(entry[1]))]
                 for key, entries in grouped.items()
             }
-            logger.debug(f"{len(self.__ts_var_map)} variable groups built.")
+            logger.debug("%s variable groups built.", len(self.__ts_var_map))
         else:
             pruned = {}
             reassign = False

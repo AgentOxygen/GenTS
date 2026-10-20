@@ -120,7 +120,6 @@ class Report:
         :type reason: str
         """
         self.results.append(CheckResult(description, SKIP, reason))
-        return None
 
     def count(self, status):
         """Number of results with the given status."""
@@ -155,7 +154,7 @@ class Report:
         Carries enough provenance to interpret later: which model specification,
         which version of it, and which GenTS produced the output.
         """
-        from gents.utils import get_version
+        from gents.utils import get_version  # pylint: disable=import-outside-toplevel  # lazy: keep conformity free of GenTS internals at import time
 
         return {
             "model": self.model,
@@ -180,7 +179,7 @@ class Report:
 
     def format_text(self):
         """Renders the run as a human-readable console report."""
-        from gents.utils import get_version
+        from gents.utils import get_version  # pylint: disable=import-outside-toplevel  # lazy: keep conformity free of GenTS internals at import time
 
         lines = [
             "",

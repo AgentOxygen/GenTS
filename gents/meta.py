@@ -6,9 +6,12 @@ Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
 """
 import logging
-import numpy as np
+from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
+
+import numpy as np
 from cftime import num2date
+
 from gents.datastore import GenTSDataStore
 from gents.utils import ProgressBar
 
@@ -16,10 +19,10 @@ logger = logging.getLogger(__name__)
 
 
 def is_var_secondary(variable,
-                     secondary_vars: list = ["time_bnds", "time_bnd", "time_bounds", "time_bound"],
-                     secondary_dims: list = ["nbnd", "chars", "string_length", "hist_interval"],
+                     secondary_vars: Sequence[str] = ("time_bnds", "time_bnd", "time_bounds", "time_bound"),
+                     secondary_dims: Sequence[str] = ("nbnd", "chars", "string_length", "hist_interval"),
                      max_num_dims: int = 1,
-                     primary_dims: list = ["time"]) -> bool:
+                     primary_dims: Sequence[str] = ("time",)) -> bool:
     """
     Classifies a netCDF variable as secondary or primary.
 
@@ -35,13 +38,13 @@ def is_var_secondary(variable,
     :param variable: netCDF4 variable object to classify.
     :type variable: netCDF4._netCDF4.Variable
     :param secondary_vars: Variable names that are unconditionally secondary.
-    :type secondary_vars: list
+    :type secondary_vars: Sequence[str]
     :param secondary_dims: Dimension names whose presence makes a variable secondary.
-    :type secondary_dims: list
+    :type secondary_dims: Sequence[str]
     :param max_num_dims: Dimension count at or below which a variable is secondary.
     :type max_num_dims: int
     :param primary_dims: Dimension names whose presence keeps a variable primary.
-    :type primary_dims: list
+    :type primary_dims: Sequence[str]
     :returns: ``True`` if the variable is secondary, ``False`` if primary.
     :rtype: bool
     """
@@ -103,7 +106,7 @@ def get_time_variables_names(ds):
             time_bnds_eqv = var_name
         elif lowercase_name == 'time_bound':
             time_bnds_eqv = var_name
-    
+
     return time_eqv, time_bnds_eqv
 
 
@@ -169,7 +172,10 @@ class netCDFMeta:
             self.__time_vals = np.array([self.__time_vals])
 
         if 'calendar' not in ds[time_eqv].ncattrs() or 'units' not in ds[time_eqv].ncattrs():
-            raise AttributeError(f"Unable to pull 'calendar' and/or 'units' attributes from '{time_eqv}' time-equivalent variable. Path: {self.__path}")
+            raise AttributeError(
+                f"Unable to pull 'calendar' and/or 'units' attributes from '{time_eqv}' time-equivalent variable. "
+                f"Path: {self.__path}"
+            )
 
         self.__time_units = ds[time_eqv].units
         self.__time_calendar = ds[time_eqv].calendar
@@ -187,7 +193,10 @@ class netCDFMeta:
             elif len(self.__time_bounds_vals.shape) == 1:
                 self.__time_bounds_vals = np.array([self.__time_bounds_vals])
             elif len(self.__time_bounds_vals.shape) == 0:
-                raise ValueError(f"Found a 'time_bounds' equivalent variable, but it was a single value. It must have two values (one for each boundary). Path: {self.__path}")
+                raise ValueError(
+                    "Found a 'time_bounds' equivalent variable, but it was a single value. It must have two values "
+                    f"(one for each boundary). Path: {self.__path}"
+                )
 
             try:
                 self.__time_bounds_units = ds[time_bnds_eqv].units
@@ -473,9 +482,9 @@ class netCDFMeta:
         """
         if self.get_float_time_bounds() is None and self.get_float_times() is None:
             return False
-        elif len(self.get_primary_variables()) + len(self.get_secondary_variables()) == 0:
+        if len(self.get_primary_variables()) + len(self.get_secondary_variables()) == 0:
             return False
-        elif "gents_version" in self.get_attributes():
+        if "gents_version" in self.get_attributes():
             return False
         return True
 
@@ -554,7 +563,7 @@ def read_meta_map(paths, factory, num_processes=1, raise_errors=False, show_prog
                 try:
                     loaded[path] = future.result()
                 except Exception as exc:
-                    logger.warning(f"Failed to load metadata for {path}: {exc}", exc_info=True)
+                    logger.warning("Failed to load metadata for %s: %s", path, exc, exc_info=True)
                     if raise_errors:
                         raise
                 finally:
@@ -564,7 +573,7 @@ def read_meta_map(paths, factory, num_processes=1, raise_errors=False, show_prog
             try:
                 loaded[path] = factory(path)
             except Exception as exc:
-                logger.warning(f"Failed to load metadata for {path}: {exc}", exc_info=True)
+                logger.warning("Failed to load metadata for %s: %s", path, exc, exc_info=True)
                 if raise_errors:
                     raise
             finally:
@@ -594,5 +603,5 @@ def split_valid(meta_map, is_valid_fn):
             kept[path] = meta
         else:
             removed[path] = meta
-            logger.warning(f"Could not pull valid/complete metadata for '{path}'.")
+            logger.warning("Could not pull valid/complete metadata for '%s'.", path)
     return kept, removed

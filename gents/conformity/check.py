@@ -123,7 +123,7 @@ def main():
     print(report.format_text())
 
     if args.json_path is not None:
-        with open(args.json_path, "w") as file:
+        with open(args.json_path, "w", encoding="utf-8") as file:
             json.dump(report.to_dict(), file, indent=2)
         print(f"  Report written to {args.json_path}\n")
 

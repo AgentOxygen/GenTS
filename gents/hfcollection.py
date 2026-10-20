@@ -5,17 +5,18 @@ Discovery, filtering, grouping and slicing of model history files.
 Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
 """
-from gents.meta import get_meta_from_path, read_meta_map, split_valid
-from gents.utils import filter_by_globs, LOG_LEVEL_IO_WARNING
-from cftime import num2date
-from pathlib import Path
-import numpy as np
-import os
 import fnmatch
-import cftime
-import warnings
 import logging
-import copy
+import os
+import warnings
+from pathlib import Path
+
+import cftime
+import numpy as np
+from cftime import num2date
+
+from gents.meta import get_meta_from_path, read_meta_map, split_valid
+from gents.utils import LOG_LEVEL_IO_WARNING, filter_by_globs
 
 logging.captureWarnings(True)
 logger = logging.getLogger(__name__)
@@ -73,7 +74,7 @@ def calculate_year_slices(slice_size_years, min_year, max_year):
         ranges.append((int(year), int(year+slice_size_years-1)))
         if year >= max_year or year+slice_size_years-1 >= max_year:
             break
-    
+
     return ranges
 
 
@@ -191,7 +192,10 @@ def get_aligned_times(meta, time_alignment_method="midpoint"):
     elif time_alignment_method == "end_bound":
         times = bnds[:, 1]
     else:
-        raise ValueError(f"'{time_alignment_method}' is an invalid time-alignment method. Valid methods are ['direct_time', 'midpoint', 'start_bound', 'end_bound']")
+        raise ValueError(
+            f"'{time_alignment_method}' is an invalid time-alignment method. Valid methods are ['direct_time', "
+            "'midpoint', 'start_bound', 'end_bound']"
+        )
     return times, meta.get_time_bounds_units(), meta.get_time_bounds_calendar()
 
 
@@ -216,10 +220,8 @@ def get_year_bounds(hf_to_meta_map, time_alignment_method="midpoint"):
         # extremes need decoding per file.
         times, units, calendar = get_aligned_times(meta, time_alignment_method)
         extremes = np.atleast_1d(num2date(np.array([np.min(times), np.max(times)]), units=units, calendar=calendar))
-        if extremes[-1].year > max_year:
-            max_year = extremes[-1].year
-        if extremes[0].year < min_year:
-            min_year = extremes[0].year
+        max_year = max(max_year, extremes[-1].year)
+        min_year = min(min_year, extremes[0].year)
     return min_year, max_year
 
 
@@ -287,10 +289,7 @@ def is_ds_within_years(ds_meta, min_year, max_year):
     else:
         year = ds_meta.get_cftimes()[0]
 
-    if min_year <= year <= max_year:
-        return True
-    else:
-        return False
+    return min_year <= year <= max_year
 
 
 def filter_by_variables(meta_datasets):
@@ -307,8 +306,8 @@ def filter_by_variables(meta_datasets):
     :rtype: tuple[list or None, list or None]
     """
     variable_sets = {}
-    for index in range(len(meta_datasets)):
-        var_set = meta_datasets[index].get_variables()
+    for index, meta in enumerate(meta_datasets):
+        var_set = meta.get_variables()
         var_set.sort()
 
         if str(var_set) in variable_sets:
@@ -318,26 +317,24 @@ def filter_by_variables(meta_datasets):
 
     majority = None
     others = None
-    
+
     if len(variable_sets) > 1:
-        counts = []
-        for var_set in variable_sets:
-            counts.append(len(variable_sets[var_set]))
+        counts = [len(indices) for indices in variable_sets.values()]
 
         majority_index = np.argmax(counts)
         if np.sum(counts[majority_index] == np.array(counts)) == 1:
             majority_set = list(variable_sets)[majority_index]
-    
+
             majority = []
             others = []
-            for index in range(len(meta_datasets)):
+            for index, meta in enumerate(meta_datasets):
                 if index in variable_sets[majority_set]:
-                    majority.append(meta_datasets[index])
+                    majority.append(meta)
                 else:
-                    others.append(meta_datasets[index])
+                    others.append(meta)
     else:
         majority = meta_datasets
-    
+
     return (majority, others)
 
 
@@ -356,7 +353,7 @@ def sort_metas_by_time(metas):
         key=lambda meta: meta.decode_time_values(np.ma.getdata(np.atleast_1d(meta.get_float_times()))[0]),
     )
 
-    
+
 def check_groups_by_variables(sliced_groups):
     """
     Drops files whose variable set differs from the majority of their group.
@@ -377,9 +374,18 @@ def check_groups_by_variables(sliced_groups):
             filtered_sliced_groups[group] = sort_metas_by_time(majority)
             if others is not None:
                 for meta_ds in others:
-                    logger.log(LOG_LEVEL_IO_WARNING, f"Dataset has inconsistent variable list with directory group: {meta_ds.get_path()}")
+                    logger.log(
+                        LOG_LEVEL_IO_WARNING,
+                        "Dataset has inconsistent variable list with directory group: %s",
+                        meta_ds.get_path(),
+                    )
         else:
-            logger.log(LOG_LEVEL_IO_WARNING, f"Unable to determine majority dataset, check variable configurations between directory groups, group ID: {group}")
+            logger.log(
+                LOG_LEVEL_IO_WARNING,
+                "Unable to determine majority dataset, check variable configurations between directory groups, group "
+                "ID: %s",
+                group,
+            )
     return filtered_sliced_groups
 
 
@@ -411,29 +417,30 @@ def merge_fragmented_groups(hf_groups, hf_meta_map):
             fragmented_groups[pattern] = hf_groups[pattern]
 
     if len(fragmented_groups) > 0:
-        num_fragmented_files = sum([len(fragmented_groups[pattern]) for pattern in fragmented_groups])
-        logger.info(f"Found {num_fragmented_files} spatially fragmented files in {len(fragmented_groups)} groups.")
+        num_fragmented_files = sum(len(paths) for paths in fragmented_groups.values())
+        logger.info("Found %s spatially fragmented files in %s groups.", num_fragmented_files, len(fragmented_groups))
 
     dim_hashes = {}
-    for pattern in fragmented_groups:
-        init_meta = hf_meta_map[fragmented_groups[pattern][0]]
+    for paths in fragmented_groups.values():
+        init_meta = hf_meta_map[paths[0]]
         dims = init_meta.get_dim_bounds()
         dims = {variable: dims[variable] for variable in dims if variable != init_meta.get_time_var_name()}
         dims_hash = str(dims)
 
         if dims_hash not in dim_hashes:
             dim_hashes[dims_hash] = []
-        
-        for path in fragmented_groups[pattern]:
-            dim_hashes[dims_hash].append(path)
 
-    for dim_hash in dim_hashes:
-        paths = dim_hashes[dim_hash]
-        label = str(paths[0]).split(".nc")[0] + "*"
+        dim_hashes[dims_hash].extend(paths)
+
+    for paths in dim_hashes.values():
+        label = str(paths[0]).split(".nc", maxsplit=1)[0] + "*"
         if label not in new_groups:
             new_groups[label] = paths
         else:
-            raise KeyError(f"Fragmentation merge failed! History file group '{label}' already exists. Try filtering to fragmented files only to minimize confusion with non-fragmented history files.")
+            raise KeyError(
+                f"Fragmentation merge failed! History file group '{label}' already exists. Try filtering to fragmented "
+                "files only to minimize confusion with non-fragmented history files."
+            )
 
     return new_groups
 
@@ -453,7 +460,17 @@ class HFCollection:
     tree.
     """
 
-    def __init__(self, hf_dir, num_processes=1, meta_map=None, hf_groups=None, step_map=None, hf_glob_pattern="*.nc*", dask_client=None, multistep_slice_map=None):
+    def __init__(
+        self,
+        hf_dir,
+        num_processes=1,
+        meta_map=None,
+        hf_groups=None,
+        step_map=None,
+        hf_glob_pattern="*.nc*",
+        dask_client=None,
+        multistep_slice_map=None,
+    ):
         """
         Discovers history files under ``hf_dir``, without reading their metadata.
 
@@ -483,7 +500,12 @@ class HFCollection:
             an existing directory, or no file under it matches the pattern.
         """
         if dask_client is not None:
-            warnings.warn("Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism or reference the ReadTheDocs for using Dask..", DeprecationWarning, stacklevel=2)
+            warnings.warn(
+                "Dask is no longer implemented in GenTS. Use the 'num_processes' argument to enable parallelism or "
+                "reference the ReadTheDocs for using Dask..",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         # Checked before abspath, which would turn "" into the current directory.
         if meta_map is None and not os.path.isdir(hf_dir):
@@ -498,8 +520,8 @@ class HFCollection:
             if len(meta_map) == 0:
                 raise FileNotFoundError(f"No files matching '{hf_glob_pattern}' found in '{hf_dir}'")
             if hf_groups is None:
-                logger.info(f"Initialized HFCollection at '{hf_dir}'")
-                logger.info(f"{len(meta_map)} netCDF files found.")
+                logger.info("Initialized HFCollection at '%s'", hf_dir)
+                logger.info("%s netCDF files found.", len(meta_map))
 
         self.__hf_to_meta_map = meta_map
         self.__pulled = False
@@ -525,12 +547,27 @@ class HFCollection:
         return len(self.__hf_to_meta_map)
 
     def items(self):
+        """
+        Returns ``(path, metadata)`` pairs for every history file in the collection.
+
+        :rtype: dict_items
+        """
         return self.__hf_to_meta_map.items()
 
     def values(self):
+        """
+        Returns the metadata of every history file; entries are ``None`` until pulled.
+
+        :rtype: dict_values
+        """
         return self.__hf_to_meta_map.values()
 
     def keys(self):
+        """
+        Returns the paths of every history file in the collection.
+
+        :rtype: dict_keys
+        """
         return self.__hf_to_meta_map.keys()
 
     def is_pulled(self):
@@ -561,10 +598,9 @@ class HFCollection:
         self.check_pulled()
         if hf_path in self.__hf_multistep_slices:
             return self.__hf_multistep_slices[hf_path]
-        elif hf_path not in self.__hf_to_meta_map:
+        if hf_path not in self.__hf_to_meta_map:
             raise KeyError(f"History file '{hf_path}' not found in HFCollection")
-        else:
-            return None
+        return None
 
     def get_timestep_delta(self, hf_path):
         """
@@ -631,7 +667,14 @@ class HFCollection:
             step_map = self.__hf_to_timestep_delta_map
         if multistep_slice_map is None:
             multistep_slice_map = self.__hf_multistep_slices
-        return HFCollection(self.__hf_dir, num_processes=num_processes, meta_map=meta_map, hf_groups=hf_groups, step_map=step_map, multistep_slice_map=multistep_slice_map)
+        return HFCollection(
+            self.__hf_dir,
+            num_processes=num_processes,
+            meta_map=meta_map,
+            hf_groups=hf_groups,
+            step_map=step_map,
+            multistep_slice_map=multistep_slice_map,
+        )
 
     def sort_along_time(self):
         """
@@ -642,9 +685,9 @@ class HFCollection:
         self.check_pulled()
 
         sorted_map = dict(sorted(self.__hf_to_meta_map.items(), key=lambda item: item[1].get_float_times()[0]))
-        logger.info(f"Sorted along time.")
+        logger.info("Sorted along time.")
         return self.copy(meta_map=sorted_map)
-    
+
     def pull_metadata(self, check_valid=True, raise_errors=False, show_progress=True):
         """
         Reads the header of every history file in the collection.
@@ -669,7 +712,7 @@ class HFCollection:
         :raises ValueError: If any group holds fewer than two time steps in total,
             regardless of ``raise_errors``.
         """
-        logger.info(f"Pulling metadata...")
+        logger.info("Pulling metadata...")
         paths = list(self.__hf_to_meta_map.keys())
 
         self.__hf_to_meta_map.update(read_meta_map(
@@ -679,8 +722,10 @@ class HFCollection:
         if check_valid:
             self.check_validity()
         else:
-            logger.warning(f"Skipping metadata validation may result in errors due to missing attributes or coordinate data.")
-        logger.info(f"Metadata pulled.")
+            logger.warning(
+                "Skipping metadata validation may result in errors due to missing attributes or coordinate data."
+            )
+        logger.info("Metadata pulled.")
 
         if self.__hf_to_timestep_delta_map is None:
             self.__hf_to_timestep_delta_map = {}
@@ -702,12 +747,12 @@ class HFCollection:
         :returns: The removed ``{path: metadata}`` entries.
         :rtype: dict
         """
-        logger.debug(f"Validating metadata...")
+        logger.debug("Validating metadata...")
         new_map, removed = split_valid(self.__hf_to_meta_map, lambda meta: meta.is_valid())
         self.__hf_to_meta_map = new_map
-        logger.debug(f"{len(new_map)} files valdiated ({len(removed)} removed).")
+        logger.debug("%s files valdiated (%s removed).", len(new_map), len(removed))
         return removed
-    
+
     def include_patterns(self, glob_patterns):
         """
         .. deprecated::
@@ -737,7 +782,7 @@ class HFCollection:
         :rtype: HFCollection
         """
         filtered_path_map = filter_by_globs(self.__hf_to_meta_map, glob_patterns, keep_matches=True)
-        logger.debug(f"Inclusive filter(s) applied: '{glob_patterns}'")
+        logger.debug("Inclusive filter(s) applied: '%s'", glob_patterns)
         return self.copy(meta_map=filtered_path_map)
 
     def exclude(self, glob_patterns):
@@ -752,10 +797,10 @@ class HFCollection:
         :rtype: HFCollection
         """
         filtered_path_map = filter_by_globs(self.__hf_to_meta_map, glob_patterns, keep_matches=False)
-        logger.debug(f"Exclusive filter(s) applied: '{glob_patterns}'")
+        logger.debug("Exclusive filter(s) applied: '%s'", glob_patterns)
         return self.copy(meta_map=filtered_path_map)
 
-    def include_years(self, start_year, end_year, glob_patterns=["*"]):
+    def include_years(self, start_year, end_year, glob_patterns=("*",)):
         """
         Returns a new collection holding only files within a year range.
 
@@ -778,7 +823,9 @@ class HFCollection:
         """
         return self.include_time(start_year, end_year + 1, glob_patterns=glob_patterns)
 
-    def include_time(self, start_year, end_year, start_month=1, start_day=1, end_month=1, end_day=1, glob_patterns=["*"]):
+    def include_time(
+        self, start_year, end_year, start_month=1, start_day=1, end_month=1, end_day=1, glob_patterns=("*",)
+    ):
         """
         Returns a new collection holding only files within a date range.
 
@@ -805,7 +852,7 @@ class HFCollection:
         :type glob_patterns: list[str] or str
         :rtype: HFCollection
         """
-        if type(glob_patterns) is str:
+        if isinstance(glob_patterns, str):
             glob_patterns = [glob_patterns]
 
         self.check_pulled()
@@ -827,13 +874,30 @@ class HFCollection:
                 ref_units = meta_ds.get_time_units()
                 ref_calendar = meta_ds.get_time_calendar()
 
-            lower_num = -np.inf if start_year is None else get_time_boundary_num(ref_units, ref_calendar, start_year, start_month, start_day)
-            upper_num = np.inf if end_year is None else get_time_boundary_num(ref_units, ref_calendar, end_year, end_month, end_day)
+            lower_num = (
+                -np.inf
+                if start_year is None
+                else get_time_boundary_num(ref_units, ref_calendar, start_year, start_month, start_day)
+            )
+            upper_num = (
+                np.inf
+                if end_year is None
+                else get_time_boundary_num(ref_units, ref_calendar, end_year, end_month, end_day)
+            )
 
             if lower_num <= midpoint < upper_num:
                 filtered_path_map[path] = self.__hf_to_meta_map[path]
 
-        logger.debug(f"Filtered from {start_year}-{start_month:02d}-{start_day:02d} to {end_year}-{end_month:02d}-{end_day:02d} applied to following glob patterns: '{glob_patterns}'")
+        logger.debug(
+            "Filtered from %s-%02d-%02d to %s-%02d-%02d applied to following glob patterns: '%s'",
+            start_year,
+            start_month,
+            start_day,
+            end_year,
+            end_month,
+            end_day,
+            glob_patterns,
+        )
         return self.copy(meta_map=filtered_path_map)
 
     def get_groups(self, check_fragmented=True):
@@ -850,7 +914,7 @@ class HFCollection:
         """
         if self.__hf_groups is None:
             self.__hf_groups = sort_hf_groups(list(self.__hf_to_meta_map.keys()))
-        
+
             if check_fragmented:
                 self.check_pulled()
                 self.__hf_groups = merge_fragmented_groups(self.__hf_groups, self.__hf_to_meta_map)
@@ -894,7 +958,7 @@ class HFCollection:
         :raises ValueError: If ``time_alignment_method`` is not one of those four,
             or if ``pattern`` matches a group that a previous call already sliced.
         """
-        if type(pattern) is str:
+        if isinstance(pattern, str):
             pattern = [pattern]
 
         sliced_groups = {}
@@ -919,20 +983,22 @@ class HFCollection:
                 continue
 
             group_meta_map = {path: self.__hf_to_meta_map[path] for path in hf_paths}
-            
+
             min_year, max_year = get_year_bounds(group_meta_map, time_alignment_method)
             if start_year is not None:
                 if start_year > min_year:
                     min_year -= (min_year - start_year) % slice_size_years
                 else:
                     min_year = start_year
-            
+
             time_slices = calculate_year_slices(slice_size_years, min_year, max_year)
 
             hf_slices = {}
             boundary_cache = {}
             for hf_path in hf_paths:
-                times, ref_units, ref_calendar = get_aligned_times(self.__hf_to_meta_map[hf_path], time_alignment_method)
+                times, ref_units, ref_calendar = get_aligned_times(
+                    self.__hf_to_meta_map[hf_path], time_alignment_method
+                )
 
                 for time_slice in time_slices:
                     cache_key = (time_slice, ref_units, ref_calendar)
@@ -958,10 +1024,15 @@ class HFCollection:
                         if start_index != 0 or times[-1] >= upper_num:
                             if hf_path in self.__hf_multistep_slices:
                                 assert f"{time_slice[0]}-{time_slice[1]}" not in self.__hf_multistep_slices[hf_path]
-                                self.__hf_multistep_slices[hf_path][f"{time_slice[0]}-{time_slice[1]}"] = (start_index, end_index)
+                                self.__hf_multistep_slices[hf_path][f"{time_slice[0]}-{time_slice[1]}"] = (
+                                    start_index,
+                                    end_index,
+                                )
                             else:
-                                self.__hf_multistep_slices[hf_path] = {f"{time_slice[0]}-{time_slice[1]}": (start_index, end_index)}
-            for time_slice in hf_slices:
-                sliced_groups[f"{group}[sorting_pivot]{time_slice[0]}-{time_slice[1]}"] = hf_slices[time_slice]
-        logger.debug(f"Slicing groups into {slice_size_years} year long slices for '{pattern}'.")
+                                self.__hf_multistep_slices[hf_path] = {
+                                    f"{time_slice[0]}-{time_slice[1]}": (start_index, end_index)
+                                }
+            for time_slice, slice_paths in hf_slices.items():
+                sliced_groups[f"{group}[sorting_pivot]{time_slice[0]}-{time_slice[1]}"] = slice_paths
+        logger.debug("Slicing groups into %s year long slices for '%s'.", slice_size_years, pattern)
         return self.copy(hf_groups=sliced_groups)
