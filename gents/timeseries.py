@@ -90,10 +90,10 @@ def check_timeseries_conform(ts_path: str):
     :rtype: bool
     """
     with GenTSDataStore(ts_path, mode="r") as ts_ds:
-        if list(ts_ds["time"].chunking()) != list(ts_ds["time"].shape):
+        if list(ts_ds["time"].chunking()) != list(ts_ds["time"].shape) and ts_ds["time"].chunking() != "contiguous":
             return False
         for variable in ts_ds.variables:
-            if list(ts_ds[variable].chunking()) == list(ts_ds[variable].shape):
+            if list(ts_ds[variable].chunking()) == list(ts_ds[variable].shape) or ts_ds[variable].chunking() == "contiguous":
                 continue
 
             if "time" not in ts_ds[variable].dimensions or len(ts_ds[variable].shape) == 1:

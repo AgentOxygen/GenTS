@@ -89,6 +89,18 @@ def test_conform_check(simple_case):
     assert check_timeseries_conform(ts_path)
 
 
+def test_conform_check_contiguous_scalar(tmp_path):
+    """check_timeseries_conform() accepts contiguous variables, which netCDF4 reports as chunking() == "contiguous"."""
+    from netCDF4 import Dataset
+    ts_path = f"{tmp_path}/contiguous.nc"
+    with Dataset(ts_path, "w") as ds:
+        ds.createDimension("time", 4)
+        ds.createVariable("time", "f8", ("time",))[:] = range(4)
+        ds.createVariable("scalar", "f8", ())[...] = 1.0
+        assert ds["scalar"].chunking() == "contiguous"
+    assert check_timeseries_conform(ts_path)
+
+
 def test_tscollection_copy(simple_case):
     """All TSCollection modifier operations return new instances distinct from the original."""
     input_head_dir, output_head_dir = simple_case
