@@ -3,6 +3,7 @@
 ``run_gents`` -- command line driver for the history file to time series pipeline.
 """
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -11,6 +12,8 @@ import yaml
 from gents.hfcollection import HFCollection
 from gents.timeseries import DEFAULT_MEMORY_LIMIT_BYTES, TSCollection
 from gents.utils import enable_logging, get_version, log_hfcollection_info, log_tscollection_info
+
+HF_MANIFEST_NAME = "gents_manifest_hf.json"
 
 
 def check_config(config_dict):
@@ -157,6 +160,29 @@ def parse_arguments():
         default=None,
         help="Compression level to use. (0-9, default 4; ignored if --compression is not set)"
     )
+    parser.add_argument(
+        "--no-manifest",
+        dest="no_manifest",
+        action="store_true",
+        help="Do not read, create, or replace metadata manifests. By default a manifest of history file metadata "
+             f"('{HF_MANIFEST_NAME}', in the output directory) is read to skip unchanged files, and written after "
+             "metadata is pulled (not on --dryrun unless --manifest-only is given)."
+    )
+    parser.add_argument(
+        "--hf-manifest",
+        dest="hf_manifest",
+        type=str,
+        default=None,
+        help="Path to the history file metadata manifest to use instead of the default in the output directory. "
+             "Cannot be combined with --no-manifest."
+    )
+    parser.add_argument(
+        "--manifest-only",
+        dest="manifest_only",
+        action="store_true",
+        help="Dry run that still creates or replaces the history file metadata manifest, so a later run can reuse "
+             "it. No time series files are generated. Cannot be combined with --no-manifest."
+    )
     return parser.parse_args()
 
 
@@ -180,6 +206,12 @@ def main():
 
     if args.model is not None:
         args.model = args.model.lower()
+
+    if args.no_manifest and args.hf_manifest is not None:
+        raise ValueError("--hf-manifest cannot be combined with --no-manifest.")
+
+    if args.manifest_only and args.no_manifest:
+        raise ValueError("--manifest-only cannot be combined with --no-manifest.")
 
     if args.compression is not None and args.level is None:
         raise ValueError(f"Compression '{args.compression}' selected, please specifiy a level using `--level`")
@@ -206,6 +238,9 @@ def main():
         print(f"  Compression method              : {args.compression}")
         print(f"  Compression level               : {args.level}")
         print(f"  Memory limit (GB)               : {args.memory_limit_gb}")
+        print(f"  Use manifests                   : {not args.no_manifest}")
+        print(f"  HF manifest                     : {args.hf_manifest}")
+        print(f"  Manifest only (dry run)         : {args.manifest_only}")
         enable_logging(verbose=True)
 
     config_dir = Path(__file__).parent / "configs"
@@ -245,6 +280,13 @@ def main():
     if len(hf_include) > 0:
         hfc = hfc.include(hf_include)
     hfc = hfc.exclude(hf_exclude)
+
+    if not args.no_manifest:
+        hf_manifest = args.hf_manifest or str(Path(args.outputdir) / HF_MANIFEST_NAME)
+        hfc = hfc.pull_metadata(manifest_path=hf_manifest)
+        if not args.dryrun or args.manifest_only:
+            os.makedirs(Path(hf_manifest).parent, exist_ok=True)
+            hfc.save_manifest(hf_manifest, overwrite=True)
 
     slice_batches = yaml_config["input_hf"].get("slicing", [])
     if not args.append or len(slice_batches) == 0:
@@ -289,7 +331,7 @@ def main():
 
     tsc = tsc.add_attrs({"gents_command": " ".join(sys.argv)})
 
-    if not args.dryrun:
+    if not (args.dryrun or args.manifest_only):
         tsc.execute(no_data=args.no_data, memory_limit_bytes=memory_limit_bytes)
     else:
         print(f"Dry run: {len(tsc)} timeseries files would be generated.")

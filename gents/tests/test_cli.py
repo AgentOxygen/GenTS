@@ -350,3 +350,129 @@ def test_cli_align_method_used_for_slicing_and_names(tmp_path):
 
     ranges = sorted(path.name.split(".")[-2] for path in find_files(output_dir, "*.nc"))
     assert ranges == ["185002-185012", "185101-185112", "185201-185201"]
+
+
+def test_parse_manifest_flags():
+    """Manifests are on by default; --no-manifest and --hf-manifest are opt-outs/overrides."""
+    with patch.object(sys, "argv", ["run_gents", "/data/input"]):
+        args = parse_arguments()
+    assert args.no_manifest is False and args.hf_manifest is None
+
+    with patch.object(sys, "argv", ["run_gents", "/data/input", "--no-manifest"]):
+        assert parse_arguments().no_manifest is True
+    with patch.object(sys, "argv", ["run_gents", "/data/input", "--hf-manifest", "/m/hf.json"]):
+        assert parse_arguments().hf_manifest == "/m/hf.json"
+
+
+def test_main_no_manifest_with_hf_manifest_raises():
+    """Asking for a manifest path while disabling manifests is contradictory."""
+    with patch.object(sys, "argv", ["run_gents", "/data/input", "--no-manifest", "--hf-manifest", "x.json"]):
+        with pytest.raises(ValueError, match="cannot be combined"):
+            main()
+
+
+def _read_output(output_dir):
+    """{file name: (global attrs minus gents_command, {variable: (data, mask)})} for every time series file."""
+    contents = {}
+    for path in find_files(output_dir, "*.nc"):
+        with GenTSDataStore(path, "r") as ts_ds:
+            attrs = {key: ts_ds.getncattr(key) for key in ts_ds.ncattrs() if key != "gents_command"}
+            variables = {
+                name: (np.ma.getdata(ts_ds[name][:]), np.ma.getmaskarray(ts_ds[name][:]))
+                for name in ts_ds.variables
+            }
+        contents[path.name] = (attrs, variables)
+    return contents
+
+
+def _assert_same_output(left, right):
+    assert left.keys() == right.keys()
+    for name in left:
+        left_attrs, left_vars = left[name]
+        right_attrs, right_vars = right[name]
+        assert left_attrs == right_attrs
+        assert left_vars.keys() == right_vars.keys()
+        for var in left_vars:
+            np.testing.assert_array_equal(left_vars[var][0], right_vars[var][0])
+            np.testing.assert_array_equal(left_vars[var][1], right_vars[var][1])
+
+
+def test_cli_manifest_flags_do_not_change_output(simple_case, tmp_path):
+    """Default, --no-manifest and --hf-manifest runs all write the same time series."""
+    input_head_dir, _ = simple_case
+    custom_manifest = tmp_path / "elsewhere" / "custom_hf.json"
+    runs = {
+        "default": ([], tmp_path / "default"),
+        "no_manifest": (["--no-manifest"], tmp_path / "no_manifest"),
+        "custom_path": (["--hf-manifest", str(custom_manifest)], tmp_path / "custom_path"),
+    }
+    for flags, output_dir in runs.values():
+        argv = ["run_gents", str(input_head_dir), "-o", str(output_dir)] + flags
+        with patch.object(sys, "argv", argv):
+            main()
+
+    reference = _read_output(runs["no_manifest"][1])
+    assert len(reference) == SIMPLE_NUM_VARS
+    for label in ("default", "custom_path"):
+        _assert_same_output(_read_output(runs[label][1]), reference)
+
+    default_manifest = tmp_path / "default" / "gents_manifest_hf.json"
+    assert default_manifest.exists()
+    assert not (tmp_path / "no_manifest" / "gents_manifest_hf.json").exists()
+    assert custom_manifest.exists()
+    assert not (tmp_path / "custom_path" / "gents_manifest_hf.json").exists()
+
+
+def test_cli_reuses_default_manifest_without_changing_output(simple_case, tmp_path):
+    """A second run over the same output directory reuses its manifest and rewrites nothing."""
+    input_head_dir, _ = simple_case
+    output_dir = tmp_path / "out"
+    argv = ["run_gents", str(input_head_dir), "-o", str(output_dir)]
+    with patch.object(sys, "argv", argv):
+        main()
+    first = _read_output(output_dir)
+    with patch.object(sys, "argv", argv):
+        main()
+    _assert_same_output(_read_output(output_dir), first)
+
+
+def test_cli_dryrun_writes_no_manifest(simple_case, tmp_path):
+    """--dryrun reads a manifest if present but never creates or replaces one."""
+    input_head_dir, _ = simple_case
+    output_dir = tmp_path / "out"
+    with patch.object(sys, "argv", ["run_gents", str(input_head_dir), "-o", str(output_dir), "--dryrun"]):
+        main()
+    assert not output_dir.exists()
+
+
+def test_parse_manifest_only_flag():
+    """--manifest-only is off by default."""
+    with patch.object(sys, "argv", ["run_gents", "/data/input"]):
+        assert parse_arguments().manifest_only is False
+    with patch.object(sys, "argv", ["run_gents", "/data/input", "--manifest-only"]):
+        assert parse_arguments().manifest_only is True
+
+
+def test_main_manifest_only_with_no_manifest_raises():
+    """Asking for only the manifest while disabling manifests is contradictory."""
+    with patch.object(sys, "argv", ["run_gents", "/data/input", "--manifest-only", "--no-manifest"]):
+        with pytest.raises(ValueError, match="cannot be combined"):
+            main()
+
+
+def test_cli_manifest_only_writes_manifest_but_no_time_series(simple_case, tmp_path):
+    """--manifest-only leaves just the manifest, and a later normal run reuses it with unchanged output."""
+    input_head_dir, _ = simple_case
+    output_dir = tmp_path / "out"
+    base_argv = ["run_gents", str(input_head_dir), "-o", str(output_dir)]
+
+    with patch.object(sys, "argv", base_argv + ["--manifest-only"]):
+        main()
+    assert listdir(output_dir) == ["gents_manifest_hf.json"]
+
+    with patch.object(sys, "argv", base_argv):
+        main()
+    reference_dir = tmp_path / "reference"
+    with patch.object(sys, "argv", ["run_gents", str(input_head_dir), "-o", str(reference_dir), "--no-manifest"]):
+        main()
+    _assert_same_output(_read_output(output_dir), _read_output(reference_dir))
