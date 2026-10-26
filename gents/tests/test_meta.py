@@ -439,3 +439,60 @@ def test_split_valid():
     assert kept == {"a": 1}
     assert removed == {"b": 2, "c": None}
     assert meta_map == {"a": 1, "b": 2, "c": None}
+
+
+@pytest.mark.parametrize("bounds", [[[0.0, 30.0], [30.0, 60.0]], None])
+@pytest.mark.parametrize("flags", [{}, {"load_variable_attrs": False}, {"compute_dim_bounds": False},
+                                   {"load_time_bounds": False}])
+def test_netcdfmeta_dict_round_trip(tmp_path, bounds, flags):
+    """from_dict(json(to_dict())) matches the original in every field, so a new attribute can't be forgotten."""
+    import json
+    path = str(tmp_path / "test.nc")
+    dim_vals = {"lat": np.linspace(-90, 90, 3), "lon": np.linspace(-180, 180, 4)}
+    generate_history_file(path, [15.0, 45.0], bounds, dim_vals=dim_vals)
+    with GenTSDataStore(path, "r") as ds:
+        meta = netCDFMeta(ds, path, decode_dates=False, **flags)
+
+    rebuilt = netCDFMeta.from_dict(json.loads(json.dumps(meta.to_dict())))
+
+    assert rebuilt.to_dict() == meta.to_dict()
+    assert rebuilt.get_path() == path
+    assert rebuilt.get_variables() == meta.get_variables()
+    assert rebuilt.get_primary_variables() == meta.get_primary_variables()
+    assert rebuilt.get_secondary_variables() == meta.get_secondary_variables()
+    assert rebuilt.get_attributes() == meta.get_attributes()
+    assert rebuilt.get_float_times().dtype == meta.get_float_times().dtype == np.float64
+    assert not np.ma.isMaskedArray(meta.get_float_times())
+    np.testing.assert_array_equal(rebuilt.get_float_times(), meta.get_float_times())
+    assert list(rebuilt.get_cftimes()) == list(meta.get_cftimes())
+    if "load_time_bounds" not in flags or bounds is None:  # is_valid() reads bounds, which raises when not loaded
+        assert rebuilt.is_valid() == meta.is_valid()
+    for var in meta.get_variables():
+        assert rebuilt.get_variable_shapes(var) == meta.get_variable_shapes(var)
+        assert rebuilt.get_variable_dims(var) == meta.get_variable_dims(var)
+        assert rebuilt.get_variable_dtype(var) == meta.get_variable_dtype(var)
+    # Flag-gated getters must behave identically: values, or the same RuntimeError.
+    for getter in ("get_float_time_bounds", "get_dim_bounds"):
+        try:
+            expected = getattr(meta, getter)()
+        except RuntimeError:
+            with pytest.raises(RuntimeError):
+                getattr(rebuilt, getter)()
+        else:
+            assert str(getattr(rebuilt, getter)()) == str(expected)
+    if flags.get("load_variable_attrs", True):
+        for var in meta.get_variables():
+            assert rebuilt.get_variable_attrs(var).keys() == meta.get_variable_attrs(var).keys()
+    else:
+        with pytest.raises(RuntimeError):
+            rebuilt.get_variable_attrs(meta.get_variables()[0])
+
+
+def test_encode_decode_numpy_values():
+    """Numpy scalars, arrays and str dtype survive the codec with dtype intact."""
+    from gents.meta import _encode, _decode
+    scalar = _decode(_encode(np.float32(1.5)))
+    assert scalar == np.float32(1.5) and scalar.dtype == np.float32
+    f32 = _decode(_encode(np.array([0.1], dtype="f4")))
+    assert f32.dtype == np.float32 and str(f32) == str(np.array([0.1], dtype="f4"))
+    assert _decode(_encode("text")) == "text"

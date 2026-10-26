@@ -7,6 +7,7 @@ Contact: cameron.cummins@utexas.edu
 """
 import logging
 from collections.abc import Sequence
+from types import SimpleNamespace
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
@@ -110,6 +111,49 @@ def get_time_variables_names(ds):
     return time_eqv, time_bnds_eqv
 
 
+def _encode(value):
+    """
+    Converts an attribute or array value into something :mod:`json` can write.
+
+    ``str``, ``int``, ``float``, ``bool`` and ``None`` pass through so the file
+    stays readable; numpy values become ``{"nd": dtype, "v": data}`` (plus
+    ``"scalar"`` if 0-d). Values widen exactly to Python numbers and
+    :func:`_decode` casts back to ``dtype``, so e.g. a ``float32`` returns as one.
+    Masks are dropped. Lists, tuples and dicts are converted element-wise.
+
+    :param value: Value to encode.
+    :returns: A JSON-serialisable object.
+    """
+    if isinstance(value, (np.ndarray, np.generic)):
+        encoded = {"nd": np.asarray(value).dtype.str, "v": np.ma.getdata(value).tolist()}
+        if isinstance(value, np.generic):
+            encoded["scalar"] = True
+        return encoded
+    if isinstance(value, (list, tuple)):
+        return [_encode(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _encode(item) for key, item in value.items()}
+    return value
+
+
+def _decode(value):
+    """
+    Inverts :func:`_encode`. Tuples come back as lists, so restoring shapes and
+    dimension tuples is the caller's job.
+
+    :param value: A JSON-loaded object.
+    :returns: The original value.
+    """
+    if isinstance(value, dict):
+        if "nd" in value:
+            array = np.array(value["v"], dtype=value["nd"])
+            return array[()] if value.get("scalar") else array
+        return {key: _decode(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_decode(item) for item in value]
+    return value
+
+
 class netCDFMeta:
     """
     Metadata read once from a single netCDF history file and cached in memory.
@@ -164,7 +208,7 @@ class netCDFMeta:
 
         self.__time_eqv = time_eqv
         self.__time_bnds_eqv = time_bnds_eqv
-        self.__time_vals = ds[time_eqv][:]
+        self.__time_vals = np.ma.getdata(ds[time_eqv][:]).astype(np.float64)
 
         if len(self.__time_vals.shape) > 1:
             self.__time_vals = np.squeeze(self.__time_vals)
@@ -186,7 +230,7 @@ class netCDFMeta:
         self.__time_bounds_calendar = None
 
         if time_bnds_eqv and load_time_bounds:
-            self.__time_bounds_vals = ds[time_bnds_eqv][:]
+            self.__time_bounds_vals = np.ma.getdata(ds[time_bnds_eqv][:]).astype(np.float64)
 
             if len(self.__time_bounds_vals.shape) > 2:
                 self.__time_bounds_vals = np.squeeze(self.__time_bounds_vals)
@@ -505,6 +549,92 @@ class netCDFMeta:
                 f"(compute_dim_bounds=False). Path: {self.__path}"
             )
         return self.__dim_bounds
+
+    def to_dict(self):
+        """
+        Returns the minimal state needed to rebuild this object, as JSON-serialisable data.
+
+        Cached CFTime values and the primary/secondary split are left out: both
+        are recomputed by :meth:`from_dict`.
+
+        :rtype: dict
+        """
+        return {
+            "path": str(self.__path),
+            "attrs": _encode(self.__attrs),
+            "time_name": self.__time_eqv,
+            "time_vals": self.__time_vals.tolist(),
+            "time_units": self.__time_units,
+            "time_calendar": self.__time_calendar,
+            "time_bnds_name": self.__time_bnds_eqv,
+            "time_bnds_vals": None if self.__time_bounds_vals is None else self.__time_bounds_vals.tolist(),
+            "time_bnds_units": self.__time_bounds_units,
+            "time_bnds_calendar": self.__time_bounds_calendar,
+            "load_time_bounds": self.__load_time_bounds,
+            "variables": {
+                name: {
+                    "shape": list(self.__variable_shapes[name]),
+                    "dims": list(self.__variable_dims[name]),
+                    "dtype": "str" if self.__variable_dtypes[name] is str else np.dtype(self.__variable_dtypes[name]).str,
+                    "attrs": _encode(self.__variable_attrs[name]) if self.__load_variable_attrs else None,
+                }
+                for name in self.__var_names
+            },
+            "dim_bounds": _encode(self.__dim_bounds) if self.__compute_dim_bounds else None,
+        }
+
+    @classmethod
+    def from_dict(cls, state):
+        """
+        Rebuilds a ``netCDFMeta`` from :meth:`to_dict` output without opening a file.
+
+        Dates are left undecoded, as with ``decode_dates=False``.
+
+        :param state: Dictionary produced by :meth:`to_dict`, possibly via JSON.
+        :type state: dict
+        :rtype: netCDFMeta
+        """
+        meta = cls.__new__(cls)
+        meta.__path = state["path"]
+        meta.__attrs = _decode(state["attrs"])
+        meta.__time_eqv = state["time_name"]
+        meta.__time_vals = np.asarray(state["time_vals"], dtype=np.float64)
+        meta.__time_units = state["time_units"]
+        meta.__time_calendar = state["time_calendar"]
+        meta.__time_bnds_eqv = state["time_bnds_name"]
+        meta.__time_bounds_vals = (
+            None if state["time_bnds_vals"] is None else np.asarray(state["time_bnds_vals"], dtype=np.float64)
+        )
+        meta.__time_bounds_units = state["time_bnds_units"]
+        meta.__time_bounds_calendar = state["time_bnds_calendar"]
+        meta.__load_time_bounds = state["load_time_bounds"]
+        meta.__cftime_vals = None
+        meta.__cftime_bounds_vals = None
+
+        variables = state["variables"]
+        meta.__load_variable_attrs = all(var["attrs"] is not None for var in variables.values())
+        meta.__compute_dim_bounds = state["dim_bounds"] is not None
+        meta.__dim_bounds = _decode(state["dim_bounds"]) if meta.__compute_dim_bounds else {}
+
+        meta.__var_names = list(variables)
+        meta.__primary_var_names = []
+        meta.__secondary_var_names = []
+        meta.__variable_shapes = {}
+        meta.__variable_dims = {}
+        meta.__variable_dtypes = {}
+        meta.__variable_attrs = {}
+        for name, var in variables.items():
+            dims = tuple(var["dims"])
+            if is_var_secondary(SimpleNamespace(name=name, dimensions=dims)):
+                meta.__secondary_var_names.append(name)
+            else:
+                meta.__primary_var_names.append(name)
+            meta.__variable_shapes[name] = tuple(var["shape"])
+            meta.__variable_dims[name] = dims
+            meta.__variable_dtypes[name] = str if var["dtype"] == "str" else np.dtype(var["dtype"])
+            if meta.__load_variable_attrs:
+                meta.__variable_attrs[name] = _decode(var["attrs"])
+        return meta
 
 
 def get_meta_from_path(path: str):
