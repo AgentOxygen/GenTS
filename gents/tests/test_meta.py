@@ -505,9 +505,9 @@ def test_manifest_round_trip_hfcollection(simple_case):
     hf_dir, ts_dir = simple_case
     hfc = HFCollection(str(hf_dir)).pull_metadata()
     manifest = ts_dir / "manifest.json"
-    save_meta_manifest(dict(hfc.items()), manifest)
+    save_meta_manifest(dict(hfc.items()), manifest, "hf")
 
-    loaded = load_meta_manifest(manifest)
+    loaded = load_meta_manifest(manifest, "hf")
     assert set(loaded) == set(hfc.keys())
     for path, meta in hfc.items():
         assert loaded[path].to_dict() == meta.to_dict()
@@ -520,24 +520,24 @@ def test_manifest_drops_changed_and_deleted_files(simple_case):
     hf_dir, ts_dir = simple_case
     hfc = HFCollection(str(hf_dir)).pull_metadata()
     manifest = ts_dir / "manifest.json"
-    save_meta_manifest(dict(hfc.items()), manifest)
+    save_meta_manifest(dict(hfc.items()), manifest, "hf")
 
     paths = sorted(hfc.keys())
     st = os.stat(paths[0])
     os.utime(paths[0], ns=(st.st_atime_ns, st.st_mtime_ns + 1))
     paths[1].unlink()
 
-    assert set(load_meta_manifest(manifest)) == set(paths[2:])
+    assert set(load_meta_manifest(manifest, "hf")) == set(paths[2:])
 
 
 def test_manifest_unusable_gives_empty(tmp_path):
     """Missing, corrupt and wrong-version manifests give {} instead of raising."""
     from gents.meta import load_meta_manifest
-    assert load_meta_manifest(tmp_path / "absent.json") == {}
+    assert load_meta_manifest(tmp_path / "absent.json", "hf") == {}
     (tmp_path / "bad.json").write_text("{not json")
-    assert load_meta_manifest(tmp_path / "bad.json") == {}
+    assert load_meta_manifest(tmp_path / "bad.json", "hf") == {}
     (tmp_path / "old.json").write_text('{"version": 0, "entries": {}}')
-    assert load_meta_manifest(tmp_path / "old.json") == {}
+    assert load_meta_manifest(tmp_path / "old.json", "hf") == {}
 
 
 def test_manifest_skips_unpulled_and_leaves_no_temp_file(simple_case):
@@ -546,8 +546,8 @@ def test_manifest_skips_unpulled_and_leaves_no_temp_file(simple_case):
     hf_dir, ts_dir = simple_case
     hfc = HFCollection(str(hf_dir)).pull_metadata()
     manifest = ts_dir / "manifest.json"
-    save_meta_manifest({**dict(hfc.items()), hf_dir / "unpulled.nc": None}, manifest)
-    assert len(load_meta_manifest(manifest)) == len(hfc)
+    save_meta_manifest({**dict(hfc.items()), hf_dir / "unpulled.nc": None}, manifest, "hf")
+    assert len(load_meta_manifest(manifest, "hf")) == len(hfc)
     assert not (ts_dir / "manifest.json.tmp").exists()
 
 
@@ -563,5 +563,24 @@ def test_netcdfmeta_stat_taken_at_read_time(tmp_path):
 
     st = os.stat(path)
     os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1))  # file changes between read and save
-    save_meta_manifest({path: meta}, tmp_path / "manifest.json")
-    assert load_meta_manifest(tmp_path / "manifest.json") == {}
+    save_meta_manifest({path: meta}, tmp_path / "manifest.json", "hf")
+    assert load_meta_manifest(tmp_path / "manifest.json", "hf") == {}
+
+
+def test_manifest_kind_mismatch_raises(simple_case):
+    """A manifest of another kind (or none) raises instead of being ignored or overwritten."""
+    from gents.meta import save_meta_manifest, load_meta_manifest
+    hf_dir, ts_dir = simple_case
+    hfc = HFCollection(str(hf_dir)).pull_metadata()
+    manifest = ts_dir / "manifest.json"
+    save_meta_manifest(dict(hfc.items()), manifest, "hf")
+    before = manifest.read_text()
+
+    with pytest.raises(ValueError, match="'hf' metadata but 'ts' was requested"):
+        load_meta_manifest(manifest, "ts")
+    assert manifest.read_text() == before  # load never modifies the file
+
+    unlabelled = ts_dir / "unlabelled.json"
+    unlabelled.write_text('{"version": 1, "entries": {}}')
+    with pytest.raises(ValueError):
+        load_meta_manifest(unlabelled, "hf")

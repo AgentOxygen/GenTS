@@ -609,7 +609,8 @@ class netCDFMeta:
                 name: {
                     "shape": list(self.__variable_shapes[name]),
                     "dims": list(self.__variable_dims[name]),
-                    "dtype": "str" if self.__variable_dtypes[name] is str else np.dtype(self.__variable_dtypes[name]).str,
+                    "dtype": "str" if self.__variable_dtypes[name] is str
+                             else np.dtype(self.__variable_dtypes[name]).str,
                     "attrs": _encode(self.__variable_attrs[name]) if self.__load_variable_attrs else None,
                 }
                 for name in self.__var_names
@@ -772,7 +773,7 @@ def split_valid(meta_map, is_valid_fn):
     return kept, removed
 
 
-def save_meta_manifest(meta_map, manifest_path):
+def save_meta_manifest(meta_map, manifest_path, kind):
     """
     Writes a ``{path: netCDFMeta}`` map to a single JSON file.
 
@@ -782,10 +783,15 @@ def save_meta_manifest(meta_map, manifest_path):
     stat are skipped. The write goes to a temporary file first, so an interrupted run never leaves a
     truncated manifest.
 
+    The manifest is labelled with ``kind`` because the history-file and time-series
+    factories keep different metadata (see :func:`load_meta_manifest`).
+
     :param meta_map: Metadata by path, such as ``dict(hf_collection.items())``.
     :type meta_map: dict
     :param manifest_path: Where to write the manifest.
     :type manifest_path: str or pathlib.Path
+    :param kind: Label for what the metadata is, ``"hf"`` or ``"ts"``.
+    :type kind: str
     """
     entries = {}
     for path, meta in meta_map.items():
@@ -798,12 +804,12 @@ def save_meta_manifest(meta_map, manifest_path):
 
     tmp_path = f"{manifest_path}.tmp"
     with open(tmp_path, "w", encoding="utf-8") as manifest_file:
-        json.dump({"version": MANIFEST_VERSION, "entries": entries}, manifest_file)
+        json.dump({"version": MANIFEST_VERSION, "kind": kind, "entries": entries}, manifest_file)
     os.replace(tmp_path, manifest_path)
     logger.info("Wrote %s entries to manifest '%s'.", len(entries), manifest_path)
 
 
-def load_meta_manifest(manifest_path):
+def load_meta_manifest(manifest_path, kind):
     """
     Reads a manifest written by :func:`save_meta_manifest`, keeping only entries
     that are still current.
@@ -812,8 +818,14 @@ def load_meta_manifest(manifest_path):
     modification time as when its metadata was read. A missing, unreadable or wrong-version manifest is not an
     error: it gives an empty result, so the caller falls back to reading headers.
 
+    A manifest of a different ``kind`` is an error, since the two kinds are not
+    interchangeable and silently replacing one would hide a misconfigured path.
+
     :param manifest_path: Manifest file to read.
     :type manifest_path: str or pathlib.Path
+    :param kind: The kind the caller needs, ``"hf"`` or ``"ts"``.
+    :type kind: str
+    :raises ValueError: If the manifest was written with a different (or no) kind.
     :returns: ``{path: netCDFMeta}`` for each current entry.
     :rtype: dict[pathlib.Path, netCDFMeta]
     """
@@ -824,10 +836,17 @@ def load_meta_manifest(manifest_path):
             logger.info("Ignoring manifest '%s': version %s is not %s.", manifest_path, manifest["version"],
                         MANIFEST_VERSION)
             return {}
+        manifest_kind = manifest.get("kind")
         entries = manifest["entries"]
-    except (OSError, ValueError, KeyError, TypeError) as exc:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         logger.info("No usable manifest at '%s': %s", manifest_path, exc)
         return {}
+
+    if manifest_kind != kind:
+        raise ValueError(
+            f"Manifest '{manifest_path}' holds '{manifest_kind}' metadata but '{kind}' was requested. "
+            "Use a separate manifest file for each."
+        )
 
     current = {}
     for path, entry in entries.items():
