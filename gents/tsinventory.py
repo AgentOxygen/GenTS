@@ -6,12 +6,14 @@ Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
 """
 import logging
+import os
+from pathlib import Path
 
 import numpy as np
 
 from gents.datastore import GenTSDataStore
 from gents.hfcollection import find_files, get_group_timestep_delta
-from gents.meta import netCDFMeta, read_meta_map, split_valid
+from gents.meta import load_meta_manifest, netCDFMeta, read_meta_map, save_meta_manifest, split_valid
 from gents.utils import filter_by_globs, get_timestep_label
 
 logger = logging.getLogger(__name__)
@@ -266,7 +268,7 @@ class TSInventory:
         logger.debug("%s files validated (%s removed).", len(new_map), len(removed))
         return removed
 
-    def pull_metadata(self, check_valid=True, raise_errors=False, show_progress=True):
+    def pull_metadata(self, check_valid=True, raise_errors=False, show_progress=True, manifest_path=None):
         """
         Reads the header of every time series file in the inventory.
 
@@ -280,12 +282,24 @@ class TSInventory:
         :type raise_errors: bool
         :param show_progress: If ``False``, suppress the stdout progress bar.
         :type show_progress: bool
+        :param manifest_path: Metadata manifest to reuse (see :meth:`save_manifest`);
+            files unchanged since it was written are not opened. Read-only: the
+            manifest is never modified here. ``None`` reads every header. Must be a
+            ``"ts"`` manifest; any other kind raises ``ValueError``.
+        :type manifest_path: str or pathlib.Path or None
         :returns: This inventory, mutated in place, so the call can be chained.
         :rtype: TSInventory
         """
         logger.info("Pulling metadata...")
         self.__ts_var_map = None
         paths = list(self.__ts_to_meta_map.keys())
+
+        if manifest_path is not None:
+            manifest_metas = load_meta_manifest(manifest_path, "ts")
+            hits = {path: manifest_metas[Path(path)] for path in paths if Path(path) in manifest_metas}
+            self.__ts_to_meta_map.update(hits)
+            paths = [path for path in paths if path not in hits]
+            logger.info("Manifest supplied metadata for %s files; reading %s.", len(hits), len(paths))
 
         self.__ts_to_meta_map.update(read_meta_map(
             paths, get_ts_meta_from_path, self.__num_processes, raise_errors, show_progress
@@ -299,6 +313,28 @@ class TSInventory:
             )
         logger.info("Metadata pulled.")
         return self
+
+    def save_manifest(self, manifest_path, overwrite=False):
+        """
+        Writes the metadata of every pulled file to a manifest that
+        :meth:`pull_metadata` can reuse, so later runs skip unchanged files.
+
+        Holds only this inventory's files, so one narrowed by filters writes a
+        manifest of that subset. Files whose metadata is not loaded, or was
+        dropped as invalid, are left out. Distinct from a history file manifest:
+        the two keep different metadata and are not interchangeable.
+
+        :param manifest_path: Where to write the manifest.
+        :type manifest_path: str or pathlib.Path
+        :param overwrite: Replace an existing file at ``manifest_path``. Left
+            ``False``, an existing file is an error, so the caller decides whether
+            to replace it.
+        :type overwrite: bool
+        :raises FileExistsError: If ``manifest_path`` exists and ``overwrite`` is ``False``.
+        """
+        if not overwrite and os.path.exists(manifest_path):
+            raise FileExistsError(f"Manifest '{manifest_path}' already exists. Pass overwrite=True to replace it.")
+        save_meta_manifest(self.__ts_to_meta_map, manifest_path, "ts")
 
     def get_variables(self):
         """

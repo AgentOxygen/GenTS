@@ -97,3 +97,63 @@ def test_get_ts_meta_from_path_keeps_variable_attrs(two_batch_output):
     meta = get_ts_meta_from_path(path)
     var_name = meta.get_primary_variables()[0]
     assert isinstance(meta.get_variable_attrs(var_name), dict)
+
+
+def test_manifest_skips_unchanged_files(two_batch_output, tmp_path, monkeypatch):
+    """With a manifest, only output files that are new or changed since it was saved are opened."""
+    import os
+    from gents import tsinventory
+    manifest = tmp_path / "manifest.json"
+    opened = []
+
+    def counting_factory(path):
+        opened.append(path)
+        return get_ts_meta_from_path(path)
+
+    monkeypatch.setattr(tsinventory, "get_ts_meta_from_path", counting_factory)
+
+    first = TSInventory(str(two_batch_output)).pull_metadata(show_progress=False, manifest_path=manifest)
+    assert len(opened) == len(first)
+    assert not manifest.exists()  # pull_metadata is read-only
+    first.save_manifest(manifest)
+
+    opened.clear()
+    second = TSInventory(str(two_batch_output)).pull_metadata(show_progress=False, manifest_path=manifest)
+    assert opened == []
+    assert second.get_variables() == first.get_variables()
+    assert {p: m.to_dict() for p, m in second.items()} == {p: m.to_dict() for p, m in first.items()}
+
+    touched = sorted(first.keys())[0]
+    st = os.stat(touched)
+    os.utime(touched, ns=(st.st_atime_ns, st.st_mtime_ns + 1))
+    TSInventory(str(two_batch_output)).pull_metadata(show_progress=False, manifest_path=manifest)
+    assert opened == [touched]
+
+
+def test_manifest_overwrite_and_kind_guards(two_batch_output, tmp_path):
+    """Saving needs overwrite=True to replace; an hf manifest is refused rather than used or replaced."""
+    from gents.meta import save_meta_manifest
+    manifest = tmp_path / "manifest.json"
+    inventory = TSInventory(str(two_batch_output)).pull_metadata(show_progress=False)
+    inventory.save_manifest(manifest)
+    before = manifest.read_text()
+    with pytest.raises(FileExistsError):
+        inventory.save_manifest(manifest)
+    assert manifest.read_text() == before
+    inventory.include("*TS*").save_manifest(manifest, overwrite=True)
+
+    hf_manifest = tmp_path / "hf.json"
+    save_meta_manifest({}, hf_manifest, "hf")
+    with pytest.raises(ValueError, match="'hf' metadata but 'ts' was requested"):
+        TSInventory(str(two_batch_output)).pull_metadata(show_progress=False, manifest_path=hf_manifest)
+
+
+def test_pull_without_manifest_path_touches_no_manifest(two_batch_output, tmp_path):
+    """By default no manifest is read or written, even a mismatched one in reach."""
+    from gents.meta import save_meta_manifest
+    bystander = tmp_path / "manifest.json"
+    save_meta_manifest({}, bystander, "hf")
+    before = bystander.read_text()
+    TSInventory(str(two_batch_output)).pull_metadata(show_progress=False)
+    assert bystander.read_text() == before
+    assert [p.name for p in tmp_path.iterdir()] == ["manifest.json"]
