@@ -10,6 +10,7 @@ import fnmatch
 import gc
 import glob
 import logging
+import os
 import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from os import makedirs, remove
@@ -856,7 +857,7 @@ class TSCollection:
         """
         return self.add_args(path_glob=path_glob, var_glob=var_glob, overwrite=True)
 
-    def skip_existing(self):
+    def skip_existing(self, ts_inventory=None):
         """
         Returns a new collection with each order narrowed to timesteps not
         already covered by existing output, for resuming a continued run.
@@ -866,8 +867,19 @@ class TSCollection:
         ``gents_version`` stamp count as coverage; incomplete or corrupt files
         are ignored with a warning.
 
+        :param ts_inventory: An inventory of existing output to use instead of
+            walking and reading each order's directory, e.g. one pulled with a
+            manifest to avoid opening unchanged files. It must be rooted at or
+            above every order's output directory, and covers only what it
+            indexes: output outside a filtered inventory counts as missing. It is
+            pulled first if it was not already.
+        :type ts_inventory: gents.tsinventory.TSInventory or None
         :rtype: TSCollection
+        :raises ValueError: If an order's output directory is outside ``ts_inventory``'s root.
         """
+        if ts_inventory is not None:
+            ts_inventory.check_pulled()
+            inventory_root = os.path.abspath(ts_inventory.get_input_dir())
         inventories = {}  # parent dir -> unpulled inventory, so each directory is walked once
         latest_times = {}  # (parent dir, file prefix, variable) -> latest covered time, so each file is read once
         new_orders = []
@@ -876,7 +888,19 @@ class TSCollection:
             var_name = order_dict["primary_var"]
             key = (template.parent, template.name, var_name)
 
-            if key not in latest_times:
+            if key not in latest_times and ts_inventory is not None:
+                # Re-rooted onto the inventory's own spelling of its directory, which its paths are matched in.
+                relative_parent = os.path.relpath(os.path.abspath(template.parent), inventory_root)
+                if relative_parent == ".." or relative_parent.startswith(".." + os.sep):
+                    raise ValueError(
+                        f"Output directory '{template.parent}' is outside the inventory root "
+                        f"'{ts_inventory.get_input_dir()}'."
+                    )
+                prefix = glob.escape(
+                    str(Path(ts_inventory.get_input_dir()) / relative_parent / f"{template.name}.{var_name}")
+                )
+                latest_times[key] = ts_inventory.include(f"{prefix}.*.nc").get_latest_time()
+            elif key not in latest_times:
                 if template.parent not in inventories:
                     inventories[template.parent] = TSInventory(str(template.parent))
                 prefix = glob.escape(str(template.parent / f"{template.name}.{var_name}"))
