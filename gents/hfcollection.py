@@ -525,6 +525,7 @@ class HFCollection:
 
         self.__hf_to_meta_map = meta_map
         self.__pulled = False
+        self.__num_read_from_disk = 0
         self.__hf_multistep_slices = multistep_slice_map
         if self.__hf_multistep_slices is None:
             self.__hf_multistep_slices = {}
@@ -728,9 +729,8 @@ class HFCollection:
             paths = [path for path in paths if path not in hits]
             logger.info("Manifest supplied metadata for %s files; reading %s.", len(hits), len(paths))
 
-        self.__hf_to_meta_map.update(
-            read_meta_map(paths, get_meta_from_path, self.__num_processes, raise_errors, show_progress)
-        )
+        disk_metas = read_meta_map(paths, get_meta_from_path, self.__num_processes, raise_errors, show_progress)
+        self.__hf_to_meta_map.update(disk_metas)
 
         if check_valid:
             self.check_validity()
@@ -739,6 +739,7 @@ class HFCollection:
                 "Skipping metadata validation may result in errors due to missing attributes or coordinate data."
             )
         logger.info("Metadata pulled.")
+        self.__num_read_from_disk = sum(1 for path in disk_metas if path in self.__hf_to_meta_map)
 
         if self.__hf_to_timestep_delta_map is None:
             self.__hf_to_timestep_delta_map = {}
@@ -751,6 +752,19 @@ class HFCollection:
                 for path in group_paths:
                     self.__hf_to_timestep_delta_map[path] = delta
         return self
+
+    def get_num_read_from_disk(self):
+        """
+        Returns how many files the last :meth:`pull_metadata` read from disk and kept.
+
+        Files supplied by a manifest, files that failed to read, and files dropped
+        as invalid are not counted. Zero after a pull with a manifest means the
+        manifest already describes every file in the collection, so rewriting it
+        with :meth:`save_manifest` would change nothing.
+
+        :rtype: int
+        """
+        return self.__num_read_from_disk
 
     def save_manifest(self, manifest_path, overwrite=False):
         """

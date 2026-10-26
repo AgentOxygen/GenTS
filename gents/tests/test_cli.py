@@ -8,6 +8,7 @@ from gents.hfcollection import find_files
 from gents.timeseries import TSCollection
 from gents.utils import get_version
 from gents.tests.test_workflow import is_monotonic
+import os
 from os import listdir
 
 
@@ -416,11 +417,11 @@ def test_cli_manifest_flags_do_not_change_output(simple_case, tmp_path):
     for label in ("default", "custom_path"):
         _assert_same_output(_read_output(runs[label][1]), reference)
 
-    default_manifest = tmp_path / "default" / "gents_manifest_hf.json"
+    default_manifest = tmp_path / "default" / "gents_manifest_hf.json.gz"
     assert default_manifest.exists()
-    assert not (tmp_path / "no_manifest" / "gents_manifest_hf.json").exists()
+    assert not (tmp_path / "no_manifest" / "gents_manifest_hf.json.gz").exists()
     assert custom_manifest.exists()
-    assert not (tmp_path / "custom_path" / "gents_manifest_hf.json").exists()
+    assert not (tmp_path / "custom_path" / "gents_manifest_hf.json.gz").exists()
 
 
 def test_cli_reuses_default_manifest_without_changing_output(simple_case, tmp_path):
@@ -468,7 +469,7 @@ def test_cli_manifest_only_writes_manifest_but_no_time_series(simple_case, tmp_p
 
     with patch.object(sys, "argv", base_argv + ["--manifest-only"]):
         main()
-    assert listdir(output_dir) == ["gents_manifest_hf.json"]
+    assert listdir(output_dir) == ["gents_manifest_hf.json.gz"]
 
     with patch.object(sys, "argv", base_argv):
         main()
@@ -476,3 +477,26 @@ def test_cli_manifest_only_writes_manifest_but_no_time_series(simple_case, tmp_p
     with patch.object(sys, "argv", ["run_gents", str(input_head_dir), "-o", str(reference_dir), "--no-manifest"]):
         main()
     _assert_same_output(_read_output(output_dir), _read_output(reference_dir))
+
+
+def test_cli_rewrites_manifest_only_when_something_changed(simple_case, tmp_path):
+    """An unchanged history directory leaves the manifest file alone; a changed file triggers a rewrite."""
+    input_head_dir, _ = simple_case
+    output_dir = tmp_path / "out"
+    manifest = output_dir / "gents_manifest_hf.json.gz"
+    argv = ["run_gents", str(input_head_dir), "-o", str(output_dir), "--manifest-only"]
+
+    with patch.object(sys, "argv", argv):
+        main()
+    os.utime(manifest, ns=(1, 1))  # a marker an unnecessary rewrite would overwrite
+
+    with patch.object(sys, "argv", argv):
+        main()
+    assert os.stat(manifest).st_mtime_ns == 1
+
+    touched = sorted(find_files(input_head_dir, "*.nc"))[0]
+    st = os.stat(touched)
+    os.utime(touched, ns=(st.st_atime_ns, st.st_mtime_ns + 1))
+    with patch.object(sys, "argv", argv):
+        main()
+    assert os.stat(manifest).st_mtime_ns != 1

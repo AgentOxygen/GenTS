@@ -916,12 +916,12 @@ def test_pull_metadata_without_manifest_path_touches_no_manifest(simple_case):
     hf_dir, ts_dir = simple_case
     bystander = ts_dir / "manifest.json"
     save_meta_manifest({}, bystander, "ts")
-    before = bystander.read_text()
+    before = bystander.read_bytes()
     files_before = sorted(p.name for p in hf_dir.iterdir()) + sorted(p.name for p in ts_dir.iterdir())
 
     HFCollection(str(hf_dir)).pull_metadata()
 
-    assert bystander.read_text() == before
+    assert bystander.read_bytes() == before
     assert sorted(p.name for p in hf_dir.iterdir()) + sorted(p.name for p in ts_dir.iterdir()) == files_before
 
 
@@ -931,13 +931,33 @@ def test_save_manifest_requires_overwrite_to_replace(simple_case):
     manifest = ts_dir / "manifest.json"
     full = HFCollection(str(hf_dir)).pull_metadata()
     full.save_manifest(manifest)
-    before = manifest.read_text()
+    before = manifest.read_bytes()
 
     subset = full.include(["*00001.nc", "*00002.nc"])
     with pytest.raises(FileExistsError):
         subset.save_manifest(manifest)
-    assert manifest.read_text() == before
+    assert manifest.read_bytes() == before
 
     subset.save_manifest(manifest, overwrite=True)
-    assert manifest.read_text() != before
+    assert manifest.read_bytes() != before
     assert len(HFCollection(str(hf_dir)).include(["*00001.nc", "*00002.nc"]).pull_metadata(manifest_path=manifest)) == 2
+
+
+def test_get_num_read_from_disk(simple_case):
+    """The count covers files read from disk by the last pull, so callers can tell when a manifest is out of date."""
+    import os
+    hf_dir, ts_dir = simple_case
+    manifest = ts_dir / "manifest.json.gz"
+
+    first = HFCollection(str(hf_dir)).pull_metadata(manifest_path=manifest)
+    assert first.get_num_read_from_disk() == len(first)
+    first.save_manifest(manifest)
+
+    second = HFCollection(str(hf_dir)).pull_metadata(manifest_path=manifest)
+    assert second.get_num_read_from_disk() == 0
+
+    touched = sorted(first.keys())[0]
+    st = os.stat(touched)
+    os.utime(touched, ns=(st.st_atime_ns, st.st_mtime_ns + 1))
+    third = HFCollection(str(hf_dir)).pull_metadata(manifest_path=manifest)
+    assert third.get_num_read_from_disk() == 1

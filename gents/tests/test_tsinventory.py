@@ -136,10 +136,10 @@ def test_manifest_overwrite_and_kind_guards(two_batch_output, tmp_path):
     manifest = tmp_path / "manifest.json"
     inventory = TSInventory(str(two_batch_output)).pull_metadata(show_progress=False)
     inventory.save_manifest(manifest)
-    before = manifest.read_text()
+    before = manifest.read_bytes()
     with pytest.raises(FileExistsError):
         inventory.save_manifest(manifest)
-    assert manifest.read_text() == before
+    assert manifest.read_bytes() == before
     inventory.include("*TS*").save_manifest(manifest, overwrite=True)
 
     hf_manifest = tmp_path / "hf.json"
@@ -153,7 +153,7 @@ def test_pull_without_manifest_path_touches_no_manifest(two_batch_output, tmp_pa
     from gents.meta import save_meta_manifest
     bystander = tmp_path / "manifest.json"
     save_meta_manifest({}, bystander, "hf")
-    before = bystander.read_text()
+    before = bystander.read_bytes()
     TSInventory(str(two_batch_output)).pull_metadata(show_progress=False)
-    assert bystander.read_text() == before
+    assert bystander.read_bytes() == before
     assert [p.name for p in tmp_path.iterdir()] == ["manifest.json"]

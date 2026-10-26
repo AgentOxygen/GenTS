@@ -536,8 +536,12 @@ def test_manifest_unusable_gives_empty(tmp_path):
     assert load_meta_manifest(tmp_path / "absent.json", "hf") == {}
     (tmp_path / "bad.json").write_text("{not json")
     assert load_meta_manifest(tmp_path / "bad.json", "hf") == {}
-    (tmp_path / "old.json").write_text('{"version": 0, "entries": {}}')
-    assert load_meta_manifest(tmp_path / "old.json", "hf") == {}
+    import gzip
+    with gzip.open(tmp_path / "old.json.gz", "wt") as old:
+        old.write('{"version": 0, "entries": {}}')
+    assert load_meta_manifest(tmp_path / "old.json.gz", "hf") == {}
+    (tmp_path / "plain.json").write_text('{"version": 2, "kind": "hf", "tables": {}, "entries": {}}')  # not gzip
+    assert load_meta_manifest(tmp_path / "plain.json", "hf") == {}
 
 
 def test_manifest_skips_unpulled_and_leaves_no_temp_file(simple_case):
@@ -574,13 +578,45 @@ def test_manifest_kind_mismatch_raises(simple_case):
     hfc = HFCollection(str(hf_dir)).pull_metadata()
     manifest = ts_dir / "manifest.json"
     save_meta_manifest(dict(hfc.items()), manifest, "hf")
-    before = manifest.read_text()
+    before = manifest.read_bytes()
 
     with pytest.raises(ValueError, match="'hf' metadata but 'ts' was requested"):
         load_meta_manifest(manifest, "ts")
-    assert manifest.read_text() == before  # load never modifies the file
+    assert manifest.read_bytes() == before  # load never modifies the file
 
-    unlabelled = ts_dir / "unlabelled.json"
-    unlabelled.write_text('{"version": 1, "entries": {}}')
+    import gzip
+    unlabelled = ts_dir / "unlabelled.json.gz"
+    with gzip.open(unlabelled, "wt") as unlabelled_file:
+        unlabelled_file.write('{"version": 2, "tables": {}, "entries": {}}')
     with pytest.raises(ValueError):
         load_meta_manifest(unlabelled, "hf")
+
+
+def test_manifest_stores_shared_data_once(simple_case):
+    """Files sharing a variable table share one manifest entry for it, and attrs common to all are stored once."""
+    import gzip
+    import json
+    from gents.meta import save_meta_manifest, load_meta_manifest
+    hf_dir, ts_dir = simple_case
+    hfc = HFCollection(str(hf_dir)).pull_metadata()
+    metas = dict(hfc.items())
+    odd_path = sorted(metas)[3]
+    metas[odd_path].get_attributes()["only_here"] = "odd one out"  # one file differs from the rest
+    manifest = ts_dir / "manifest.json.gz"
+    save_meta_manifest(metas, manifest, "hf")
+
+    with gzip.open(manifest, "rt") as manifest_file:
+        raw = json.load(manifest_file)
+    assert len(raw["tables"]) == 1
+    (table,) = raw["tables"].values()
+    assert "only_here" not in table["attrs"] and table["attrs"]["source"] == "GenTS testing suite"
+    for path, entry in raw["entries"].items():
+        assert "path" not in entry and "variables" not in entry and "source" not in entry["attrs"]
+        assert entry["attrs"] == ({"only_here": "odd one out"} if path == str(odd_path) else {})
+
+    loaded = load_meta_manifest(manifest, "hf")
+    for path, meta in metas.items():
+        assert loaded[path].to_dict() == meta.to_dict()
+    first, second = (loaded[path] for path in sorted(loaded)[:2])
+    assert first.get_variables() is second.get_variables()  # one shared table, built once
+    assert first.get_attributes() is not second.get_attributes()
