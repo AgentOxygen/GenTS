@@ -1,6 +1,7 @@
 from gents.tests.test_cases import *
 from gents.meta import netCDFMeta, is_var_secondary, get_attributes, get_time_variables_names, get_meta_from_path, read_meta_map, split_valid
 from gents.datastore import GenTSDataStore
+from gents.hfcollection import HFCollection
 import numpy as np
 import pytest
 
@@ -496,3 +497,71 @@ def test_encode_decode_numpy_values():
     f32 = _decode(_encode(np.array([0.1], dtype="f4")))
     assert f32.dtype == np.float32 and str(f32) == str(np.array([0.1], dtype="f4"))
     assert _decode(_encode("text")) == "text"
+
+
+def test_manifest_round_trip_hfcollection(simple_case):
+    """An HFCollection's metas survive save/load and match the originals field for field."""
+    from gents.meta import save_meta_manifest, load_meta_manifest
+    hf_dir, ts_dir = simple_case
+    hfc = HFCollection(str(hf_dir)).pull_metadata()
+    manifest = ts_dir / "manifest.json"
+    save_meta_manifest(dict(hfc.items()), manifest)
+
+    loaded = load_meta_manifest(manifest)
+    assert set(loaded) == set(hfc.keys())
+    for path, meta in hfc.items():
+        assert loaded[path].to_dict() == meta.to_dict()
+
+
+def test_manifest_drops_changed_and_deleted_files(simple_case):
+    """Entries whose size/mtime changed, or whose file is gone, are not returned."""
+    import os
+    from gents.meta import save_meta_manifest, load_meta_manifest
+    hf_dir, ts_dir = simple_case
+    hfc = HFCollection(str(hf_dir)).pull_metadata()
+    manifest = ts_dir / "manifest.json"
+    save_meta_manifest(dict(hfc.items()), manifest)
+
+    paths = sorted(hfc.keys())
+    st = os.stat(paths[0])
+    os.utime(paths[0], ns=(st.st_atime_ns, st.st_mtime_ns + 1))
+    paths[1].unlink()
+
+    assert set(load_meta_manifest(manifest)) == set(paths[2:])
+
+
+def test_manifest_unusable_gives_empty(tmp_path):
+    """Missing, corrupt and wrong-version manifests give {} instead of raising."""
+    from gents.meta import load_meta_manifest
+    assert load_meta_manifest(tmp_path / "absent.json") == {}
+    (tmp_path / "bad.json").write_text("{not json")
+    assert load_meta_manifest(tmp_path / "bad.json") == {}
+    (tmp_path / "old.json").write_text('{"version": 0, "entries": {}}')
+    assert load_meta_manifest(tmp_path / "old.json") == {}
+
+
+def test_manifest_skips_unpulled_and_leaves_no_temp_file(simple_case):
+    """None metas are skipped, and the temp file is renamed away."""
+    from gents.meta import save_meta_manifest, load_meta_manifest
+    hf_dir, ts_dir = simple_case
+    hfc = HFCollection(str(hf_dir)).pull_metadata()
+    manifest = ts_dir / "manifest.json"
+    save_meta_manifest({**dict(hfc.items()), hf_dir / "unpulled.nc": None}, manifest)
+    assert len(load_meta_manifest(manifest)) == len(hfc)
+    assert not (ts_dir / "manifest.json.tmp").exists()
+
+
+def test_netcdfmeta_stat_taken_at_read_time(tmp_path):
+    """The stat is recorded when the metadata is read, so a later edit to the file can't be mistaken for current."""
+    import os
+    from gents.meta import save_meta_manifest, load_meta_manifest
+    path = tmp_path / "test.nc"
+    generate_history_file(str(path), [15.0, 45.0], [[0.0, 30.0], [30.0, 60.0]])
+    with GenTSDataStore(str(path), "r") as ds:
+        meta = netCDFMeta(ds, str(path))
+    assert meta.get_stat() == {"size": os.stat(path).st_size, "mtime_ns": os.stat(path).st_mtime_ns}
+
+    st = os.stat(path)
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1))  # file changes between read and save
+    save_meta_manifest({path: meta}, tmp_path / "manifest.json")
+    assert load_meta_manifest(tmp_path / "manifest.json") == {}

@@ -5,8 +5,11 @@ Per-file netCDF metadata: variable classification, cached header contents, and b
 Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
 """
+import json
 import logging
+import os
 from collections.abc import Sequence
+from pathlib import Path
 from types import SimpleNamespace
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
@@ -17,6 +20,8 @@ from gents.datastore import GenTSDataStore
 from gents.utils import ProgressBar
 
 logger = logging.getLogger(__name__)
+
+MANIFEST_VERSION = 1
 
 
 def is_var_secondary(variable,
@@ -111,6 +116,22 @@ def get_time_variables_names(ds):
     return time_eqv, time_bnds_eqv
 
 
+def get_file_stat(path):
+    """
+    Returns the size and modification time that identify a file's current contents.
+
+    :param path: File to stat.
+    :type path: str or pathlib.Path
+    :returns: ``{"size": bytes, "mtime_ns": int}``, or ``None`` if the file cannot be stat-ed.
+    :rtype: dict or None
+    """
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+
+
 def _encode(value):
     """
     Converts an attribute or array value into something :mod:`json` can write.
@@ -198,6 +219,8 @@ class netCDFMeta:
         self.__load_variable_attrs = load_variable_attrs
         self.__compute_dim_bounds = compute_dim_bounds
 
+        # Before any data is read, so a file modified mid-read looks stale to the next run.
+        self.__stat = get_file_stat(path)
         self.__attrs = get_attributes(ds)
         self.__path = path
 
@@ -550,6 +573,16 @@ class netCDFMeta:
             )
         return self.__dim_bounds
 
+    def get_stat(self):
+        """
+        Returns the file's size and modification time as of when this metadata was
+        read, so cached metadata can be matched to the file it describes.
+
+        :returns: ``{"size": bytes, "mtime_ns": int}``, or ``None`` if the file could not be stat-ed.
+        :rtype: dict or None
+        """
+        return self.__stat
+
     def to_dict(self):
         """
         Returns the minimal state needed to rebuild this object, as JSON-serialisable data.
@@ -561,6 +594,7 @@ class netCDFMeta:
         """
         return {
             "path": str(self.__path),
+            "stat": self.__stat,
             "attrs": _encode(self.__attrs),
             "time_name": self.__time_eqv,
             "time_vals": self.__time_vals.tolist(),
@@ -596,6 +630,7 @@ class netCDFMeta:
         """
         meta = cls.__new__(cls)
         meta.__path = state["path"]
+        meta.__stat = state["stat"]
         meta.__attrs = _decode(state["attrs"])
         meta.__time_eqv = state["time_name"]
         meta.__time_vals = np.asarray(state["time_vals"], dtype=np.float64)
@@ -735,3 +770,70 @@ def split_valid(meta_map, is_valid_fn):
             removed[path] = meta
             logger.warning("Could not pull valid/complete metadata for '%s'.", path)
     return kept, removed
+
+
+def save_meta_manifest(meta_map, manifest_path):
+    """
+    Writes a ``{path: netCDFMeta}`` map to a single JSON file.
+
+    Each entry carries the file stat taken when its metadata was read (see
+    :meth:`netCDFMeta.get_stat`), so :func:`load_meta_manifest` can tell later
+    whether the file has changed. Entries that are ``None`` (not pulled) or have no
+    stat are skipped. The write goes to a temporary file first, so an interrupted run never leaves a
+    truncated manifest.
+
+    :param meta_map: Metadata by path, such as ``dict(hf_collection.items())``.
+    :type meta_map: dict
+    :param manifest_path: Where to write the manifest.
+    :type manifest_path: str or pathlib.Path
+    """
+    entries = {}
+    for path, meta in meta_map.items():
+        if meta is None:
+            continue
+        if meta.get_stat() is None:
+            logger.warning("Not adding '%s' to the manifest: no file stat was recorded.", path)
+            continue
+        entries[str(path)] = meta.to_dict()
+
+    tmp_path = f"{manifest_path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as manifest_file:
+        json.dump({"version": MANIFEST_VERSION, "entries": entries}, manifest_file)
+    os.replace(tmp_path, manifest_path)
+    logger.info("Wrote %s entries to manifest '%s'.", len(entries), manifest_path)
+
+
+def load_meta_manifest(manifest_path):
+    """
+    Reads a manifest written by :func:`save_meta_manifest`, keeping only entries
+    that are still current.
+
+    An entry is current if its file still exists with the same size and
+    modification time as when its metadata was read. A missing, unreadable or wrong-version manifest is not an
+    error: it gives an empty result, so the caller falls back to reading headers.
+
+    :param manifest_path: Manifest file to read.
+    :type manifest_path: str or pathlib.Path
+    :returns: ``{path: netCDFMeta}`` for each current entry.
+    :rtype: dict[pathlib.Path, netCDFMeta]
+    """
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as manifest_file:
+            manifest = json.load(manifest_file)
+        if manifest["version"] != MANIFEST_VERSION:
+            logger.info("Ignoring manifest '%s': version %s is not %s.", manifest_path, manifest["version"],
+                        MANIFEST_VERSION)
+            return {}
+        entries = manifest["entries"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        logger.info("No usable manifest at '%s': %s", manifest_path, exc)
+        return {}
+
+    current = {}
+    for path, entry in entries.items():
+        try:
+            if entry["stat"] is not None and entry["stat"] == get_file_stat(path):
+                current[Path(path)] = netCDFMeta.from_dict(entry)
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.warning("Skipping manifest entry for '%s': %s", path, exc)
+    return current
