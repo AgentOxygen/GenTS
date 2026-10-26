@@ -15,7 +15,7 @@ import cftime
 import numpy as np
 from cftime import num2date
 
-from gents.meta import get_meta_from_path, read_meta_map, split_valid
+from gents.meta import get_meta_from_path, load_meta_manifest, read_meta_map, save_meta_manifest, split_valid
 from gents.utils import LOG_LEVEL_IO_WARNING, filter_by_globs
 
 logging.captureWarnings(True)
@@ -688,7 +688,7 @@ class HFCollection:
         logger.info("Sorted along time.")
         return self.copy(meta_map=sorted_map)
 
-    def pull_metadata(self, check_valid=True, raise_errors=False, show_progress=True):
+    def pull_metadata(self, check_valid=True, raise_errors=False, show_progress=True, manifest_path=None):
         """
         Reads the header of every history file in the collection.
 
@@ -705,6 +705,12 @@ class HFCollection:
         :type raise_errors: bool
         :param show_progress: If ``False``, suppress the stdout progress bar.
         :type show_progress: bool
+        :param manifest_path: Metadata manifest to reuse (see
+            :meth:`save_manifest`); files unchanged since it was written are not
+            opened. Read-only: the manifest is never modified here. ``None`` reads
+            every header. Must be an ``"hf"`` manifest; any other kind raises
+            ``ValueError``.
+        :type manifest_path: str or pathlib.Path or None
         :returns: This collection, mutated in place, so the call can be chained
             onto construction. Unlike the filters and transforms, this is *not* a
             copy: :meth:`check_pulled` and its callers rely on the mutation.
@@ -715,9 +721,16 @@ class HFCollection:
         logger.info("Pulling metadata...")
         paths = list(self.__hf_to_meta_map.keys())
 
-        self.__hf_to_meta_map.update(read_meta_map(
-            paths, get_meta_from_path, self.__num_processes, raise_errors, show_progress
-        ))
+        if manifest_path is not None:
+            manifest_metas = load_meta_manifest(manifest_path, "hf")
+            hits = {path: manifest_metas[Path(path)] for path in paths if Path(path) in manifest_metas}
+            self.__hf_to_meta_map.update(hits)
+            paths = [path for path in paths if path not in hits]
+            logger.info("Manifest supplied metadata for %s files; reading %s.", len(hits), len(paths))
+
+        self.__hf_to_meta_map.update(
+            read_meta_map(paths, get_meta_from_path, self.__num_processes, raise_errors, show_progress)
+        )
 
         if check_valid:
             self.check_validity()
@@ -738,6 +751,27 @@ class HFCollection:
                 for path in group_paths:
                     self.__hf_to_timestep_delta_map[path] = delta
         return self
+
+    def save_manifest(self, manifest_path, overwrite=False):
+        """
+        Writes the metadata of every pulled file to a manifest that
+        :meth:`pull_metadata` can reuse, so later runs skip unchanged files.
+
+        Holds only this collection's files, so a collection narrowed by filters
+        writes a manifest of that subset. Files whose metadata is not loaded, or
+        was dropped as invalid, are left out.
+
+        :param manifest_path: Where to write the manifest.
+        :type manifest_path: str or pathlib.Path
+        :param overwrite: Replace an existing file at ``manifest_path``. Left
+            ``False``, an existing file is an error, so the caller decides whether
+            to replace it.
+        :type overwrite: bool
+        :raises FileExistsError: If ``manifest_path`` exists and ``overwrite`` is ``False``.
+        """
+        if not overwrite and os.path.exists(manifest_path):
+            raise FileExistsError(f"Manifest '{manifest_path}' already exists. Pass overwrite=True to replace it.")
+        save_meta_manifest(self.__hf_to_meta_map, manifest_path, "hf")
 
     def check_validity(self):
         """

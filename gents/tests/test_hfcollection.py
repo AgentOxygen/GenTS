@@ -867,3 +867,77 @@ def test_slice_groups_keeps_every_file_for_every_alignment(tmp_path, method):
     groups = hf_collection.slice_groups(slice_size_years=1, start_year=None, time_alignment_method=method).get_groups()
 
     assert sum(len(paths) for paths in groups.values()) == 24
+
+
+def test_pull_metadata_manifest_skips_unchanged_files(simple_case, monkeypatch):
+    """With a manifest, only files that are new or changed since it was written are opened."""
+    import os
+    from gents import hfcollection
+    hf_dir, ts_dir = simple_case
+    manifest = ts_dir / "manifest.json"
+    opened = []
+
+    def counting_factory(path):
+        opened.append(path)
+        return get_meta_from_path(path)
+
+    monkeypatch.setattr(hfcollection, "get_meta_from_path", counting_factory)
+
+    first = HFCollection(str(hf_dir)).pull_metadata(manifest_path=manifest)
+    assert len(opened) == len(first)
+    assert not manifest.exists()  # pull_metadata is read-only
+    first.save_manifest(manifest)
+
+    opened.clear()
+    second = HFCollection(str(hf_dir)).pull_metadata(manifest_path=manifest)
+    assert opened == []
+    assert {p: m.to_dict() for p, m in second.items()} == {p: m.to_dict() for p, m in first.items()}
+
+    touched = sorted(first.keys())[0]
+    st = os.stat(touched)
+    os.utime(touched, ns=(st.st_atime_ns, st.st_mtime_ns + 1))
+    HFCollection(str(hf_dir)).pull_metadata(manifest_path=manifest)
+    assert opened == [touched]
+
+
+def test_pull_metadata_rejects_ts_manifest(simple_case):
+    """An HFCollection refuses a time series manifest rather than using or overwriting it."""
+    from gents.meta import save_meta_manifest
+    hf_dir, ts_dir = simple_case
+    manifest = ts_dir / "manifest.json"
+    save_meta_manifest({}, manifest, "ts")
+    with pytest.raises(ValueError, match="'ts' metadata but 'hf' was requested"):
+        HFCollection(str(hf_dir)).pull_metadata(manifest_path=manifest)
+
+
+def test_pull_metadata_without_manifest_path_touches_no_manifest(simple_case):
+    """By default no manifest is read or written, even if a mismatched one sits in the output directory."""
+    from gents.meta import save_meta_manifest
+    hf_dir, ts_dir = simple_case
+    bystander = ts_dir / "manifest.json"
+    save_meta_manifest({}, bystander, "ts")
+    before = bystander.read_text()
+    files_before = sorted(p.name for p in hf_dir.iterdir()) + sorted(p.name for p in ts_dir.iterdir())
+
+    HFCollection(str(hf_dir)).pull_metadata()
+
+    assert bystander.read_text() == before
+    assert sorted(p.name for p in hf_dir.iterdir()) + sorted(p.name for p in ts_dir.iterdir()) == files_before
+
+
+def test_save_manifest_requires_overwrite_to_replace(simple_case):
+    """An existing manifest is only replaced when the caller says so."""
+    hf_dir, ts_dir = simple_case
+    manifest = ts_dir / "manifest.json"
+    full = HFCollection(str(hf_dir)).pull_metadata()
+    full.save_manifest(manifest)
+    before = manifest.read_text()
+
+    subset = full.include(["*00001.nc", "*00002.nc"])
+    with pytest.raises(FileExistsError):
+        subset.save_manifest(manifest)
+    assert manifest.read_text() == before
+
+    subset.save_manifest(manifest, overwrite=True)
+    assert manifest.read_text() != before
+    assert len(HFCollection(str(hf_dir)).include(["*00001.nc", "*00002.nc"]).pull_metadata(manifest_path=manifest)) == 2
