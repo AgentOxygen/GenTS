@@ -499,6 +499,34 @@ def test_encode_decode_numpy_values():
     assert _decode(_encode("text")) == "text"
 
 
+def test_encode_arrays_as_bytes_round_trip():
+    """Arrays are stored as base64 bytes (not per-element JSON) and come back identical: dtype, shape, NaN, masked,
+    empty and string arrays; object arrays and the old list form still decode."""
+    import json
+    from gents.meta import _encode, _decode
+    arrays = [
+        np.arange(12, dtype=">f8").reshape(3, 4),
+        np.array([1.5, np.nan, -np.inf], dtype="f4"),
+        np.ma.masked_array([1, 2, 3], mask=[0, 1, 0], dtype="i2"),
+        np.array([], dtype="f8"),
+        np.array(["a", "bcd"]),
+        np.array([True, False]),
+    ]
+    for array in arrays:
+        encoded = json.loads(json.dumps(_encode(array)))
+        assert "b64" in encoded and "v" not in encoded
+        decoded = _decode(encoded)
+        expected = np.ma.getdata(array)
+        assert decoded.dtype == expected.dtype and decoded.shape == expected.shape
+        np.testing.assert_array_equal(decoded, expected)
+        decoded[...] = decoded  # writable, not a view of the decoded bytes
+
+    objects = np.array(["x", None], dtype=object)
+    assert list(_decode(json.loads(json.dumps(_encode(objects))))) == ["x", None]
+    old_form = {"nd": "<f8", "v": [1.0, 2.0]}
+    np.testing.assert_array_equal(_decode(old_form), [1.0, 2.0])
+
+
 def test_manifest_round_trip_hfcollection(simple_case):
     """An HFCollection's metas survive save/load and match the originals field for field."""
     from gents.meta import save_meta_manifest, load_meta_manifest
@@ -585,9 +613,10 @@ def test_manifest_kind_mismatch_raises(simple_case):
     assert manifest.read_bytes() == before  # load never modifies the file
 
     import gzip
+    from gents.meta import MANIFEST_VERSION
     unlabelled = ts_dir / "unlabelled.json.gz"
     with gzip.open(unlabelled, "wt") as unlabelled_file:
-        unlabelled_file.write('{"version": 2, "tables": {}, "entries": {}}')
+        unlabelled_file.write(f'{{"version": {MANIFEST_VERSION}, "tables": {{}}, "entries": {{}}}}')
     with pytest.raises(ValueError):
         load_meta_manifest(unlabelled, "hf")
 
