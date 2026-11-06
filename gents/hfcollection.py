@@ -766,13 +766,13 @@ class HFCollection:
         """
         return self.__num_read_from_disk
 
-    def save_manifest(self, manifest_path, overwrite=False):
+    def save_manifest(self, manifest_path, overwrite=False, merge=False):
         """
         Writes the metadata of every pulled file to a manifest that
         :meth:`pull_metadata` can reuse, so later runs skip unchanged files.
 
-        Holds only this collection's files, so a collection narrowed by filters
-        writes a manifest of that subset. Files whose metadata is not loaded, or
+        Unless ``merge`` is set, holds only this collection's files, so a collection
+        narrowed by filters writes a manifest of that subset. Files whose metadata is not loaded, or
         was dropped as invalid, are left out.
 
         :param manifest_path: Where to write the manifest.
@@ -781,11 +781,14 @@ class HFCollection:
             ``False``, an existing file is an error, so the caller decides whether
             to replace it.
         :type overwrite: bool
-        :raises FileExistsError: If ``manifest_path`` exists and ``overwrite`` is ``False``.
+        :param merge: Keep the existing manifest's entries for files outside this
+            collection, as long as those files are unchanged. Implies ``overwrite``.
+        :type merge: bool
+        :raises FileExistsError: If ``manifest_path`` exists and neither ``overwrite`` nor ``merge`` is set.
         """
-        if not overwrite and os.path.exists(manifest_path):
+        if not (overwrite or merge) and os.path.exists(manifest_path):
             raise FileExistsError(f"Manifest '{manifest_path}' already exists. Pass overwrite=True to replace it.")
-        save_meta_manifest(self.__hf_to_meta_map, manifest_path, "hf")
+        save_meta_manifest(self.__hf_to_meta_map, manifest_path, "hf", merge=merge)
 
     def check_validity(self):
         """

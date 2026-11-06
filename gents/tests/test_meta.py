@@ -620,3 +620,29 @@ def test_manifest_stores_shared_data_once(simple_case):
     first, second = (loaded[path] for path in sorted(loaded)[:2])
     assert first.get_variables() is second.get_variables()  # one shared table, built once
     assert first.get_attributes() is not second.get_attributes()
+
+
+def test_save_meta_manifest_merge_keeps_other_entries(simple_case):
+    """merge=True keeps existing entries for files not in the map; the map's own entries win."""
+    import os
+    from gents.meta import save_meta_manifest, load_meta_manifest
+    hf_dir, ts_dir = simple_case
+    hfc = HFCollection(str(hf_dir)).pull_metadata()
+    manifest = ts_dir / "manifest.json"
+    save_meta_manifest(dict(hfc.items()), manifest, "hf")
+
+    paths = sorted(hfc.keys())
+    st = os.stat(paths[0])
+    os.utime(paths[0], ns=(st.st_atime_ns, st.st_mtime_ns + 1))
+    subset = HFCollection(str(hf_dir)).include([str(paths[0]), str(paths[1])]).pull_metadata()
+
+    save_meta_manifest(dict(subset.items()), manifest, "hf", merge=True)
+    loaded = load_meta_manifest(manifest, "hf")
+    assert set(loaded) == set(paths)
+    assert loaded[paths[0]].get_stat()["mtime_ns"] == st.st_mtime_ns + 1
+
+    save_meta_manifest(dict(subset.items()), manifest, "hf")
+    assert set(load_meta_manifest(manifest, "hf")) == {paths[0], paths[1]}
+
+    with pytest.raises(ValueError):
+        save_meta_manifest(dict(subset.items()), manifest, "ts", merge=True)

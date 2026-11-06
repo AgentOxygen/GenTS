@@ -942,6 +942,8 @@ def test_save_manifest_requires_overwrite_to_replace(simple_case):
     assert manifest.read_bytes() != before
     assert len(HFCollection(str(hf_dir)).include(["*00001.nc", "*00002.nc"]).pull_metadata(manifest_path=manifest)) == 2
 
+    subset.save_manifest(manifest, merge=True)  # merge implies overwrite
+
 
 def test_get_num_read_from_disk(simple_case):
     """The count covers files read from disk by the last pull, so callers can tell when a manifest is out of date."""

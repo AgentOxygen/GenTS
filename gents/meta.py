@@ -801,7 +801,7 @@ def split_valid(meta_map, is_valid_fn):
     return kept, removed
 
 
-def save_meta_manifest(meta_map, manifest_path, kind):
+def save_meta_manifest(meta_map, manifest_path, kind, merge=False):
     """
     Writes a ``{path: netCDFMeta}`` map to a single gzip-compressed JSON file.
 
@@ -826,7 +826,15 @@ def save_meta_manifest(meta_map, manifest_path, kind):
     :type manifest_path: str or pathlib.Path
     :param kind: Label for what the metadata is, ``"hf"`` or ``"ts"``.
     :type kind: str
+    :param merge: Keep the current entries (see :func:`load_meta_manifest`) of an
+        existing manifest at ``manifest_path`` for files not in ``meta_map``, so
+        saving a filtered subset doesn't drop the rest. Entries for changed or
+        deleted files are dropped.
+    :type merge: bool
+    :raises ValueError: If ``merge`` is set and the existing manifest is of another ``kind``.
     """
+    if merge:
+        meta_map = {**load_meta_manifest(manifest_path, kind), **meta_map}
     entries = {}
     table_ids = {}  # serialised variable table -> table id
     members = {}  # table id -> entries using it

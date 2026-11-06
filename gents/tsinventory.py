@@ -124,6 +124,7 @@ class TSInventory:
         self.__ts_dir = ts_head_dir
         self.__ts_glob_pattern = ts_glob_pattern
         self.__ts_var_map = ts_var_map
+        self.__num_read_from_disk = 0
 
         if meta_map is None:
             self.__ts_to_meta_map = {path: None for path in find_files(ts_head_dir, ts_glob_pattern)}
@@ -301,9 +302,8 @@ class TSInventory:
             paths = [path for path in paths if path not in hits]
             logger.info("Manifest supplied metadata for %s files; reading %s.", len(hits), len(paths))
 
-        self.__ts_to_meta_map.update(read_meta_map(
-            paths, get_ts_meta_from_path, self.__num_processes, raise_errors, show_progress
-        ))
+        disk_metas = read_meta_map(paths, get_ts_meta_from_path, self.__num_processes, raise_errors, show_progress)
+        self.__ts_to_meta_map.update(disk_metas)
 
         if check_valid:
             self.check_validity()
@@ -312,15 +312,29 @@ class TSInventory:
                 "Skipping metadata validation may result in errors due to missing attributes or coordinate data."
             )
         logger.info("Metadata pulled.")
+        self.__num_read_from_disk = sum(1 for path in disk_metas if path in self.__ts_to_meta_map)
         return self
 
-    def save_manifest(self, manifest_path, overwrite=False):
+    def get_num_read_from_disk(self):
+        """
+        Returns how many files the last :meth:`pull_metadata` read from disk and kept.
+
+        Files supplied by a manifest, files that failed to read, and files dropped
+        as invalid are not counted. Zero after a pull with a manifest means the
+        manifest already describes every file in the inventory, so rewriting it
+        with :meth:`save_manifest` would change nothing.
+
+        :rtype: int
+        """
+        return self.__num_read_from_disk
+
+    def save_manifest(self, manifest_path, overwrite=False, merge=False):
         """
         Writes the metadata of every pulled file to a manifest that
         :meth:`pull_metadata` can reuse, so later runs skip unchanged files.
 
-        Holds only this inventory's files, so one narrowed by filters writes a
-        manifest of that subset. Files whose metadata is not loaded, or was
+        Unless ``merge`` is set, holds only this inventory's files, so one narrowed
+        by filters writes a manifest of that subset. Files whose metadata is not loaded, or was
         dropped as invalid, are left out. Distinct from a history file manifest:
         the two keep different metadata and are not interchangeable.
 
@@ -330,11 +344,14 @@ class TSInventory:
             ``False``, an existing file is an error, so the caller decides whether
             to replace it.
         :type overwrite: bool
-        :raises FileExistsError: If ``manifest_path`` exists and ``overwrite`` is ``False``.
+        :param merge: Keep the existing manifest's entries for files outside this
+            inventory, as long as those files are unchanged. Implies ``overwrite``.
+        :type merge: bool
+        :raises FileExistsError: If ``manifest_path`` exists and neither ``overwrite`` nor ``merge`` is set.
         """
-        if not overwrite and os.path.exists(manifest_path):
+        if not (overwrite or merge) and os.path.exists(manifest_path):
             raise FileExistsError(f"Manifest '{manifest_path}' already exists. Pass overwrite=True to replace it.")
-        save_meta_manifest(self.__ts_to_meta_map, manifest_path, "ts")
+        save_meta_manifest(self.__ts_to_meta_map, manifest_path, "ts", merge=merge)
 
     def get_variables(self):
         """
