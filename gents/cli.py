@@ -10,6 +10,7 @@ from pathlib import Path
 import yaml
 
 from gents.hfcollection import HFCollection
+from gents.meta import load_meta_manifest, save_meta_manifest
 from gents.timeseries import DEFAULT_MEMORY_LIMIT_BYTES, TSCollection
 from gents.utils import enable_logging, get_version, log_hfcollection_info, log_tscollection_info
 
@@ -287,7 +288,9 @@ def main():
         if not args.dryrun or args.manifest_only:
             os.makedirs(Path(hf_manifest).parent, exist_ok=True)
             if hfc.get_num_read_from_disk() > 0 or not os.path.exists(hf_manifest):
-                hfc.save_manifest(hf_manifest, overwrite=True)
+                manifest_map = load_meta_manifest(hf_manifest, "hf")
+                manifest_map.update(hfc.items())
+                save_meta_manifest(manifest_map, hf_manifest, "hf")
 
     slice_batches = yaml_config["input_hf"].get("slicing", [])
     if not args.append or len(slice_batches) == 0:

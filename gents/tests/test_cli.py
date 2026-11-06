@@ -1,3 +1,5 @@
+import gzip
+import json
 import pytest
 import sys
 from unittest.mock import patch, MagicMock
@@ -500,3 +502,25 @@ def test_cli_rewrites_manifest_only_when_something_changed(simple_case, tmp_path
     with patch.object(sys, "argv", argv):
         main()
     assert os.stat(manifest).st_mtime_ns != 1
+
+
+def test_cli_filtered_run_keeps_other_manifest_entries(simple_case, tmp_path):
+    """A filtered run that rewrites the manifest keeps the entries of files its filters left out."""
+    input_head_dir, _ = simple_case
+    output_dir = tmp_path / "out"
+    manifest = output_dir / "gents_manifest_hf.json.gz"
+    argv = ["run_gents", str(input_head_dir), "-o", str(output_dir), "--manifest-only"]
+    paths = sorted(find_files(input_head_dir, "*.nc"))
+
+    with patch.object(sys, "argv", argv):
+        main()
+
+    st = os.stat(paths[0])
+    os.utime(paths[0], ns=(st.st_atime_ns, st.st_mtime_ns + 1))  # forces the filtered run to rewrite
+    with patch.object(sys, "argv", argv + ["--include", str(paths[0]), "--include", str(paths[1])]):
+        main()
+
+    with gzip.open(manifest, "rt") as manifest_file:
+        entries = json.load(manifest_file)["entries"]
+    assert sorted(entries) == sorted(str(path) for path in paths)
+    assert entries[str(paths[0])]["stat"]["mtime_ns"] == st.st_mtime_ns + 1
