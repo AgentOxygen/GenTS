@@ -200,7 +200,7 @@ def parse_arguments():
         action="append",
         default=[],
         help="Only generate time series of this frequency, e.g. 'month_1' or 'day_*' (can be specified multiple "
-             "times). Labels are those of the output's frequency directories: hour_N, day_N, month_N, year_N, unsorted."
+             "times). Labels are those of the output's frequency directories: hour_N, day_N, month_N, year_N."
     )
     return parser.parse_args()
 
