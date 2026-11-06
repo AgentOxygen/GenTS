@@ -1030,3 +1030,55 @@ def test_frequency_filter(mixed_timestep_case):
     assert frequencies(ts_collection.exclude(freq_glob="hour_*")) == ["day_1", "month_1", "year_1"]
     assert frequencies(ts_collection.include(var_glob="VAR0", freq_glob="day_1")) == ["day_1"]
     assert len(ts_collection.include(var_glob="VAR0", freq_glob="day_1")) == 1
+
+
+def _fail_reads_of(monkeypatch, failing_var):
+    """Makes reading ``failing_var``'s data raise, partway through writing its file (in-process runs only)."""
+    from gents.mhfdataset import MHFDataset
+    original = MHFDataset.get_var_vals
+
+    def get_var_vals(self, var_name, *args, **kwargs):
+        if var_name == failing_var:
+            raise OSError(f"simulated read failure on {var_name}")
+        return original(self, var_name, *args, **kwargs)
+    monkeypatch.setattr(MHFDataset, "get_var_vals", get_var_vals)
+
+
+def test_failed_write_leaves_nothing_at_final_path(simple_case, monkeypatch):
+    """A write that fails midway leaves neither a partial file at its final path nor a .partial file, is reported by
+    get_failures(), and a later run writes it."""
+    input_head_dir, output_head_dir = simple_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+    assert ts_collection.get_failures() == []
+
+    _fail_reads_of(monkeypatch, "VAR2")
+    ts_collection.execute()
+
+    failures = ts_collection.get_failures()
+    assert len(failures) == 1
+    assert "VAR2" in failures[0]["primary_vars"]
+    assert "simulated read failure on VAR2" in failures[0]["error"]
+    assert not [path for path in find_files(output_head_dir, "*") if ".VAR2." in path.name]
+    assert not list(Path(output_head_dir).rglob("*.partial"))
+    for path in find_files(output_head_dir, "*.nc"):
+        assert check_timeseries_integrity(str(path))
+
+    monkeypatch.undo()
+    ts_collection.execute()
+    assert ts_collection.get_failures() == []
+    assert len(find_files(output_head_dir, "*.nc")) == SIMPLE_NUM_VARS
+
+
+def test_failed_overwrite_keeps_previous_file(simple_case, monkeypatch):
+    """With overwrite, a failed rewrite leaves the previous complete file in place."""
+    input_head_dir, output_head_dir = simple_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+    ts_collection.execute()
+    (previous,) = [path for path in find_files(output_head_dir, "*.nc") if ".VAR2." in path.name]
+    before = previous.read_bytes()
+
+    _fail_reads_of(monkeypatch, "VAR2")
+    ts_collection.apply_overwrite("*").execute()
+
+    assert previous.read_bytes() == before
+    assert not list(Path(output_head_dir).rglob("*.partial"))
