@@ -708,6 +708,50 @@ def test_skip_existing_partial_coverage_trims_and_prunes(continued_case):
     assert len(new_files) == 2 * CONTINUED_NUM_VARS
 
 
+def test_skip_existing_with_inventory_matches_default(continued_case, tmp_path):
+    """A supplied inventory (here loaded from a manifest) trims orders exactly as walking the directory does."""
+    from gents.tsinventory import TSInventory
+    input_head_dir, output_head_dir, extend = continued_case
+    TSCollection(HFCollection(input_head_dir), str(output_head_dir)).execute()
+    extend()
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+
+    manifest = tmp_path / "ts_manifest.json"
+    TSInventory(str(output_head_dir)).pull_metadata(show_progress=False).save_manifest(manifest)
+    inventory = TSInventory(str(output_head_dir)).pull_metadata(show_progress=False, manifest_path=manifest)
+
+    expected = ts_collection.skip_existing()
+    resumed = ts_collection.skip_existing(ts_inventory=inventory)
+
+    assert len(resumed) == len(expected) == CONTINUED_NUM_VARS
+    for order, reference in zip(resumed, expected):
+        assert order == reference
+
+
+def test_skip_existing_with_inventory_pulls_unpulled_inventory(continued_case):
+    """An inventory that was never pulled is pulled once, not once per order."""
+    from gents.tsinventory import TSInventory
+    input_head_dir, output_head_dir, extend = continued_case
+    TSCollection(HFCollection(input_head_dir), str(output_head_dir)).execute()
+
+    inventory = TSInventory(str(output_head_dir))
+    assert not inventory.is_pulled()
+    resumed = TSCollection(HFCollection(input_head_dir), str(output_head_dir)).skip_existing(ts_inventory=inventory)
+
+    assert inventory.is_pulled()
+    assert len(resumed) == 0
+
+
+def test_skip_existing_with_inventory_outside_root_raises(continued_case, tmp_path):
+    """An inventory that doesn't contain an order's output directory is an error, not 'no coverage'."""
+    from gents.tsinventory import TSInventory
+    input_head_dir, output_head_dir, extend = continued_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+
+    with pytest.raises(ValueError, match="outside the inventory root"):
+        ts_collection.skip_existing(ts_inventory=TSInventory(str(tmp_path)))
+
+
 def test_skip_existing_duplicate_boundary_timestep(tmp_path_factory):
     """A continuation's first timestep exactly duplicating the prior run's last one is dropped."""
     head_hf_dir = tmp_path_factory.mktemp("dup_boundary_hf")

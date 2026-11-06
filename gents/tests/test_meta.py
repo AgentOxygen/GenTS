@@ -1,6 +1,7 @@
 from gents.tests.test_cases import *
 from gents.meta import netCDFMeta, is_var_secondary, get_attributes, get_time_variables_names, get_meta_from_path, read_meta_map, split_valid
 from gents.datastore import GenTSDataStore
+from gents.hfcollection import HFCollection
 import numpy as np
 import pytest
 
@@ -439,3 +440,209 @@ def test_split_valid():
     assert kept == {"a": 1}
     assert removed == {"b": 2, "c": None}
     assert meta_map == {"a": 1, "b": 2, "c": None}
+
+
+@pytest.mark.parametrize("bounds", [[[0.0, 30.0], [30.0, 60.0]], None])
+@pytest.mark.parametrize("flags", [{}, {"load_variable_attrs": False}, {"compute_dim_bounds": False},
+                                   {"load_time_bounds": False}])
+def test_netcdfmeta_dict_round_trip(tmp_path, bounds, flags):
+    """from_dict(json(to_dict())) matches the original in every field, so a new attribute can't be forgotten."""
+    import json
+    path = str(tmp_path / "test.nc")
+    dim_vals = {"lat": np.linspace(-90, 90, 3), "lon": np.linspace(-180, 180, 4)}
+    generate_history_file(path, [15.0, 45.0], bounds, dim_vals=dim_vals)
+    with GenTSDataStore(path, "r") as ds:
+        meta = netCDFMeta(ds, path, decode_dates=False, **flags)
+
+    rebuilt = netCDFMeta.from_dict(json.loads(json.dumps(meta.to_dict())))
+
+    assert rebuilt.to_dict() == meta.to_dict()
+    assert rebuilt.get_path() == path
+    assert rebuilt.get_variables() == meta.get_variables()
+    assert rebuilt.get_primary_variables() == meta.get_primary_variables()
+    assert rebuilt.get_secondary_variables() == meta.get_secondary_variables()
+    assert rebuilt.get_attributes() == meta.get_attributes()
+    assert rebuilt.get_float_times().dtype == meta.get_float_times().dtype == np.float64
+    assert not np.ma.isMaskedArray(meta.get_float_times())
+    np.testing.assert_array_equal(rebuilt.get_float_times(), meta.get_float_times())
+    assert list(rebuilt.get_cftimes()) == list(meta.get_cftimes())
+    if "load_time_bounds" not in flags or bounds is None:  # is_valid() reads bounds, which raises when not loaded
+        assert rebuilt.is_valid() == meta.is_valid()
+    for var in meta.get_variables():
+        assert rebuilt.get_variable_shapes(var) == meta.get_variable_shapes(var)
+        assert rebuilt.get_variable_dims(var) == meta.get_variable_dims(var)
+        assert rebuilt.get_variable_dtype(var) == meta.get_variable_dtype(var)
+    # Flag-gated getters must behave identically: values, or the same RuntimeError.
+    for getter in ("get_float_time_bounds", "get_dim_bounds"):
+        try:
+            expected = getattr(meta, getter)()
+        except RuntimeError:
+            with pytest.raises(RuntimeError):
+                getattr(rebuilt, getter)()
+        else:
+            assert str(getattr(rebuilt, getter)()) == str(expected)
+    if flags.get("load_variable_attrs", True):
+        for var in meta.get_variables():
+            assert rebuilt.get_variable_attrs(var).keys() == meta.get_variable_attrs(var).keys()
+    else:
+        with pytest.raises(RuntimeError):
+            rebuilt.get_variable_attrs(meta.get_variables()[0])
+
+
+def test_encode_decode_numpy_values():
+    """Numpy scalars, arrays and str dtype survive the codec with dtype intact."""
+    from gents.meta import _encode, _decode
+    scalar = _decode(_encode(np.float32(1.5)))
+    assert scalar == np.float32(1.5) and scalar.dtype == np.float32
+    f32 = _decode(_encode(np.array([0.1], dtype="f4")))
+    assert f32.dtype == np.float32 and str(f32) == str(np.array([0.1], dtype="f4"))
+    assert _decode(_encode("text")) == "text"
+
+
+def test_manifest_round_trip_hfcollection(simple_case):
+    """An HFCollection's metas survive save/load and match the originals field for field."""
+    from gents.meta import save_meta_manifest, load_meta_manifest
+    hf_dir, ts_dir = simple_case
+    hfc = HFCollection(str(hf_dir)).pull_metadata()
+    manifest = ts_dir / "manifest.json"
+    save_meta_manifest(dict(hfc.items()), manifest, "hf")
+
+    loaded = load_meta_manifest(manifest, "hf")
+    assert set(loaded) == set(hfc.keys())
+    for path, meta in hfc.items():
+        assert loaded[path].to_dict() == meta.to_dict()
+
+
+def test_manifest_drops_changed_and_deleted_files(simple_case):
+    """Entries whose size/mtime changed, or whose file is gone, are not returned."""
+    import os
+    from gents.meta import save_meta_manifest, load_meta_manifest
+    hf_dir, ts_dir = simple_case
+    hfc = HFCollection(str(hf_dir)).pull_metadata()
+    manifest = ts_dir / "manifest.json"
+    save_meta_manifest(dict(hfc.items()), manifest, "hf")
+
+    paths = sorted(hfc.keys())
+    st = os.stat(paths[0])
+    os.utime(paths[0], ns=(st.st_atime_ns, st.st_mtime_ns + 1))
+    paths[1].unlink()
+
+    assert set(load_meta_manifest(manifest, "hf")) == set(paths[2:])
+
+
+def test_manifest_unusable_gives_empty(tmp_path):
+    """Missing, corrupt and wrong-version manifests give {} instead of raising."""
+    from gents.meta import load_meta_manifest
+    assert load_meta_manifest(tmp_path / "absent.json", "hf") == {}
+    (tmp_path / "bad.json").write_text("{not json")
+    assert load_meta_manifest(tmp_path / "bad.json", "hf") == {}
+    import gzip
+    with gzip.open(tmp_path / "old.json.gz", "wt") as old:
+        old.write('{"version": 0, "entries": {}}')
+    assert load_meta_manifest(tmp_path / "old.json.gz", "hf") == {}
+    (tmp_path / "plain.json").write_text('{"version": 2, "kind": "hf", "tables": {}, "entries": {}}')  # not gzip
+    assert load_meta_manifest(tmp_path / "plain.json", "hf") == {}
+
+
+def test_manifest_skips_unpulled_and_leaves_no_temp_file(simple_case):
+    """None metas are skipped, and the temp file is renamed away."""
+    from gents.meta import save_meta_manifest, load_meta_manifest
+    hf_dir, ts_dir = simple_case
+    hfc = HFCollection(str(hf_dir)).pull_metadata()
+    manifest = ts_dir / "manifest.json"
+    save_meta_manifest({**dict(hfc.items()), hf_dir / "unpulled.nc": None}, manifest, "hf")
+    assert len(load_meta_manifest(manifest, "hf")) == len(hfc)
+    assert not (ts_dir / "manifest.json.tmp").exists()
+
+
+def test_netcdfmeta_stat_taken_at_read_time(tmp_path):
+    """The stat is recorded when the metadata is read, so a later edit to the file can't be mistaken for current."""
+    import os
+    from gents.meta import save_meta_manifest, load_meta_manifest
+    path = tmp_path / "test.nc"
+    generate_history_file(str(path), [15.0, 45.0], [[0.0, 30.0], [30.0, 60.0]])
+    with GenTSDataStore(str(path), "r") as ds:
+        meta = netCDFMeta(ds, str(path))
+    assert meta.get_stat() == {"size": os.stat(path).st_size, "mtime_ns": os.stat(path).st_mtime_ns}
+
+    st = os.stat(path)
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1))  # file changes between read and save
+    save_meta_manifest({path: meta}, tmp_path / "manifest.json", "hf")
+    assert load_meta_manifest(tmp_path / "manifest.json", "hf") == {}
+
+
+def test_manifest_kind_mismatch_raises(simple_case):
+    """A manifest of another kind (or none) raises instead of being ignored or overwritten."""
+    from gents.meta import save_meta_manifest, load_meta_manifest
+    hf_dir, ts_dir = simple_case
+    hfc = HFCollection(str(hf_dir)).pull_metadata()
+    manifest = ts_dir / "manifest.json"
+    save_meta_manifest(dict(hfc.items()), manifest, "hf")
+    before = manifest.read_bytes()
+
+    with pytest.raises(ValueError, match="'hf' metadata but 'ts' was requested"):
+        load_meta_manifest(manifest, "ts")
+    assert manifest.read_bytes() == before  # load never modifies the file
+
+    import gzip
+    unlabelled = ts_dir / "unlabelled.json.gz"
+    with gzip.open(unlabelled, "wt") as unlabelled_file:
+        unlabelled_file.write('{"version": 2, "tables": {}, "entries": {}}')
+    with pytest.raises(ValueError):
+        load_meta_manifest(unlabelled, "hf")
+
+
+def test_manifest_stores_shared_data_once(simple_case):
+    """Files sharing a variable table share one manifest entry for it, and attrs common to all are stored once."""
+    import gzip
+    import json
+    from gents.meta import save_meta_manifest, load_meta_manifest
+    hf_dir, ts_dir = simple_case
+    hfc = HFCollection(str(hf_dir)).pull_metadata()
+    metas = dict(hfc.items())
+    odd_path = sorted(metas)[3]
+    metas[odd_path].get_attributes()["only_here"] = "odd one out"  # one file differs from the rest
+    manifest = ts_dir / "manifest.json.gz"
+    save_meta_manifest(metas, manifest, "hf")
+
+    with gzip.open(manifest, "rt") as manifest_file:
+        raw = json.load(manifest_file)
+    assert len(raw["tables"]) == 1
+    (table,) = raw["tables"].values()
+    assert "only_here" not in table["attrs"] and table["attrs"]["source"] == "GenTS testing suite"
+    for path, entry in raw["entries"].items():
+        assert "path" not in entry and "variables" not in entry and "source" not in entry["attrs"]
+        assert entry["attrs"] == ({"only_here": "odd one out"} if path == str(odd_path) else {})
+
+    loaded = load_meta_manifest(manifest, "hf")
+    for path, meta in metas.items():
+        assert loaded[path].to_dict() == meta.to_dict()
+    first, second = (loaded[path] for path in sorted(loaded)[:2])
+    assert first.get_variables() is second.get_variables()  # one shared table, built once
+    assert first.get_attributes() is not second.get_attributes()
+
+
+def test_save_meta_manifest_merge_keeps_other_entries(simple_case):
+    """merge=True keeps existing entries for files not in the map; the map's own entries win."""
+    import os
+    from gents.meta import save_meta_manifest, load_meta_manifest
+    hf_dir, ts_dir = simple_case
+    hfc = HFCollection(str(hf_dir)).pull_metadata()
+    manifest = ts_dir / "manifest.json"
+    save_meta_manifest(dict(hfc.items()), manifest, "hf")
+
+    paths = sorted(hfc.keys())
+    st = os.stat(paths[0])
+    os.utime(paths[0], ns=(st.st_atime_ns, st.st_mtime_ns + 1))
+    subset = HFCollection(str(hf_dir)).include([str(paths[0]), str(paths[1])]).pull_metadata()
+
+    save_meta_manifest(dict(subset.items()), manifest, "hf", merge=True)
+    loaded = load_meta_manifest(manifest, "hf")
+    assert set(loaded) == set(paths)
+    assert loaded[paths[0]].get_stat()["mtime_ns"] == st.st_mtime_ns + 1
+
+    save_meta_manifest(dict(subset.items()), manifest, "hf")
+    assert set(load_meta_manifest(manifest, "hf")) == {paths[0], paths[1]}
+
+    with pytest.raises(ValueError):
+        save_meta_manifest(dict(subset.items()), manifest, "ts", merge=True)

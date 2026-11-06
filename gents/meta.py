@@ -5,8 +5,13 @@ Per-file netCDF metadata: variable classification, cached header contents, and b
 Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
 """
+import gzip
+import json
 import logging
+import os
 from collections.abc import Sequence
+from pathlib import Path
+from types import SimpleNamespace
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
@@ -16,6 +21,9 @@ from gents.datastore import GenTSDataStore
 from gents.utils import ProgressBar
 
 logger = logging.getLogger(__name__)
+
+MANIFEST_VERSION = 2
+MANIFEST_COMPRESSION_LEVEL = 3  # manifests are written often and read once; favour speed
 
 
 def is_var_secondary(variable,
@@ -110,6 +118,92 @@ def get_time_variables_names(ds):
     return time_eqv, time_bnds_eqv
 
 
+def get_file_stat(path):
+    """
+    Returns the size and modification time that identify a file's current contents.
+
+    :param path: File to stat.
+    :type path: str or pathlib.Path
+    :returns: ``{"size": bytes, "mtime_ns": int}``, or ``None`` if the file cannot be stat-ed.
+    :rtype: dict or None
+    """
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+
+
+def _encode(value):
+    """
+    Converts an attribute or array value into something :mod:`json` can write.
+
+    ``str``, ``int``, ``float``, ``bool`` and ``None`` pass through so the file
+    stays readable; numpy values become ``{"nd": dtype, "v": data}`` (plus
+    ``"scalar"`` if 0-d). Values widen exactly to Python numbers and
+    :func:`_decode` casts back to ``dtype``, so e.g. a ``float32`` returns as one.
+    Masks are dropped. Lists, tuples and dicts are converted element-wise.
+
+    :param value: Value to encode.
+    :returns: A JSON-serialisable object.
+    """
+    if isinstance(value, (np.ndarray, np.generic)):
+        encoded = {"nd": np.asarray(value).dtype.str, "v": np.ma.getdata(value).tolist()}
+        if isinstance(value, np.generic):
+            encoded["scalar"] = True
+        return encoded
+    if isinstance(value, (list, tuple)):
+        return [_encode(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _encode(item) for key, item in value.items()}
+    return value
+
+
+def _decode(value):
+    """
+    Inverts :func:`_encode`. Tuples come back as lists, so restoring shapes and
+    dimension tuples is the caller's job.
+
+    :param value: A JSON-loaded object.
+    :returns: The original value.
+    """
+    if isinstance(value, dict):
+        if "nd" in value:
+            array = np.array(value["v"], dtype=value["nd"])
+            return array[()] if value.get("scalar") else array
+        return {key: _decode(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_decode(item) for item in value]
+    return value
+
+
+def _build_variable_tables(variables):
+    """
+    Builds the per-variable tables of a :class:`netCDFMeta` from its serialised
+    ``variables`` entry: whether attributes were loaded, then the names, primary
+    and secondary names, shapes, dims, dtypes and attributes.
+
+    :param variables: The ``"variables"`` value of :meth:`netCDFMeta.to_dict`.
+    :type variables: dict
+    :rtype: tuple
+    """
+    load_attrs = all(var["attrs"] is not None for var in variables.values())
+    primary, secondary = [], []
+    shapes, dims_by_var, dtypes, attrs = {}, {}, {}, {}
+    for name, var in variables.items():
+        dims = tuple(var["dims"])
+        if is_var_secondary(SimpleNamespace(name=name, dimensions=dims)):
+            secondary.append(name)
+        else:
+            primary.append(name)
+        shapes[name] = tuple(var["shape"])
+        dims_by_var[name] = dims
+        dtypes[name] = str if var["dtype"] == "str" else np.dtype(var["dtype"])
+        if load_attrs:
+            attrs[name] = _decode(var["attrs"])
+    return load_attrs, list(variables), primary, secondary, shapes, dims_by_var, dtypes, attrs
+
+
 class netCDFMeta:
     """
     Metadata read once from a single netCDF history file and cached in memory.
@@ -154,6 +248,8 @@ class netCDFMeta:
         self.__load_variable_attrs = load_variable_attrs
         self.__compute_dim_bounds = compute_dim_bounds
 
+        # Before any data is read, so a file modified mid-read looks stale to the next run.
+        self.__stat = get_file_stat(path)
         self.__attrs = get_attributes(ds)
         self.__path = path
 
@@ -164,7 +260,7 @@ class netCDFMeta:
 
         self.__time_eqv = time_eqv
         self.__time_bnds_eqv = time_bnds_eqv
-        self.__time_vals = ds[time_eqv][:]
+        self.__time_vals = np.ma.getdata(ds[time_eqv][:]).astype(np.float64)
 
         if len(self.__time_vals.shape) > 1:
             self.__time_vals = np.squeeze(self.__time_vals)
@@ -186,7 +282,7 @@ class netCDFMeta:
         self.__time_bounds_calendar = None
 
         if time_bnds_eqv and load_time_bounds:
-            self.__time_bounds_vals = ds[time_bnds_eqv][:]
+            self.__time_bounds_vals = np.ma.getdata(ds[time_bnds_eqv][:]).astype(np.float64)
 
             if len(self.__time_bounds_vals.shape) > 2:
                 self.__time_bounds_vals = np.squeeze(self.__time_bounds_vals)
@@ -506,6 +602,105 @@ class netCDFMeta:
             )
         return self.__dim_bounds
 
+    def get_stat(self):
+        """
+        Returns the file's size and modification time as of when this metadata was
+        read, so cached metadata can be matched to the file it describes.
+
+        :returns: ``{"size": bytes, "mtime_ns": int}``, or ``None`` if the file could not be stat-ed.
+        :rtype: dict or None
+        """
+        return self.__stat
+
+    def to_dict(self):
+        """
+        Returns the minimal state needed to rebuild this object, as JSON-serialisable data.
+
+        Cached CFTime values and the primary/secondary split are left out: both
+        are recomputed by :meth:`from_dict`.
+
+        :rtype: dict
+        """
+        return {
+            "path": str(self.__path),
+            "stat": self.__stat,
+            "attrs": _encode(self.__attrs),
+            "time_name": self.__time_eqv,
+            "time_vals": self.__time_vals.tolist(),
+            "time_units": self.__time_units,
+            "time_calendar": self.__time_calendar,
+            "time_bnds_name": self.__time_bnds_eqv,
+            "time_bnds_vals": None if self.__time_bounds_vals is None else self.__time_bounds_vals.tolist(),
+            "time_bnds_units": self.__time_bounds_units,
+            "time_bnds_calendar": self.__time_bounds_calendar,
+            "load_time_bounds": self.__load_time_bounds,
+            "variables": {
+                name: {
+                    "shape": list(self.__variable_shapes[name]),
+                    "dims": list(self.__variable_dims[name]),
+                    "dtype": "str" if self.__variable_dtypes[name] is str
+                             else np.dtype(self.__variable_dtypes[name]).str,
+                    "attrs": _encode(self.__variable_attrs[name]) if self.__load_variable_attrs else None,
+                }
+                for name in self.__var_names
+            },
+            "dim_bounds": _encode(self.__dim_bounds) if self.__compute_dim_bounds else None,
+        }
+
+    @classmethod
+    def from_dict(cls, state, shared=None):
+        """
+        Rebuilds a ``netCDFMeta`` from :meth:`to_dict` output without opening a file.
+
+        Dates are left undecoded, as with ``decode_dates=False``.
+
+        :param state: Dictionary produced by :meth:`to_dict`, possibly via JSON.
+        :type state: dict
+        :param shared: Cache for rebuilding many objects whose ``state["variables"]``
+            is the same dictionary object, as a manifest's entries are. The variable
+            tables are built once and shared by all of them, so treat what the
+            variable getters return as read-only. ``None`` builds a private copy.
+        :type shared: dict or None
+        :rtype: netCDFMeta
+        """
+        # pylint: disable=unused-private-member  # pylint misses that meta.__x is self.__x
+        meta = cls.__new__(cls)
+        meta.__path = state["path"]
+        meta.__stat = state["stat"]
+        meta.__attrs = _decode(state["attrs"])
+        meta.__time_eqv = state["time_name"]
+        meta.__time_vals = np.asarray(state["time_vals"], dtype=np.float64)
+        meta.__time_units = state["time_units"]
+        meta.__time_calendar = state["time_calendar"]
+        meta.__time_bnds_eqv = state["time_bnds_name"]
+        meta.__time_bounds_vals = (
+            None if state["time_bnds_vals"] is None else np.asarray(state["time_bnds_vals"], dtype=np.float64)
+        )
+        meta.__time_bounds_units = state["time_bnds_units"]
+        meta.__time_bounds_calendar = state["time_bnds_calendar"]
+        meta.__load_time_bounds = state["load_time_bounds"]
+        meta.__cftime_vals = None
+        meta.__cftime_bounds_vals = None
+        meta.__compute_dim_bounds = state["dim_bounds"] is not None
+        meta.__dim_bounds = _decode(state["dim_bounds"]) if meta.__compute_dim_bounds else {}
+
+        variables = state["variables"]
+        if shared is None:
+            shared = {}
+        if id(variables) not in shared:
+            shared[id(variables)] = _build_variable_tables(variables)
+        (
+            meta.__load_variable_attrs,
+            meta.__var_names,
+            meta.__primary_var_names,
+            meta.__secondary_var_names,
+            meta.__variable_shapes,
+            meta.__variable_dims,
+            meta.__variable_dtypes,
+            meta.__variable_attrs,
+        ) = shared[id(variables)]
+        return meta
+
 
 def get_meta_from_path(path: str):
     """
@@ -605,3 +800,133 @@ def split_valid(meta_map, is_valid_fn):
             removed[path] = meta
             logger.warning("Could not pull valid/complete metadata for '%s'.", path)
     return kept, removed
+
+
+def save_meta_manifest(meta_map, manifest_path, kind, merge=False):
+    """
+    Writes a ``{path: netCDFMeta}`` map to a single gzip-compressed JSON file.
+
+    Each entry carries the file stat taken when its metadata was read (see
+    :meth:`netCDFMeta.get_stat`), so :func:`load_meta_manifest` can tell later
+    whether the file has changed. Entries that are ``None`` (not pulled) or have no
+    stat are skipped. The write goes to a temporary file first, so an interrupted
+    run never leaves a truncated manifest.
+
+    To keep the file small, what files share is stored once. Files with the same
+    variable table (names, dims, dtypes, shapes) refer to one ``tables`` entry,
+    which also holds the global attributes common to all of them; each entry keeps
+    only its own differing attributes. The path is the entry's key, not repeated.
+    Inspect with ``zcat <manifest> | jq``.
+
+    The manifest is labelled with ``kind`` because the history-file and time-series
+    factories keep different metadata (see :func:`load_meta_manifest`).
+
+    :param meta_map: Metadata by path, such as ``dict(hf_collection.items())``.
+    :type meta_map: dict
+    :param manifest_path: Where to write the manifest.
+    :type manifest_path: str or pathlib.Path
+    :param kind: Label for what the metadata is, ``"hf"`` or ``"ts"``.
+    :type kind: str
+    :param merge: Keep the current entries (see :func:`load_meta_manifest`) of an
+        existing manifest at ``manifest_path`` for files not in ``meta_map``, so
+        saving a filtered subset doesn't drop the rest. Entries for changed or
+        deleted files are dropped.
+    :type merge: bool
+    :raises ValueError: If ``merge`` is set and the existing manifest is of another ``kind``.
+    """
+    if merge:
+        meta_map = {**load_meta_manifest(manifest_path, kind), **meta_map}
+    entries = {}
+    table_ids = {}  # serialised variable table -> table id
+    members = {}  # table id -> entries using it
+    tables = {}
+    for path, meta in meta_map.items():
+        if meta is None:
+            continue
+        if meta.get_stat() is None:
+            logger.warning("Not adding '%s' to the manifest: no file stat was recorded.", path)
+            continue
+        entry = meta.to_dict()
+        del entry["path"]
+        variables = entry.pop("variables")
+        table_key = json.dumps(variables)
+        if table_key not in table_ids:
+            table_ids[table_key] = str(len(table_ids))
+            tables[table_ids[table_key]] = {"variables": variables}
+            members[table_ids[table_key]] = []
+        entry["table"] = table_ids[table_key]
+        members[entry["table"]].append(entry)
+        entries[str(path)] = entry
+
+    for table_id, group in members.items():
+        common = {
+            key: value for key, value in group[0]["attrs"].items()
+            if all(key in other["attrs"] and other["attrs"][key] == value for other in group)
+        }
+        tables[table_id]["attrs"] = common
+        for entry in group:
+            entry["attrs"] = {key: value for key, value in entry["attrs"].items() if key not in common}
+
+    tmp_path = f"{manifest_path}.tmp"
+    with gzip.open(tmp_path, "wt", encoding="utf-8", compresslevel=MANIFEST_COMPRESSION_LEVEL) as manifest_file:
+        json.dump({"version": MANIFEST_VERSION, "kind": kind, "tables": tables, "entries": entries}, manifest_file)
+    os.replace(tmp_path, manifest_path)
+    logger.info("Wrote %s entries to manifest '%s'.", len(entries), manifest_path)
+
+
+def load_meta_manifest(manifest_path, kind):
+    """
+    Reads a manifest written by :func:`save_meta_manifest`, keeping only entries
+    that are still current.
+
+    An entry is current if its file still exists with the same size and
+    modification time as when its metadata was read. A missing, unreadable (including
+    not gzip) or wrong-version manifest is not an error: it gives an empty result, so
+    the caller falls back to reading headers.
+
+    A manifest of a different ``kind`` is an error, since the two kinds are not
+    interchangeable and silently replacing one would hide a misconfigured path.
+
+    Metadata from files with the same variable table shares its variable tables, so
+    treat what the variable getters return as read-only.
+
+    :param manifest_path: Manifest file to read.
+    :type manifest_path: str or pathlib.Path
+    :param kind: The kind the caller needs, ``"hf"`` or ``"ts"``.
+    :type kind: str
+    :raises ValueError: If the manifest was written with a different (or no) kind.
+    :returns: ``{path: netCDFMeta}`` for each current entry.
+    :rtype: dict[pathlib.Path, netCDFMeta]
+    """
+    try:
+        with gzip.open(manifest_path, "rt", encoding="utf-8") as manifest_file:
+            manifest = json.load(manifest_file)
+        if manifest["version"] != MANIFEST_VERSION:
+            logger.info("Ignoring manifest '%s': version %s is not %s.", manifest_path, manifest["version"],
+                        MANIFEST_VERSION)
+            return {}
+        manifest_kind = manifest.get("kind")
+        tables = manifest["tables"]
+        entries = manifest["entries"]
+    except (OSError, EOFError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        logger.info("No usable manifest at '%s': %s", manifest_path, exc)
+        return {}
+
+    if manifest_kind != kind:
+        raise ValueError(
+            f"Manifest '{manifest_path}' holds '{manifest_kind}' metadata but '{kind}' was requested. "
+            "Use a separate manifest file for each."
+        )
+
+    current = {}
+    shared = {}
+    for path, entry in entries.items():
+        try:
+            if entry["stat"] is not None and entry["stat"] == get_file_stat(path):
+                table = tables[entry["table"]]
+                state = {**entry, "path": path, "variables": table["variables"],
+                         "attrs": {**table["attrs"], **entry["attrs"]}}
+                current[Path(path)] = netCDFMeta.from_dict(state, shared)
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.warning("Skipping manifest entry for '%s': %s", path, exc)
+    return current
