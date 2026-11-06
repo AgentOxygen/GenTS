@@ -229,9 +229,9 @@ def get_group_timestep_delta(metas):
     """
     Computes the duration of one time step for a group of history files.
 
-    The duration is the gap between the two latest time values in the group, i.e.
-    the resolution at the end of the record. Fragmented tiles share every time
-    step, so their two latest values are identical and the delta is zero.
+    The duration is the gap between the two latest distinct time values in the
+    group, i.e. the resolution at the end of the record. Distinct, because
+    fragmented tiles share every time step.
 
     Only the two latest steps *per file* are compared as CFTime objects; each
     file's pair is picked in linear time from its raw float times, which are
@@ -243,15 +243,13 @@ def get_group_timestep_delta(metas):
     :type metas: list[gents.meta.netCDFMeta]
     :returns: Duration of one time step.
     :rtype: datetime.timedelta
-    :raises ValueError: If the group holds fewer than two time steps in total.
+    :raises ValueError: If the group holds fewer than two distinct time steps.
     """
     latest_candidates = []
-    total_steps = 0
     for meta in metas:
         # Time coordinates are never masked; dropping the unused netCDF mask
         # keeps the partition routines on plain arrays and warning-free.
         float_times = np.ma.getdata(np.atleast_1d(meta.get_float_times()))
-        total_steps += float_times.shape[0]
 
         if float_times.shape[0] <= 2:
             candidates = float_times
@@ -259,13 +257,10 @@ def get_group_timestep_delta(metas):
             candidates = float_times[np.argpartition(float_times, -2)[-2:]]
         latest_candidates.append(np.atleast_1d(meta.decode_time_values(candidates)))
 
-    if total_steps < 2:
-        raise ValueError(f"Expected time array of size 2 or greater, got {total_steps}.")
-
-    pooled = np.concatenate(latest_candidates)
-    latest_pair = np.partition(pooled, pooled.shape[0] - 2)[-2:]
-    latest_pair.sort()
-    return latest_pair[1] - latest_pair[0]
+    pooled = np.unique(np.concatenate(latest_candidates))
+    if pooled.shape[0] < 2:
+        raise ValueError(f"Expected time array of size 2 or greater, got {pooled.shape[0]}.")
+    return pooled[-1] - pooled[-2]
 
 
 def is_ds_within_years(ds_meta, min_year, max_year):
@@ -394,9 +389,10 @@ def merge_fragmented_groups(hf_groups, hf_meta_map):
     Merges spatially fragmented (tiled) history file groups into single groups.
 
     A group is taken to be fragmented when its first path does not end in ``.nc``
-    (tiles look like ``*.nc.0001``). Fragmented groups sharing the same non-time
-    dimension bounds are merged under one wildcard key; other groups pass through
-    unchanged.
+    (tiles look like ``*.nc.0001``). Fragmented groups of the same stream that
+    share the same non-time dimension bounds are merged under the key
+    :func:`sort_hf_groups` would give the stream's untiled files (``<dir>/<prefix>*``);
+    other groups pass through unchanged.
 
     :param hf_groups: ``{group pattern: [paths]}`` to merge.
     :type hf_groups: dict
@@ -404,7 +400,8 @@ def merge_fragmented_groups(hf_groups, hf_meta_map):
     :type hf_meta_map: dict
     :returns: New group mapping with fragmented groups merged.
     :rtype: dict
-    :raises KeyError: If a merged group's label collides with an existing group.
+    :raises KeyError: If a merged group's label collides with an existing group,
+        e.g. untiled files of the same stream, or a stream whose tiling changed.
     """
     new_groups = {}
     fragmented_groups = {}
@@ -420,20 +417,16 @@ def merge_fragmented_groups(hf_groups, hf_meta_map):
         num_fragmented_files = sum(len(paths) for paths in fragmented_groups.values())
         logger.info("Found %s spatially fragmented files in %s groups.", num_fragmented_files, len(fragmented_groups))
 
-    dim_hashes = {}
+    merged_groups = {}  # (stream label, non-time dimension bounds) -> paths
     for paths in fragmented_groups.values():
         init_meta = hf_meta_map[paths[0]]
         dims = init_meta.get_dim_bounds()
         dims = {variable: dims[variable] for variable in dims if variable != init_meta.get_time_var_name()}
-        dims_hash = str(dims)
+        untiled_path = Path(str(paths[0]).split(".nc", maxsplit=1)[0] + ".nc")
+        label = next(iter(sort_hf_groups([untiled_path])))
+        merged_groups.setdefault((label, str(dims)), []).extend(paths)
 
-        if dims_hash not in dim_hashes:
-            dim_hashes[dims_hash] = []
-
-        dim_hashes[dims_hash].extend(paths)
-
-    for paths in dim_hashes.values():
-        label = str(paths[0]).split(".nc", maxsplit=1)[0] + "*"
+    for (label, _), paths in merged_groups.items():
         if label not in new_groups:
             new_groups[label] = paths
         else:
@@ -963,16 +956,15 @@ class HFCollection:
         :type check_fragmented: bool
         :rtype: dict[str, list[pathlib.Path]]
         """
-        if self.__hf_groups is None:
-            self.__hf_groups = sort_hf_groups(list(self.__hf_to_meta_map.keys()))
+        if self.__hf_groups is None and check_fragmented:
+            self.check_pulled()
 
+        if self.__hf_groups is None:
+            groups = sort_hf_groups(list(self.__hf_to_meta_map.keys()))
             if check_fragmented:
-                self.check_pulled()
-                self.__hf_groups = merge_fragmented_groups(self.__hf_groups, self.__hf_to_meta_map)
-                self.__hf_groups = {
-                    group: sorted(paths, key=self.__first_time)
-                    for group, paths in self.__hf_groups.items()
-                }
+                groups = merge_fragmented_groups(groups, self.__hf_to_meta_map)
+                groups = {group: sorted(paths, key=self.__first_time) for group, paths in groups.items()}
+            self.__hf_groups = groups
 
         return self.__hf_groups
 

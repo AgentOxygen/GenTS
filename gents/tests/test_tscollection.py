@@ -995,3 +995,16 @@ def test_skip_existing_output_dir_with_glob_characters(continued_case):
     resumed = TSCollection(HFCollection(input_head_dir), str(special_dir)).skip_existing()
 
     assert len(resumed) == 0
+
+
+def test_fragmented_output_named_like_unfragmented(spatial_fragment_case):
+    """Tiled output is named <stream>.<var>.<range>.nc with a date range at the stream's real frequency, not
+    the first tile's timestep token and sub-hour stamps."""
+    import re
+    input_head_dir, output_head_dir = spatial_fragment_case
+    TSCollection(HFCollection(input_head_dir), str(output_head_dir)).execute()
+
+    names = sorted(path.name for path in find_files(output_head_dir, "*.nc"))
+    assert len(names) == SIMPLE_NUM_VARS
+    for name in names:
+        assert re.fullmatch(r"testing\.hf\.VAR\d+\.\d{6}-\d{6}\.nc", name), name
