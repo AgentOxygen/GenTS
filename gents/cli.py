@@ -3,6 +3,7 @@
 ``run_gents`` -- command line driver for the history file to time series pipeline.
 """
 import argparse
+import fnmatch
 import os
 import sys
 from pathlib import Path
@@ -194,6 +195,13 @@ def parse_arguments():
         help="Only generate time steps not already covered by existing time series files in the output directory, "
              "e.g. to continue a run that was extended. Cannot be combined with --overwrite."
     )
+    parser.add_argument(
+        "--frequency",
+        action="append",
+        default=[],
+        help="Only generate time series of this frequency, e.g. 'month_1' or 'day_*' (can be specified multiple "
+             "times). Labels are those of the output's frequency directories: hour_N, day_N, month_N, year_N, unsorted."
+    )
     return parser.parse_args()
 
 
@@ -299,6 +307,7 @@ def main():
         print(f"  HF manifest                     : {args.hf_manifest}")
         print(f"  Manifest only (dry run)         : {args.manifest_only}")
         print(f"  Skip existing TS files          : {args.skip_existing}")
+        print(f"  Frequencies                     : {args.frequency}")
         enable_logging(verbose=True)
 
     config_dir = Path(__file__).parent / "configs"
@@ -364,6 +373,13 @@ def main():
     if args.align_method is not None:
         # Output file names use the same alignment as the slicing.
         tsc = tsc.update_ts_orders(time_alignment_method=args.align_method)
+    if args.frequency:
+        found = sorted({tsc.get_order_frequency(order) for order in tsc})
+        unmatched = [freq_glob for freq_glob in args.frequency if not fnmatch.filter(found, freq_glob)]
+        if unmatched:
+            print(f"Warning: --frequency {unmatched} matched no time series. Frequencies found: {found}",
+                  file=sys.stderr)
+        tsc = tsc.include(freq_glob=args.frequency)
     if args.overwrite:
         tsc = tsc.apply_overwrite(path_glob="*")
 
