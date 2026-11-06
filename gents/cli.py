@@ -10,11 +10,12 @@ from pathlib import Path
 import yaml
 
 from gents.hfcollection import HFCollection
-from gents.meta import load_meta_manifest, save_meta_manifest
 from gents.timeseries import DEFAULT_MEMORY_LIMIT_BYTES, TSCollection
+from gents.tsinventory import TSInventory
 from gents.utils import enable_logging, get_version, log_hfcollection_info, log_tscollection_info
 
 HF_MANIFEST_NAME = "gents_manifest_hf.json.gz"
+TS_MANIFEST_NAME = "gents_manifest_ts.json.gz"
 
 
 def check_config(config_dict):
@@ -167,7 +168,8 @@ def parse_arguments():
         action="store_true",
         help="Do not read, create, or replace metadata manifests. By default a manifest of history file metadata "
              f"('{HF_MANIFEST_NAME}', in the output directory) is read to skip unchanged files, and written after "
-             "metadata is pulled (not on --dryrun unless --manifest-only is given)."
+             "metadata is pulled (not on --dryrun unless --manifest-only is given). With --skip-existing, a manifest "
+             f"of existing time series metadata ('{TS_MANIFEST_NAME}', in the output directory) is used the same way."
     )
     parser.add_argument(
         "--hf-manifest",
@@ -181,10 +183,60 @@ def parse_arguments():
         "--manifest-only",
         dest="manifest_only",
         action="store_true",
-        help="Dry run that still creates or replaces the history file metadata manifest, so a later run can reuse "
-             "it. No time series files are generated. Cannot be combined with --no-manifest."
+        help="Dry run that still creates or replaces the metadata manifests, so a later run can reuse them. No "
+             "time series files are generated. Cannot be combined with --no-manifest."
+    )
+    parser.add_argument(
+        "--skip-existing",
+        dest="skip_existing",
+        action="store_true",
+        help="Only generate time steps not already covered by existing time series files in the output directory, "
+             "e.g. to continue a run that was extended. Cannot be combined with --overwrite."
     )
     return parser.parse_args()
+
+
+def update_manifest(collection, manifest_path):
+    """
+    Writes a pulled collection's metadata into the manifest at ``manifest_path``,
+    unless the manifest exists and the pull read nothing from disk.
+
+    :param collection: A pulled ``HFCollection`` or ``TSInventory``.
+    :param manifest_path: Manifest file to create or update.
+    :type manifest_path: str
+    """
+    if collection.get_num_read_from_disk() > 0 or not os.path.exists(manifest_path):
+        collection.save_manifest(manifest_path, merge=True)
+
+
+def get_existing_ts_inventory(tsc, num_processes):
+    """
+    Returns an unpulled inventory of the existing output files that
+    :meth:`~gents.timeseries.TSCollection.skip_existing` would consider for
+    ``tsc``'s orders: ``<template>.<variable>.<time range>.nc`` in each order's
+    output directory. Other files there (history files, when the output
+    directory is the input directory) are left out, so they are never opened.
+
+    :param tsc: Collection whose orders' output to find.
+    :type tsc: gents.timeseries.TSCollection
+    :param num_processes: Worker processes for the inventory's metadata reads.
+    :type num_processes: int
+    :rtype: gents.tsinventory.TSInventory
+    """
+    prefixes = {}  # output directory -> {"<template name>.<variable>"}
+    for order in tsc:
+        template = Path(order["ts_path_template"])
+        prefixes.setdefault(template.parent, set()).add(f"{template.name}.{order['primary_var']}")
+
+    meta_map = {}
+    for parent, names in prefixes.items():
+        if parent.is_dir():
+            for entry in os.scandir(parent):
+                if entry.name.endswith(".nc") and entry.name.rsplit(".", 2)[0] in names:
+                    meta_map[Path(entry.path)] = None
+
+    root = os.path.commonpath(list(prefixes)) if prefixes else tsc.get_output_dir()
+    return TSInventory(root, num_processes=num_processes, meta_map=meta_map)
 
 
 def main():
@@ -214,6 +266,9 @@ def main():
     if args.manifest_only and args.no_manifest:
         raise ValueError("--manifest-only cannot be combined with --no-manifest.")
 
+    if args.skip_existing and args.overwrite:
+        raise ValueError("--skip-existing cannot be combined with --overwrite.")
+
     if args.compression is not None and args.level is None:
         raise ValueError(f"Compression '{args.compression}' selected, please specifiy a level using `--level`")
 
@@ -242,6 +297,7 @@ def main():
         print(f"  Use manifests                   : {not args.no_manifest}")
         print(f"  HF manifest                     : {args.hf_manifest}")
         print(f"  Manifest only (dry run)         : {args.manifest_only}")
+        print(f"  Skip existing TS files          : {args.skip_existing}")
         enable_logging(verbose=True)
 
     config_dir = Path(__file__).parent / "configs"
@@ -287,10 +343,7 @@ def main():
         hfc = hfc.pull_metadata(manifest_path=hf_manifest)
         if not args.dryrun or args.manifest_only:
             os.makedirs(Path(hf_manifest).parent, exist_ok=True)
-            if hfc.get_num_read_from_disk() > 0 or not os.path.exists(hf_manifest):
-                manifest_map = load_meta_manifest(hf_manifest, "hf")
-                manifest_map.update(hfc.items())
-                save_meta_manifest(manifest_map, hf_manifest, "hf")
+            update_manifest(hfc, hf_manifest)
 
     slice_batches = yaml_config["input_hf"].get("slicing", [])
     if not args.append or len(slice_batches) == 0:
@@ -328,6 +381,18 @@ def main():
     # After the YAML's, so an explicit --compression wins over the model default.
     if args.compression is not None:
         tsc = tsc.apply_compression(alg=args.compression, level=args.level, path_glob="*")
+
+    if args.skip_existing:
+        if args.no_manifest:
+            tsc = tsc.skip_existing()
+        else:
+            ts_manifest = str(Path(args.outputdir) / TS_MANIFEST_NAME)
+            ts_inventory = get_existing_ts_inventory(tsc, args.hfcores)
+            ts_inventory.pull_metadata(manifest_path=ts_manifest)
+            if not args.dryrun or args.manifest_only:
+                os.makedirs(Path(ts_manifest).parent, exist_ok=True)
+                update_manifest(ts_inventory, ts_manifest)
+            tsc = tsc.skip_existing(ts_inventory=ts_inventory)
 
     if args.verbose:
         log_hfcollection_info(hfc)

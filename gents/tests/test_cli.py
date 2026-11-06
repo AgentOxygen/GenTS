@@ -524,3 +524,63 @@ def test_cli_filtered_run_keeps_other_manifest_entries(simple_case, tmp_path):
         entries = json.load(manifest_file)["entries"]
     assert sorted(entries) == sorted(str(path) for path in paths)
     assert entries[str(paths[0])]["stat"]["mtime_ns"] == st.st_mtime_ns + 1
+
+
+def test_parse_skip_existing_flag():
+    """--skip-existing is off by default."""
+    with patch.object(sys, "argv", ["run_gents", "/data/input"]):
+        assert parse_arguments().skip_existing is False
+    with patch.object(sys, "argv", ["run_gents", "/data/input", "--skip-existing"]):
+        assert parse_arguments().skip_existing is True
+
+
+def test_main_skip_existing_with_overwrite_raises():
+    """--skip-existing and --overwrite contradict each other."""
+    with patch.object(sys, "argv", ["run_gents", "/data/input", "--skip-existing", "-w"]):
+        with pytest.raises(ValueError, match="--skip-existing"):
+            main()
+
+
+@pytest.mark.parametrize("extra_flags", [[], ["--no-manifest"]])
+def test_cli_skip_existing_writes_only_new_steps(continued_case, tmp_path, extra_flags):
+    """After the input is extended, --skip-existing adds one file per variable holding only the new steps."""
+    input_head_dir, _, extend = continued_case
+    output_dir = tmp_path / "out"
+    argv = ["run_gents", str(input_head_dir), "-o", str(output_dir)] + extra_flags
+    with patch.object(sys, "argv", argv):
+        main()
+    extend()
+    with patch.object(sys, "argv", argv + ["--skip-existing"]):
+        main()
+
+    times_by_var = {}
+    for name, (_, variables) in _read_output(output_dir).items():
+        times_by_var.setdefault(name.rsplit(".", 2)[0], []).append(variables["time"][0])
+    assert len(times_by_var) == CONTINUED_NUM_VARS
+    for file_times in times_by_var.values():
+        assert len(file_times) == 2
+        all_times = np.concatenate(file_times)
+        assert len(all_times) == len(np.unique(all_times)) == CONTINUED_INITIAL_NUM_HIST_FILES + CONTINUED_EXTEND_NUM_HIST_FILES
+    assert (output_dir / "gents_manifest_ts.json.gz").exists() == (extra_flags == [])
+
+
+def test_cli_skip_existing_reuses_ts_manifest(continued_case, tmp_path):
+    """The time series manifest is written by --skip-existing runs (not dry runs) and left alone when nothing changed."""
+    input_head_dir, _, _ = continued_case
+    output_dir = tmp_path / "out"
+    manifest = output_dir / "gents_manifest_ts.json.gz"
+    argv = ["run_gents", str(input_head_dir), "-o", str(output_dir), "--skip-existing"]
+    with patch.object(sys, "argv", argv[:-1]):
+        main()
+    with patch.object(sys, "argv", argv + ["--dryrun"]):
+        main()
+    assert not manifest.exists()
+
+    with patch.object(sys, "argv", argv):
+        main()
+    with gzip.open(manifest, "rt") as manifest_file:
+        assert len(json.load(manifest_file)["entries"]) == CONTINUED_NUM_VARS
+    os.utime(manifest, ns=(1, 1))  # a marker an unnecessary rewrite would overwrite
+    with patch.object(sys, "argv", argv):
+        main()
+    assert os.stat(manifest).st_mtime_ns == 1
