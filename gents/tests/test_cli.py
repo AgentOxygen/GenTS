@@ -639,3 +639,26 @@ def test_cli_gents_command_is_shell_quoted(simple_case, tmp_path, monkeypatch):
             assert shlex.split(command) == argv
             assert "'out dir'" in command and "'month_*'" in command
             assert ts_ds.getncattr("gents_cwd") == str(tmp_path)
+
+
+def test_cli_exits_nonzero_when_a_batch_fails(simple_case, tmp_path, monkeypatch, capsys):
+    """A failed batch is reported on stderr and makes run_gents exit with code 1 after the run finishes."""
+    from gents.mhfdataset import MHFDataset
+    original = MHFDataset.get_var_vals
+
+    def get_var_vals(self, var_name, *args, **kwargs):
+        if var_name == "VAR2":
+            raise OSError("simulated read failure")
+        return original(self, var_name, *args, **kwargs)
+    monkeypatch.setattr(MHFDataset, "get_var_vals", get_var_vals)
+
+    input_head_dir, _ = simple_case
+    with patch.object(sys, "argv", ["run_gents", str(input_head_dir), "-o", str(tmp_path / "out"), "-tc", "1"]):
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert "simulated read failure" in captured.err
+    assert "1 failed batch(es)" in captured.err
+    assert "GenTS done!" not in captured.out

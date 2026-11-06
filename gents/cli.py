@@ -261,6 +261,8 @@ def main():
 
     :raises ValueError: If ``--model`` names an unknown model, or ``--compression``
         is given without ``--level``.
+    :raises SystemExit: With code 1 if any time series failed to generate, after
+        the rest of the run has finished.
     """
     args = parse_arguments()
 
@@ -420,6 +422,14 @@ def main():
 
     if not (args.dryrun or args.manifest_only):
         tsc.execute(no_data=args.no_data, memory_limit_bytes=memory_limit_bytes)
+        failures = tsc.get_failures()
+        if failures:
+            for failure in failures:
+                print(f"Failed: {failure['ts_path_template']} {failure['primary_vars']}: {failure['error']}",
+                      file=sys.stderr)
+            print(f"GenTS finished with {len(failures)} failed batch(es); their time series were not written. "
+                  "Re-run to retry them.", file=sys.stderr)
+            sys.exit(1)
     else:
         print(f"Dry run: {len(tsc)} timeseries files would be generated.")
     print("GenTS done!")
