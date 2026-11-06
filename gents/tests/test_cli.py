@@ -244,6 +244,7 @@ def test_cli_simple_case(simple_case):
             assert is_monotonic(ts_ds["time"][:])
             var_name = str(path).split(".")[-3]
             assert ts_ds.getncattr("gents_command") == f"run_gents {str(input_head_dir)} -o {str(output_head_dir)}"
+            assert ts_ds.getncattr("gents_cwd") == os.getcwd()
 
 
 def test_cli_long_hf_slicing(long_case):
@@ -619,3 +620,22 @@ def test_cli_frequency_warns_on_unmatched_pattern(mixed_timestep_case, tmp_path,
     assert "['monthly'] matched no time series" in captured.err
     assert "month_1" in captured.err
     assert "Dry run: 6 timeseries files would be generated." in captured.out
+
+
+def test_cli_gents_command_is_shell_quoted(simple_case, tmp_path, monkeypatch):
+    """gents_command splits back into the exact arguments (spaces, globs intact); gents_cwd is where it ran."""
+    import shlex
+    input_head_dir, _ = simple_case
+    monkeypatch.chdir(tmp_path)
+    argv = ["run_gents", str(input_head_dir), "-o", "out dir", "--frequency", "month_*"]
+    with patch.object(sys, "argv", argv):
+        main()
+
+    ts_paths = find_files(tmp_path / "out dir", "*.nc")
+    assert len(ts_paths) == SIMPLE_NUM_VARS
+    for path in ts_paths:
+        with GenTSDataStore(path, "r") as ts_ds:
+            command = ts_ds.getncattr("gents_command")
+            assert shlex.split(command) == argv
+            assert "'out dir'" in command and "'month_*'" in command
+            assert ts_ds.getncattr("gents_cwd") == str(tmp_path)

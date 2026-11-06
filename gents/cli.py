@@ -5,6 +5,7 @@
 import argparse
 import fnmatch
 import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -415,7 +416,7 @@ def main():
         log_hfcollection_info(hfc)
         log_tscollection_info(tsc)
 
-    tsc = tsc.add_attrs({"gents_command": " ".join(sys.argv)})
+    tsc = tsc.add_attrs({"gents_command": shlex.join(sys.argv), "gents_cwd": os.getcwd()})
 
     if not (args.dryrun or args.manifest_only):
         tsc.execute(no_data=args.no_data, memory_limit_bytes=memory_limit_bytes)
