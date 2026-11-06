@@ -877,6 +877,7 @@ class TSCollection:
         :rtype: TSCollection
         :raises ValueError: If an order's output directory is outside ``ts_inventory``'s root.
         """
+        inventory_root = None
         if ts_inventory is not None:
             ts_inventory.check_pulled()
             inventory_root = os.path.abspath(ts_inventory.get_input_dir())

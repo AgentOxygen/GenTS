@@ -663,6 +663,7 @@ class netCDFMeta:
         :type shared: dict or None
         :rtype: netCDFMeta
         """
+        # pylint: disable=unused-private-member  # pylint misses that meta.__x is self.__x
         meta = cls.__new__(cls)
         meta.__path = state["path"]
         meta.__stat = state["stat"]
