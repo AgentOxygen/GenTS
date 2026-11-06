@@ -43,6 +43,7 @@ def parse_arguments():
     :rtype: argparse.Namespace
     """
     parser = argparse.ArgumentParser(
+        prog="run_gents",
         description="GenTS "
     )
     parser.add_argument(
