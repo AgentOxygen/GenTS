@@ -20,9 +20,9 @@ from pathlib import Path
 import numpy as np
 
 from gents.datastore import GenTSDataStore
-from gents.meta import get_attributes
+from gents.meta import get_attributes, get_file_stat, netCDFMeta
 from gents.mhfdataset import MHFDataset
-from gents.tsinventory import TSInventory
+from gents.tsinventory import TSInventory, build_ts_meta
 from gents.utils import LOG_LEVEL_IO_WARNING, ProgressBar, get_timestep_label, get_version
 
 logger = logging.getLogger(__name__)
@@ -145,6 +145,7 @@ def write_timeseries_file(
     append_attrs=None,
     no_data=False,
     chunk_target_bytes=CHUNK_TARGET_BYTES,
+    return_metadata=False,
 ):
     """
     Writes one time series file, holding one primary variable and every secondary.
@@ -197,13 +198,19 @@ def write_timeseries_file(
         :func:`compute_chunksizes`. A non-default value will fail
         :func:`check_timeseries_conform`.
     :type chunk_target_bytes: int
-    :returns: Path to the written (or skipped) output file.
-    :rtype: str
+    :param return_metadata: Also return the written file's metadata, built from
+        the open dataset (no re-read), for a metadata manifest.
+    :type return_metadata: bool
+    :returns: Path to the written (or skipped) output file; with
+        ``return_metadata``, ``(path, metadata)``, where metadata is ``None`` if
+        the file was skipped or its metadata could not be built.
+    :rtype: str or tuple[str, gents.meta.netCDFMeta or None]
     """
     global_attrs = agg_hf_ds.get_global_attrs()
 
     if not overwrite and isfile(ts_out_path) and check_timeseries_integrity(ts_out_path):
-        return ts_out_path
+        return (ts_out_path, None) if return_metadata else ts_out_path
+    meta = None
     out_path = Path(ts_out_path)
     partial_path = str(out_path.with_name(f".{out_path.stem}.partial"))
     try:
@@ -307,16 +314,58 @@ def write_timeseries_file(
             if append_attrs is None:
                 append_attrs = {}
             ts_ds.setncatts(global_attrs | append_attrs | {"gents_version": str(get_version())})
+            if return_metadata:
+                meta = _build_written_meta(ts_ds, partial_path)
         os.replace(partial_path, ts_out_path)
     except BaseException:
         if isfile(partial_path):
             remove(partial_path)
         raise
-    return ts_out_path
+    if meta is not None:
+        meta = _finalize_written_meta(meta, ts_out_path)
+    return (ts_out_path, meta) if return_metadata else ts_out_path
+
+
+def _build_written_meta(ts_ds, path):
+    """Builds a just-written file's metadata from its open dataset; ``None`` (logged) if that fails."""
+    try:
+        return build_ts_meta(ts_ds, path)
+    except Exception as exc:  # pylint: disable=broad-exception-caught  # never fail a completed write
+        logger.warning("Could not record metadata for '%s'; it will be read on the next run: %s", path, exc)
+        return None
+
+
+def _finalize_written_meta(meta, ts_out_path):
+    """
+    Re-points metadata built while the file was open at the finished file. Size and
+    modification time are only final after close (the rename keeps them), so the stat
+    taken while building would not match the file.
+    """
+    state = meta.to_dict()
+    state["path"] = str(ts_out_path)
+    state["stat"] = get_file_stat(ts_out_path)
+    return netCDFMeta.from_dict(state) if state["stat"] is not None else None
+
+
+def get_ts_output_path(ts_path_template, primary_var, ts_string):
+    """
+    Returns the path of the time series file an order writes:
+    ``<ts_path_template>.<primary_var>.<ts_string>.nc``.
+
+    :param ts_path_template: The order's ``ts_path_template``.
+    :type ts_path_template: str
+    :param primary_var: The order's primary variable (or ``'auxiliary'``).
+    :type primary_var: str
+    :param ts_string: The order's timestamp range, e.g. ``'185001-185912'``.
+    :type ts_string: str
+    :rtype: str
+    """
+    return f"{ts_path_template}.{primary_var}.{ts_string}.nc"
 
 
 def generate_time_series(
-    hf_paths, ts_path_template, secondary_vars, ts_args, no_data=False, memory_limit_bytes=DEFAULT_MEMORY_LIMIT_BYTES
+    hf_paths, ts_path_template, secondary_vars, ts_args, no_data=False, memory_limit_bytes=DEFAULT_MEMORY_LIMIT_BYTES,
+    return_metadata=False
 ):
     """
     Generates every time series file for one group of history files.
@@ -340,8 +389,11 @@ def generate_time_series(
     :type no_data: bool
     :param memory_limit_bytes: Cache ceiling for the ``MHFDataset``.
     :type memory_limit_bytes: float
-    :returns: Paths to the generated time series files.
-    :rtype: list[str]
+    :param return_metadata: Return ``(path, metadata)`` pairs instead of paths
+        (see :func:`write_timeseries_file`).
+    :type return_metadata: bool
+    :returns: Paths to the generated time series files, or ``(path, metadata)`` pairs.
+    :rtype: list[str] or list[tuple[str, gents.meta.netCDFMeta or None]]
     """
     ts_paths = []
     preloads = [] if no_data else [name for name in list(ts_args) if name != "auxiliary"]
@@ -355,7 +407,7 @@ def generate_time_series(
         for variable in ts_args:
             args = copy.deepcopy(ts_args[variable])
             ts_string = args["ts_string"]
-            ts_out_path = f"{ts_path_template}.{variable}.{ts_string}.nc"
+            ts_out_path = get_ts_output_path(ts_path_template, variable, ts_string)
             del args["ts_string"]
 
             ts_paths.append(write_timeseries_file(
@@ -364,6 +416,7 @@ def generate_time_series(
                 primary_var=variable,
                 secondary_vars_data=secondary_vars_data,
                 no_data=no_data,
+                return_metadata=return_metadata,
                 **args
             ))
     return ts_paths
@@ -482,6 +535,7 @@ class TSCollection:
         else:
             self.__orders = ts_orders
         self.__failures = []
+        self.__written_metadata = {}
 
     def __contains__(self, key):
         return key in self.__orders
@@ -1066,6 +1120,7 @@ class TSCollection:
         self.create_directories()
         results = []
         self.__failures = []
+        self.__written_metadata = {}
 
         optimized_orders = []
         if optimize:
@@ -1105,7 +1160,8 @@ class TSCollection:
                     "secondary_vars": init_order["secondary_vars"],
                     "ts_args": ts_args,
                     "no_data": no_data,
-                    "memory_limit_bytes": memory_limit_bytes
+                    "memory_limit_bytes": memory_limit_bytes,
+                    "return_metadata": True,
                 })
         else:
             for index, order in enumerate(self.__orders):
@@ -1121,7 +1177,8 @@ class TSCollection:
                     "secondary_vars": order["secondary_vars"],
                     "ts_args": ts_args,
                     "no_data": no_data,
-                    "memory_limit_bytes": memory_limit_bytes
+                    "memory_limit_bytes": memory_limit_bytes,
+                    "return_metadata": True,
                 })
         prog_bar = ProgressBar(total=len(optimized_orders), label="Generating Timeseries", quiet=not show_progress)
         if self.__num_processes > 1:
@@ -1166,8 +1223,10 @@ class TSCollection:
 
         output_paths = []
         for result in results:
-            for path in result:
+            for path, meta in result:
                 output_paths.append(path)
+                if meta is not None:
+                    self.__written_metadata[Path(path)] = meta
 
         return output_paths
 
@@ -1177,6 +1236,18 @@ class TSCollection:
             "primary_vars": sorted(args["ts_args"]),
             "error": f"{type(exc).__name__}: {exc}",
         })
+
+    def get_written_metadata(self):
+        """
+        Returns the metadata of every file this collection's last :meth:`execute`
+        wrote, built by the writer from the open file rather than read back, for
+        recording in a metadata manifest (e.g. with
+        :meth:`gents.tsinventory.TSInventory.save_manifest`). Files skipped as
+        already complete are not included.
+
+        :rtype: dict[pathlib.Path, gents.meta.netCDFMeta]
+        """
+        return self.__written_metadata
 
     def get_failures(self):
         """
