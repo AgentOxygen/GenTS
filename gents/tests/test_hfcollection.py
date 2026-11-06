@@ -452,8 +452,8 @@ def test_spatially_fragmented_handling(spatial_fragment_case):
 
 def _reference_timestep_delta_map(hf_collection):
     """Original (pre-optimization) timestep-delta computation, kept as a
-    behavioral oracle: for each group, sort every cftime value in the group and
-    take the gap between the two latest steps."""
+    behavioral oracle: for each group, sort every distinct cftime value in the
+    group and take the gap between the two latest steps."""
     groups = hf_collection.get_groups()
     reference = {}
     for group in groups:
@@ -465,7 +465,7 @@ def _reference_timestep_delta_map(hf_collection):
                     times.append(ts)
             else:
                 times.append(cftimes)
-        times = np.sort(times)
+        times = np.unique(times)
         for path in groups[group]:
             reference[path] = times[-1] - times[-2]
     return reference
@@ -495,13 +495,13 @@ def test_get_timestep_delta_matches_reference(simple_case, multistep_large_case,
     for path in hf_collection:
         assert hf_collection.get_timestep_delta(path) == timedelta(days=30)
 
-    # Spatially fragmented tiles share every timestep, so the two latest values
-    # are identical -> a zero-length step (a property the optimization preserves).
+    # Spatially fragmented tiles share every timestep; the step is the gap between
+    # distinct times (180 days in this fixture), not zero.
     input_head_dir, _ = spatial_fragment_case
     hf_collection = HFCollection(input_head_dir)
     hf_collection.pull_metadata()
     for path in hf_collection:
-        assert hf_collection.get_timestep_delta(path) == timedelta(0)
+        assert hf_collection.get_timestep_delta(path) == timedelta(days=180)
 
 
 def test_no_history_files(tmp_path, monkeypatch):
@@ -963,3 +963,36 @@ def test_get_num_read_from_disk(simple_case):
     os.utime(touched, ns=(st.st_atime_ns, st.st_mtime_ns + 1))
     third = HFCollection(str(hf_dir)).pull_metadata(manifest_path=manifest)
     assert third.get_num_read_from_disk() == 1
+
+
+def test_fragmented_group_keyed_by_stream_with_real_timestep(spatial_fragment_case):
+    """Merged tiles are grouped as the stream's untiled files would be, with the distinct-time step, even when
+    get_groups() is what triggers the pull."""
+    from datetime import timedelta
+    input_head_dir, _ = spatial_fragment_case
+    hf_collection = HFCollection(input_head_dir)
+    groups = hf_collection.get_groups()  # pulls; deltas must be computed over the merged group
+
+    assert list(groups) == [f"{input_head_dir}/testing.hf*"]
+    for path in groups[f"{input_head_dir}/testing.hf*"]:
+        assert hf_collection.get_timestep_delta(path) == timedelta(days=180)
+
+
+def test_fragmented_streams_on_one_grid_stay_separate(tmp_path):
+    """Two tiled streams sharing a grid and a directory become two groups, not one merged group of both."""
+    lat, lon = np.linspace(-90, 90, 4), np.linspace(-180, 180, 4)
+    dim_shapes = {"time": None, "bnds": 2, "lat": 2, "lon": 2}
+    for stream in ("h0", "h1"):
+        for step in range(3):
+            for tile, (lat_index, lon_index) in enumerate([(0, 0), (0, 2), (2, 0), (2, 2)]):
+                generate_history_file(
+                    f"{tmp_path}/c.{stream}.{step:05}.nc.{tile}", [(step + .5) * 30], [[step * 30, (step + 1) * 30]],
+                    dim_shapes=dim_shapes,
+                    dim_vals={"lat": lat[lat_index:lat_index + 2], "lon": lon[lon_index:lon_index + 2]},
+                )
+
+    groups = HFCollection(str(tmp_path)).get_groups()
+    assert sorted(groups) == [f"{tmp_path}/c.h0*", f"{tmp_path}/c.h1*"]
+    for stream in ("h0", "h1"):
+        assert all(f"c.{stream}." in path.name for path in groups[f"{tmp_path}/c.{stream}*"])
+        assert len(groups[f"{tmp_path}/c.{stream}*"]) == 12

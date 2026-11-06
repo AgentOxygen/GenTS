@@ -584,3 +584,38 @@ def test_cli_skip_existing_reuses_ts_manifest(continued_case, tmp_path):
     with patch.object(sys, "argv", argv):
         main()
     assert os.stat(manifest).st_mtime_ns == 1
+
+
+def test_parse_frequency_flag():
+    """--frequency collects every value given."""
+    with patch.object(sys, "argv", ["run_gents", "/data/input"]):
+        assert parse_arguments().frequency == []
+    with patch.object(sys, "argv", ["run_gents", "/data/input", "--frequency", "month_1", "--frequency", "day_*"]):
+        assert parse_arguments().frequency == ["month_1", "day_*"]
+
+
+def test_cli_frequency_writes_only_matching_frequencies(mixed_timestep_case, tmp_path):
+    """Only time series of the requested frequencies are written, into their frequency directories."""
+    input_head_dir, _ = mixed_timestep_case
+    output_dir = tmp_path / "out"
+    argv = ["run_gents", str(input_head_dir), "-o", str(output_dir), "--frequency", "month_1", "--frequency", "year_*"]
+    with patch.object(sys, "argv", argv):
+        main()
+
+    ts_paths = find_files(output_dir, "*.nc")
+    assert len(ts_paths) > 0
+    assert {path.parent.name for path in ts_paths} == {"month_1", "year_1"}
+
+
+def test_cli_frequency_warns_on_unmatched_pattern(mixed_timestep_case, tmp_path, capsys):
+    """A --frequency pattern that matches nothing (e.g. a typo) is reported with the frequencies present."""
+    input_head_dir, _ = mixed_timestep_case
+    argv = ["run_gents", str(input_head_dir), "-o", str(tmp_path / "out"), "--dryrun",
+            "--frequency", "monthly", "--frequency", "day_1"]
+    with patch.object(sys, "argv", argv):
+        main()
+
+    captured = capsys.readouterr()
+    assert "['monthly'] matched no time series" in captured.err
+    assert "month_1" in captured.err
+    assert "Dry run: 6 timeseries files would be generated." in captured.out
