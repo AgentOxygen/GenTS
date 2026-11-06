@@ -19,6 +19,25 @@ from gents.utils import filter_by_globs, get_timestep_label
 logger = logging.getLogger(__name__)
 
 
+def build_ts_meta(ds, path):
+    """
+    Builds a time series file's :class:`~gents.meta.netCDFMeta` from an open
+    dataset, with the settings every time series metadata read uses, so metadata
+    built by the writer matches what a later read would produce.
+
+    Time bounds are not loaded: nothing reads them from time series metadata, and
+    for long, high-frequency files they would be most of the memory each entry
+    takes, in memory and in manifests.
+
+    :param ds: Open dataset of the time series file.
+    :type ds: gents.datastore.GenTSDataStore
+    :param path: Path of the file.
+    :type path: str
+    :rtype: gents.meta.netCDFMeta
+    """
+    return netCDFMeta(ds, path, decode_dates=False, load_time_bounds=False, compute_dim_bounds=False)
+
+
 def get_ts_meta_from_path(path):
     """
     Reads a time series file's header into a :class:`~gents.meta.netCDFMeta`.
@@ -33,7 +52,7 @@ def get_ts_meta_from_path(path):
     """
     try:
         with GenTSDataStore(path, "r") as ds:
-            return netCDFMeta(ds, path, decode_dates=False, compute_dim_bounds=False)
+            return build_ts_meta(ds, path)
     except Exception as e:
         raise type(e)(f"{e} Path: {path}") from e
 

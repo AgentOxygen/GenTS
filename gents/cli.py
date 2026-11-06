@@ -5,13 +5,14 @@
 import argparse
 import fnmatch
 import os
+import shlex
 import sys
 from pathlib import Path
 
 import yaml
 
 from gents.hfcollection import HFCollection
-from gents.timeseries import DEFAULT_MEMORY_LIMIT_BYTES, TSCollection
+from gents.timeseries import DEFAULT_MEMORY_LIMIT_BYTES, TSCollection, get_ts_output_path
 from gents.tsinventory import TSInventory
 from gents.utils import enable_logging, get_version, log_hfcollection_info, log_tscollection_info
 
@@ -70,7 +71,8 @@ def parse_arguments():
     parser.add_argument(
         "-d", "--dryrun",
         action="store_true",
-        help="Reads and interprets history file metadata but does not generate time series files."
+        help="Reads and interprets history file metadata but does not generate time series files. Lists existing "
+             "output files that are incomplete or unreadable and would be replaced."
     )
     parser.add_argument(
         "-nd", "--no-data",
@@ -170,8 +172,9 @@ def parse_arguments():
         action="store_true",
         help="Do not read, create, or replace metadata manifests. By default a manifest of history file metadata "
              f"('{HF_MANIFEST_NAME}', in the output directory) is read to skip unchanged files, and written after "
-             "metadata is pulled (not on --dryrun unless --manifest-only is given). With --skip-existing, a manifest "
-             f"of existing time series metadata ('{TS_MANIFEST_NAME}', in the output directory) is used the same way."
+             "metadata is pulled (not on --dryrun unless --manifest-only is given). A manifest of existing time series "
+             f"metadata ('{TS_MANIFEST_NAME}', in the output directory) is used the same way to skip output that is "
+             "already complete, and also records the files each run writes."
     )
     parser.add_argument(
         "--hf-manifest",
@@ -218,12 +221,22 @@ def update_manifest(collection, manifest_path):
         collection.save_manifest(manifest_path, merge=True)
 
 
+def get_order_output_path(order):
+    """
+    Returns the path of the time series file an order writes.
+
+    :param order: A :class:`~gents.timeseries.TSCollection` order.
+    :type order: dict
+    :rtype: str
+    """
+    return get_ts_output_path(order["ts_path_template"], order["primary_var"], order["ts_string"])
+
+
 def get_existing_ts_inventory(tsc, num_processes):
     """
-    Returns an unpulled inventory of the existing output files that
-    :meth:`~gents.timeseries.TSCollection.skip_existing` would consider for
-    ``tsc``'s orders: ``<template>.<variable>.<time range>.nc`` in each order's
-    output directory. Other files there (history files, when the output
+    Returns an unpulled inventory of the existing output files that ``tsc``'s
+    orders could have written: ``<template>.<variable>.<time range>.nc`` in each
+    order's output directory. Other files there (history files, when the output
     directory is the input directory) are left out, so they are never opened.
 
     :param tsc: Collection whose orders' output to find.
@@ -260,6 +273,8 @@ def main():
 
     :raises ValueError: If ``--model`` names an unknown model, or ``--compression``
         is given without ``--level``.
+    :raises SystemExit: With code 1 if any time series failed to generate, after
+        the rest of the run has finished.
     """
     args = parse_arguments()
 
@@ -399,26 +414,49 @@ def main():
     if args.compression is not None:
         tsc = tsc.apply_compression(alg=args.compression, level=args.level, path_glob="*")
 
-    if args.skip_existing:
-        if args.no_manifest:
-            tsc = tsc.skip_existing()
-        else:
-            ts_manifest = str(Path(args.outputdir) / TS_MANIFEST_NAME)
-            ts_inventory = get_existing_ts_inventory(tsc, args.hfcores)
-            ts_inventory.pull_metadata(manifest_path=ts_manifest)
-            if not args.dryrun or args.manifest_only:
-                os.makedirs(Path(ts_manifest).parent, exist_ok=True)
-                update_manifest(ts_inventory, ts_manifest)
+    ts_manifest = None if args.no_manifest else str(Path(args.outputdir) / TS_MANIFEST_NAME)
+    if not args.overwrite:
+        # A pulled inventory holds only complete, stamped files, so orders whose output is one of them are done.
+        # The manifest makes this cheap: only files new or changed since it was written are opened.
+        ts_inventory = get_existing_ts_inventory(tsc, args.hfcores)
+        ts_inventory.pull_metadata(manifest_path=ts_manifest)
+        if ts_manifest is not None and (not args.dryrun or args.manifest_only):
+            os.makedirs(Path(ts_manifest).parent, exist_ok=True)
+            update_manifest(ts_inventory, ts_manifest)
+        complete = set(ts_inventory)
+        tsc = tsc.copy(ts_orders=[order for order in tsc if Path(get_order_output_path(order)) not in complete])
+        if args.skip_existing:
             tsc = tsc.skip_existing(ts_inventory=ts_inventory)
+        del ts_inventory, complete  # released before execute: one metadata object per existing output file
 
     if args.verbose:
         log_hfcollection_info(hfc)
         log_tscollection_info(tsc)
 
-    tsc = tsc.add_attrs({"gents_command": " ".join(sys.argv)})
+    tsc = tsc.add_attrs({"gents_command": shlex.join(sys.argv), "gents_cwd": os.getcwd()})
 
     if not (args.dryrun or args.manifest_only):
         tsc.execute(no_data=args.no_data, memory_limit_bytes=memory_limit_bytes)
+        written_metadata = tsc.get_written_metadata()
+        if ts_manifest is not None and written_metadata:
+            # Recorded by the run that wrote them, from metadata the writer built, so no run ever reopens them.
+            TSInventory(args.outputdir, meta_map=written_metadata).save_manifest(ts_manifest, merge=True)
+        failures = tsc.get_failures()
+        if failures:
+            for failure in failures:
+                print(f"Failed: {failure['ts_path_template']} {failure['primary_vars']}: {failure['error']}",
+                      file=sys.stderr)
+            print(f"GenTS finished with {len(failures)} failed batch(es); their time series were not written. "
+                  "Re-run to retry them.", file=sys.stderr)
+            sys.exit(1)
     else:
         print(f"Dry run: {len(tsc)} timeseries files would be generated.")
+        # Complete output was dropped above, so any output that still exists is incomplete or unreadable.
+        damaged = [] if args.overwrite else [
+            path for path in map(get_order_output_path, tsc) if os.path.isfile(path)
+        ]
+        if damaged:
+            print(f"{len(damaged)} existing files are incomplete or unreadable and would be replaced:")
+            for path in damaged:
+                print(f"  {path}")
     print("GenTS done!")

@@ -20,9 +20,9 @@ from pathlib import Path
 import numpy as np
 
 from gents.datastore import GenTSDataStore
-from gents.meta import get_attributes
+from gents.meta import get_attributes, get_file_stat, netCDFMeta
 from gents.mhfdataset import MHFDataset
-from gents.tsinventory import TSInventory
+from gents.tsinventory import TSInventory, build_ts_meta
 from gents.utils import LOG_LEVEL_IO_WARNING, ProgressBar, get_timestep_label, get_version
 
 logger = logging.getLogger(__name__)
@@ -60,7 +60,9 @@ def check_timeseries_integrity(ts_path: str):
     Checks whether a time series file was written completely by GenTS.
 
     The ``gents_version`` attribute is stamped last, so its presence means the
-    write finished.
+    write finished. Current versions also only move a file to its final path once
+    it is complete (see :func:`write_timeseries_file`); the stamp still guards
+    output written in place by earlier versions.
 
     :param ts_path: Path to the time series file to inspect.
     :type ts_path: str
@@ -143,14 +145,22 @@ def write_timeseries_file(
     append_attrs=None,
     no_data=False,
     chunk_target_bytes=CHUNK_TARGET_BYTES,
+    return_metadata=False,
 ):
     """
     Writes one time series file, holding one primary variable and every secondary.
 
-    An existing output file is deleted and rewritten when ``overwrite`` is set;
-    otherwise it is kept and skipped if it passes
-    :func:`check_timeseries_integrity`, and deleted as corrupt if it does not.
-    The completed file is stamped with a ``gents_version`` attribute last.
+    An existing output file is replaced when ``overwrite`` is set; otherwise it is
+    kept and skipped if it passes :func:`check_timeseries_integrity`, and replaced
+    if it does not. The completed file is stamped with a ``gents_version``
+    attribute last.
+
+    The file is written to a hidden ``.<name>.partial`` file in the same directory
+    and renamed over ``ts_out_path`` only once it is complete, so the final path
+    never holds a partial file and a failed write leaves any previous file intact.
+    The partial name doesn't match ``*.nc*``, so file discovery never picks it up.
+    A write that raises removes its partial file; one killed outright leaves it,
+    and the next write of the same file replaces it.
 
     Every variable is created with the source's ``_FillValue`` (if any) and any
     slice that is entirely that fill value is left unwritten, which is what keeps
@@ -188,123 +198,174 @@ def write_timeseries_file(
         :func:`compute_chunksizes`. A non-default value will fail
         :func:`check_timeseries_conform`.
     :type chunk_target_bytes: int
-    :returns: Path to the written (or skipped) output file.
-    :rtype: str
+    :param return_metadata: Also return the written file's metadata, built from
+        the open dataset (no re-read), for a metadata manifest.
+    :type return_metadata: bool
+    :returns: Path to the written (or skipped) output file; with
+        ``return_metadata``, ``(path, metadata)``, where metadata is ``None`` if
+        the file was skipped or its metadata could not be built.
+    :rtype: str or tuple[str, gents.meta.netCDFMeta or None]
     """
     global_attrs = agg_hf_ds.get_global_attrs()
 
-    if overwrite and isfile(ts_out_path):
-        remove(ts_out_path)
-    elif not overwrite and isfile(ts_out_path):
-        if check_timeseries_integrity(ts_out_path):
-            return ts_out_path
-        remove(ts_out_path)
+    if not overwrite and isfile(ts_out_path) and check_timeseries_integrity(ts_out_path):
+        return (ts_out_path, None) if return_metadata else ts_out_path
+    meta = None
+    out_path = Path(ts_out_path)
+    partial_path = str(out_path.with_name(f".{out_path.stem}.partial"))
+    try:
+        if ts_start_index is None:
+            ts_start_index = 0
+        if ts_end_index is None:
+            ts_end_index = len(agg_hf_ds.get_time_vals())
+        time_name = agg_hf_ds.get_time_var_name()
 
-    if ts_start_index is None:
-        ts_start_index = 0
-    if ts_end_index is None:
-        ts_end_index = len(agg_hf_ds.get_time_vals())
-    time_name = agg_hf_ds.get_time_var_name()
+        with GenTSDataStore(partial_path, mode="w") as ts_ds:
+            if primary_var != "auxiliary":
+                var_shape = agg_hf_ds.get_var_data_shape(primary_var)
+                var_dims = agg_hf_ds.get_var_dimensions(primary_var)
 
-    with GenTSDataStore(ts_out_path, mode="w") as ts_ds:
-        if primary_var != "auxiliary":
-            var_shape = agg_hf_ds.get_var_data_shape(primary_var)
-            var_dims = agg_hf_ds.get_var_dimensions(primary_var)
-
-            var_shape[0] = ts_end_index - ts_start_index
-
-            for index, dim in enumerate(var_dims):
-                if dim == time_name:
-                    ts_ds.createDimension(dim, None)
-                else:
-                    ts_ds.createDimension(dim, var_shape[index])
-
-            var_dtype = agg_hf_ds.get_var_dtype(primary_var)
-            chunksizes = compute_chunksizes(var_shape, var_dtype.itemsize, target_bytes=chunk_target_bytes)
-
-            # _FillValue goes through creation so unwritten regions read back as
-            # it, and is then omitted from the copied attributes (netCDF rejects
-            # setting it twice).
-            primary_attrs = agg_hf_ds.get_var_attrs(primary_var)
-            primary_fill = primary_attrs.get("_FillValue", None)
-
-            var_data = ts_ds.createVariable(primary_var,
-                                            var_dtype,
-                                            var_dims,
-                                            complevel=complevel,
-                                            compression=compression,
-                                            chunksizes=chunksizes,
-                                            fill_value=primary_fill)
-            var_data.set_auto_mask(False)
-            var_data.set_auto_scale(False)
-            var_data.set_always_mask(False)
-
-            ts_ds[primary_var].setncatts(
-                {key: val for key, val in primary_attrs.items() if key != "_FillValue"}
-            )
-
-            if no_data:
-                pass
-            elif len(var_shape) > 0 and time_name in var_dims:
-                for i in range(0, var_shape[0], chunksizes[0]):
-                    end = min(i + chunksizes[0], var_shape[0])
-                    chunk = agg_hf_ds.get_var_vals(
-                        primary_var, time_index_start=ts_start_index+i, time_index_end=ts_start_index+end
-                    )
-                    if not _is_missing(chunk, primary_fill):
-                        var_data[i:end] = chunk
-            else:
-                chunk = agg_hf_ds.get_var_vals(primary_var)[ts_start_index:ts_end_index]
-                if not _is_missing(chunk, primary_fill):
-                    var_data[:] = chunk
-
-        for secondary_var in secondary_vars_data:
-            var_shape = agg_hf_ds.get_var_data_shape(secondary_var)
-            var_dims = agg_hf_ds.get_var_dimensions(secondary_var)
-
-            if time_name in var_dims:
                 var_shape[0] = ts_end_index - ts_start_index
 
-            for index, dim in enumerate(var_dims):
-                if dim not in ts_ds.dimensions:
+                for index, dim in enumerate(var_dims):
                     if dim == time_name:
                         ts_ds.createDimension(dim, None)
                     else:
                         ts_ds.createDimension(dim, var_shape[index])
 
-            svar_attrs = agg_hf_ds.get_var_attrs(secondary_var)
-            svar_fill = svar_attrs.get("_FillValue", None)
+                var_dtype = agg_hf_ds.get_var_dtype(primary_var)
+                chunksizes = compute_chunksizes(var_shape, var_dtype.itemsize, target_bytes=chunk_target_bytes)
 
-            svar_data = ts_ds.createVariable(secondary_var,
-                                            agg_hf_ds.get_var_dtype(secondary_var),
-                                            var_dims,
-                                            complevel=complevel,
-                                            compression=compression,
-                                            chunksizes=var_shape,
-                                            fill_value=svar_fill)
+                # _FillValue goes through creation so unwritten regions read back as
+                # it, and is then omitted from the copied attributes (netCDF rejects
+                # setting it twice).
+                primary_attrs = agg_hf_ds.get_var_attrs(primary_var)
+                primary_fill = primary_attrs.get("_FillValue", None)
 
-            svar_data.set_auto_mask(False)
-            svar_data.set_auto_scale(False)
-            svar_data.set_always_mask(False)
+                var_data = ts_ds.createVariable(primary_var,
+                                                var_dtype,
+                                                var_dims,
+                                                complevel=complevel,
+                                                compression=compression,
+                                                chunksizes=chunksizes,
+                                                fill_value=primary_fill)
+                var_data.set_auto_mask(False)
+                var_data.set_auto_scale(False)
+                var_data.set_always_mask(False)
 
-            ts_ds[secondary_var].setncatts(
-                {key: val for key, val in svar_attrs.items() if key != "_FillValue"}
-            )
-            if time_name in var_dims:
-                svar_vals = secondary_vars_data[secondary_var][ts_start_index:ts_end_index]
-            else:
-                svar_vals = secondary_vars_data[secondary_var]
-            if not _is_missing(svar_vals, svar_fill):
-                svar_data[:] = svar_vals
+                ts_ds[primary_var].setncatts(
+                    {key: val for key, val in primary_attrs.items() if key != "_FillValue"}
+                )
 
-        if append_attrs is None:
-            append_attrs = {}
-        ts_ds.setncatts(global_attrs | append_attrs | {"gents_version": str(get_version())})
-    return ts_out_path
+                if no_data:
+                    pass
+                elif len(var_shape) > 0 and time_name in var_dims:
+                    for i in range(0, var_shape[0], chunksizes[0]):
+                        end = min(i + chunksizes[0], var_shape[0])
+                        chunk = agg_hf_ds.get_var_vals(
+                            primary_var, time_index_start=ts_start_index+i, time_index_end=ts_start_index+end
+                        )
+                        if not _is_missing(chunk, primary_fill):
+                            var_data[i:end] = chunk
+                else:
+                    chunk = agg_hf_ds.get_var_vals(primary_var)[ts_start_index:ts_end_index]
+                    if not _is_missing(chunk, primary_fill):
+                        var_data[:] = chunk
+
+            for secondary_var in secondary_vars_data:
+                var_shape = agg_hf_ds.get_var_data_shape(secondary_var)
+                var_dims = agg_hf_ds.get_var_dimensions(secondary_var)
+
+                if time_name in var_dims:
+                    var_shape[0] = ts_end_index - ts_start_index
+
+                for index, dim in enumerate(var_dims):
+                    if dim not in ts_ds.dimensions:
+                        if dim == time_name:
+                            ts_ds.createDimension(dim, None)
+                        else:
+                            ts_ds.createDimension(dim, var_shape[index])
+
+                svar_attrs = agg_hf_ds.get_var_attrs(secondary_var)
+                svar_fill = svar_attrs.get("_FillValue", None)
+
+                svar_data = ts_ds.createVariable(secondary_var,
+                                                agg_hf_ds.get_var_dtype(secondary_var),
+                                                var_dims,
+                                                complevel=complevel,
+                                                compression=compression,
+                                                chunksizes=var_shape,
+                                                fill_value=svar_fill)
+
+                svar_data.set_auto_mask(False)
+                svar_data.set_auto_scale(False)
+                svar_data.set_always_mask(False)
+
+                ts_ds[secondary_var].setncatts(
+                    {key: val for key, val in svar_attrs.items() if key != "_FillValue"}
+                )
+                if time_name in var_dims:
+                    svar_vals = secondary_vars_data[secondary_var][ts_start_index:ts_end_index]
+                else:
+                    svar_vals = secondary_vars_data[secondary_var]
+                if not _is_missing(svar_vals, svar_fill):
+                    svar_data[:] = svar_vals
+
+            if append_attrs is None:
+                append_attrs = {}
+            ts_ds.setncatts(global_attrs | append_attrs | {"gents_version": str(get_version())})
+            if return_metadata:
+                meta = _build_written_meta(ts_ds, partial_path)
+        os.replace(partial_path, ts_out_path)
+    except BaseException:
+        if isfile(partial_path):
+            remove(partial_path)
+        raise
+    if meta is not None:
+        meta = _finalize_written_meta(meta, ts_out_path)
+    return (ts_out_path, meta) if return_metadata else ts_out_path
+
+
+def _build_written_meta(ts_ds, path):
+    """Builds a just-written file's metadata from its open dataset; ``None`` (logged) if that fails."""
+    try:
+        return build_ts_meta(ts_ds, path)
+    except Exception as exc:  # pylint: disable=broad-exception-caught  # never fail a completed write
+        logger.warning("Could not record metadata for '%s'; it will be read on the next run: %s", path, exc)
+        return None
+
+
+def _finalize_written_meta(meta, ts_out_path):
+    """
+    Re-points metadata built while the file was open at the finished file. Size and
+    modification time are only final after close (the rename keeps them), so the stat
+    taken while building would not match the file.
+    """
+    state = meta.to_dict()
+    state["path"] = str(ts_out_path)
+    state["stat"] = get_file_stat(ts_out_path)
+    return netCDFMeta.from_dict(state) if state["stat"] is not None else None
+
+
+def get_ts_output_path(ts_path_template, primary_var, ts_string):
+    """
+    Returns the path of the time series file an order writes:
+    ``<ts_path_template>.<primary_var>.<ts_string>.nc``.
+
+    :param ts_path_template: The order's ``ts_path_template``.
+    :type ts_path_template: str
+    :param primary_var: The order's primary variable (or ``'auxiliary'``).
+    :type primary_var: str
+    :param ts_string: The order's timestamp range, e.g. ``'185001-185912'``.
+    :type ts_string: str
+    :rtype: str
+    """
+    return f"{ts_path_template}.{primary_var}.{ts_string}.nc"
 
 
 def generate_time_series(
-    hf_paths, ts_path_template, secondary_vars, ts_args, no_data=False, memory_limit_bytes=DEFAULT_MEMORY_LIMIT_BYTES
+    hf_paths, ts_path_template, secondary_vars, ts_args, no_data=False, memory_limit_bytes=DEFAULT_MEMORY_LIMIT_BYTES,
+    return_metadata=False
 ):
     """
     Generates every time series file for one group of history files.
@@ -328,8 +389,11 @@ def generate_time_series(
     :type no_data: bool
     :param memory_limit_bytes: Cache ceiling for the ``MHFDataset``.
     :type memory_limit_bytes: float
-    :returns: Paths to the generated time series files.
-    :rtype: list[str]
+    :param return_metadata: Return ``(path, metadata)`` pairs instead of paths
+        (see :func:`write_timeseries_file`).
+    :type return_metadata: bool
+    :returns: Paths to the generated time series files, or ``(path, metadata)`` pairs.
+    :rtype: list[str] or list[tuple[str, gents.meta.netCDFMeta or None]]
     """
     ts_paths = []
     preloads = [] if no_data else [name for name in list(ts_args) if name != "auxiliary"]
@@ -343,7 +407,7 @@ def generate_time_series(
         for variable in ts_args:
             args = copy.deepcopy(ts_args[variable])
             ts_string = args["ts_string"]
-            ts_out_path = f"{ts_path_template}.{variable}.{ts_string}.nc"
+            ts_out_path = get_ts_output_path(ts_path_template, variable, ts_string)
             del args["ts_string"]
 
             ts_paths.append(write_timeseries_file(
@@ -352,6 +416,7 @@ def generate_time_series(
                 primary_var=variable,
                 secondary_vars_data=secondary_vars_data,
                 no_data=no_data,
+                return_metadata=return_metadata,
                 **args
             ))
     return ts_paths
@@ -469,6 +534,8 @@ class TSCollection:
             logger.debug("%s timeseries orders generated.", len(self.__orders))
         else:
             self.__orders = ts_orders
+        self.__failures = []
+        self.__written_metadata = {}
 
     def __contains__(self, key):
         return key in self.__orders
@@ -1028,7 +1095,8 @@ class TSCollection:
         secondary variables are batched together so each group of history files is
         opened once rather than once per variable.
         Work runs over a process pool when ``num_processes > 1`` and in-process
-        otherwise; per-order failures are logged and the rest of the run continues.
+        otherwise; per-order failures are logged, recorded for :meth:`get_failures`,
+        and the rest of the run continues.
 
         :param optimize: Batch orders sharing source files into single worker
             calls, rather than submitting one call per order.
@@ -1051,6 +1119,8 @@ class TSCollection:
         """
         self.create_directories()
         results = []
+        self.__failures = []
+        self.__written_metadata = {}
 
         optimized_orders = []
         if optimize:
@@ -1090,7 +1160,8 @@ class TSCollection:
                     "secondary_vars": init_order["secondary_vars"],
                     "ts_args": ts_args,
                     "no_data": no_data,
-                    "memory_limit_bytes": memory_limit_bytes
+                    "memory_limit_bytes": memory_limit_bytes,
+                    "return_metadata": True,
                 })
         else:
             for index, order in enumerate(self.__orders):
@@ -1106,7 +1177,8 @@ class TSCollection:
                     "secondary_vars": order["secondary_vars"],
                     "ts_args": ts_args,
                     "no_data": no_data,
-                    "memory_limit_bytes": memory_limit_bytes
+                    "memory_limit_bytes": memory_limit_bytes,
+                    "return_metadata": True,
                 })
         prog_bar = ProgressBar(total=len(optimized_orders), label="Generating Timeseries", quiet=not show_progress)
         if self.__num_processes > 1:
@@ -1122,6 +1194,7 @@ class TSCollection:
                             results.append(future.result())
                         except Exception as exc:
                             order = futures[future]
+                            self.__record_failure(order, exc)
                             logger.warning(
                                 "Failed to generate time series for %s: %s",
                                 order['ts_path_template'],
@@ -1139,6 +1212,7 @@ class TSCollection:
                 try:
                     results.append(generate_time_series(**args))
                 except Exception as exc:
+                    self.__record_failure(args, exc)
                     logger.warning(
                         "Failed to generate time series for %s: %s", args['ts_path_template'], exc, exc_info=True
                     )
@@ -1149,10 +1223,45 @@ class TSCollection:
 
         output_paths = []
         for result in results:
-            for path in result:
+            for path, meta in result:
                 output_paths.append(path)
+                if meta is not None:
+                    self.__written_metadata[Path(path)] = meta
 
         return output_paths
+
+    def __record_failure(self, args, exc):
+        self.__failures.append({
+            "ts_path_template": args["ts_path_template"],
+            "primary_vars": sorted(args["ts_args"]),
+            "error": f"{type(exc).__name__}: {exc}",
+        })
+
+    def get_written_metadata(self):
+        """
+        Returns the metadata of every file this collection's last :meth:`execute`
+        wrote, built by the writer from the open file rather than read back, for
+        recording in a metadata manifest (e.g. with
+        :meth:`gents.tsinventory.TSInventory.save_manifest`). Files skipped as
+        already complete are not included.
+
+        :rtype: dict[pathlib.Path, gents.meta.netCDFMeta]
+        """
+        return self.__written_metadata
+
+    def get_failures(self):
+        """
+        Returns the batches that failed in this collection's last :meth:`execute`.
+
+        Each is ``{"ts_path_template": str, "primary_vars": [str], "error": str}``.
+        A batch is one call per group of history files, so the variables listed
+        may include some written before the error. Their output files stay
+        missing until a later run writes them. Empty if every batch succeeded or
+        :meth:`execute` has not run.
+
+        :rtype: list[dict]
+        """
+        return self.__failures
 
     def add_attrs(self, attrs):
         """

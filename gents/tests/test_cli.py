@@ -244,6 +244,7 @@ def test_cli_simple_case(simple_case):
             assert is_monotonic(ts_ds["time"][:])
             var_name = str(path).split(".")[-3]
             assert ts_ds.getncattr("gents_command") == f"run_gents {str(input_head_dir)} -o {str(output_head_dir)}"
+            assert ts_ds.getncattr("gents_cwd") == os.getcwd()
 
 
 def test_cli_long_hf_slicing(long_case):
@@ -464,14 +465,14 @@ def test_main_manifest_only_with_no_manifest_raises():
 
 
 def test_cli_manifest_only_writes_manifest_but_no_time_series(simple_case, tmp_path):
-    """--manifest-only leaves just the manifest, and a later normal run reuses it with unchanged output."""
+    """--manifest-only leaves just the manifests, and a later normal run reuses them with unchanged output."""
     input_head_dir, _ = simple_case
     output_dir = tmp_path / "out"
     base_argv = ["run_gents", str(input_head_dir), "-o", str(output_dir)]
 
     with patch.object(sys, "argv", base_argv + ["--manifest-only"]):
         main()
-    assert listdir(output_dir) == ["gents_manifest_hf.json.gz"]
+    assert sorted(listdir(output_dir)) == ["gents_manifest_hf.json.gz", "gents_manifest_ts.json.gz"]
 
     with patch.object(sys, "argv", base_argv):
         main()
@@ -564,26 +565,47 @@ def test_cli_skip_existing_writes_only_new_steps(continued_case, tmp_path, extra
     assert (output_dir / "gents_manifest_ts.json.gz").exists() == (extra_flags == [])
 
 
-def test_cli_skip_existing_reuses_ts_manifest(continued_case, tmp_path):
-    """The time series manifest is written by --skip-existing runs (not dry runs) and left alone when nothing changed."""
+def test_cli_ts_manifest_records_written_files_and_dry_runs_leave_it(continued_case, tmp_path):
+    """Every run records the files it writes in the time series manifest; dry runs and runs that change nothing
+    leave it alone."""
     input_head_dir, _, _ = continued_case
     output_dir = tmp_path / "out"
     manifest = output_dir / "gents_manifest_ts.json.gz"
-    argv = ["run_gents", str(input_head_dir), "-o", str(output_dir), "--skip-existing"]
-    with patch.object(sys, "argv", argv[:-1]):
-        main()
-    with patch.object(sys, "argv", argv + ["--dryrun"]):
-        main()
-    assert not manifest.exists()
-
+    argv = ["run_gents", str(input_head_dir), "-o", str(output_dir)]
     with patch.object(sys, "argv", argv):
         main()
     with gzip.open(manifest, "rt") as manifest_file:
         assert len(json.load(manifest_file)["entries"]) == CONTINUED_NUM_VARS
+
     os.utime(manifest, ns=(1, 1))  # a marker an unnecessary rewrite would overwrite
+    for extra_flags in (["--dryrun"], ["--dryrun", "--skip-existing"], [], ["--skip-existing"]):
+        with patch.object(sys, "argv", argv + extra_flags):
+            main()
+        assert os.stat(manifest).st_mtime_ns == 1, extra_flags
+
+
+def test_cli_rerun_over_complete_output_opens_nothing(simple_case, tmp_path, monkeypatch):
+    """The run that writes the output never reopens it, and later re-runs and dry runs neither read history file
+    data nor open time series files."""
+    import gents.tsinventory
+    from gents.mhfdataset import MHFDataset
+    input_head_dir, _ = simple_case
+    argv = ["run_gents", str(input_head_dir), "-o", str(tmp_path / "out"), "-tc", "1", "-hc", "1"]
+    opened = []
+
+    def fail(*args, **kwargs):  # recorded as well as raised: metadata reads log errors rather than raising them
+        opened.append(args)
+        raise AssertionError("opened a file that the manifest already describes")
+    monkeypatch.setattr(gents.tsinventory, "get_ts_meta_from_path", fail)
     with patch.object(sys, "argv", argv):
         main()
-    assert os.stat(manifest).st_mtime_ns == 1
+    assert opened == []
+
+    monkeypatch.setattr(MHFDataset, "__init__", fail)
+    for extra_flags in ([], ["--dryrun"], ["--skip-existing"], ["--dryrun", "--skip-existing"]):
+        with patch.object(sys, "argv", argv + extra_flags):
+            main()
+    assert opened == []
 
 
 def test_parse_frequency_flag():
@@ -619,3 +641,85 @@ def test_cli_frequency_warns_on_unmatched_pattern(mixed_timestep_case, tmp_path,
     assert "['monthly'] matched no time series" in captured.err
     assert "month_1" in captured.err
     assert "Dry run: 6 timeseries files would be generated." in captured.out
+
+
+def test_cli_gents_command_is_shell_quoted(simple_case, tmp_path, monkeypatch):
+    """gents_command splits back into the exact arguments (spaces, globs intact); gents_cwd is where it ran."""
+    import shlex
+    input_head_dir, _ = simple_case
+    monkeypatch.chdir(tmp_path)
+    argv = ["run_gents", str(input_head_dir), "-o", "out dir", "--frequency", "month_*"]
+    with patch.object(sys, "argv", argv):
+        main()
+
+    ts_paths = find_files(tmp_path / "out dir", "*.nc")
+    assert len(ts_paths) == SIMPLE_NUM_VARS
+    for path in ts_paths:
+        with GenTSDataStore(path, "r") as ts_ds:
+            command = ts_ds.getncattr("gents_command")
+            assert shlex.split(command) == argv
+            assert "'out dir'" in command and "'month_*'" in command
+            assert ts_ds.getncattr("gents_cwd") == str(tmp_path)
+
+
+def test_cli_exits_nonzero_when_a_batch_fails(simple_case, tmp_path, monkeypatch, capsys):
+    """A failed batch is reported on stderr and makes run_gents exit with code 1 after the run finishes."""
+    from gents.mhfdataset import MHFDataset
+    original = MHFDataset.get_var_vals
+
+    def get_var_vals(self, var_name, *args, **kwargs):
+        if var_name == "VAR2":
+            raise OSError("simulated read failure")
+        return original(self, var_name, *args, **kwargs)
+    monkeypatch.setattr(MHFDataset, "get_var_vals", get_var_vals)
+
+    input_head_dir, _ = simple_case
+    with patch.object(sys, "argv", ["run_gents", str(input_head_dir), "-o", str(tmp_path / "out"), "-tc", "1"]):
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert "simulated read failure" in captured.err
+    assert "1 failed batch(es)" in captured.err
+    assert "GenTS done!" not in captured.out
+
+
+def _dry_run_paths(captured_out):
+    return {line.strip() for line in captured_out.splitlines() if line.startswith("  ") and line.strip().endswith(".nc")}
+
+
+def test_cli_dryrun_lists_nothing_when_output_is_absent_or_complete(simple_case, tmp_path, capsys):
+    """A dry run lists no files before the first run, nor after a complete one."""
+    input_head_dir, _ = simple_case
+    argv = ["run_gents", str(input_head_dir), "-o", str(tmp_path / "out")]
+    with patch.object(sys, "argv", argv + ["--dryrun"]):
+        main()
+    with patch.object(sys, "argv", argv):
+        main()
+    with patch.object(sys, "argv", argv + ["--dryrun"]):
+        main()
+    out = capsys.readouterr().out
+    assert _dry_run_paths(out) == set()
+    assert "would be replaced" not in out
+
+
+@pytest.mark.parametrize("extra_flags", [[], ["--skip-existing", "--no-manifest"]])
+def test_cli_dryrun_lists_damaged_existing_files(simple_case, tmp_path, capsys, extra_flags):
+    """A dry run lists existing files that are truncated or unstamped, not missing ones or complete ones."""
+    input_head_dir, _ = simple_case
+    argv = ["run_gents", str(input_head_dir), "-o", str(tmp_path / "out")]
+    with patch.object(sys, "argv", argv):
+        main()
+    deleted, truncated, unstamped = sorted(find_files(tmp_path / "out", "*.nc"))[:3]
+    deleted.unlink()
+    os.truncate(truncated, os.path.getsize(truncated) // 2)
+    with GenTSDataStore(unstamped, "a") as ts_ds:
+        ts_ds.delncattr("gents_version")
+    capsys.readouterr()
+
+    with patch.object(sys, "argv", argv + ["--dryrun"] + extra_flags):
+        main()
+    out = capsys.readouterr().out
+    assert "2 existing files are incomplete or unreadable and would be replaced:" in out
+    assert _dry_run_paths(out) == {str(truncated), str(unstamped)}

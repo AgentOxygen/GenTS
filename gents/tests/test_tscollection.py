@@ -1030,3 +1030,93 @@ def test_frequency_filter(mixed_timestep_case):
     assert frequencies(ts_collection.exclude(freq_glob="hour_*")) == ["day_1", "month_1", "year_1"]
     assert frequencies(ts_collection.include(var_glob="VAR0", freq_glob="day_1")) == ["day_1"]
     assert len(ts_collection.include(var_glob="VAR0", freq_glob="day_1")) == 1
+
+
+def _fail_reads_of(monkeypatch, failing_var):
+    """Makes reading ``failing_var``'s data raise, partway through writing its file (in-process runs only)."""
+    from gents.mhfdataset import MHFDataset
+    original = MHFDataset.get_var_vals
+
+    def get_var_vals(self, var_name, *args, **kwargs):
+        if var_name == failing_var:
+            raise OSError(f"simulated read failure on {var_name}")
+        return original(self, var_name, *args, **kwargs)
+    monkeypatch.setattr(MHFDataset, "get_var_vals", get_var_vals)
+
+
+def test_failed_write_leaves_nothing_at_final_path(simple_case, monkeypatch):
+    """A write that fails midway leaves neither a partial file at its final path nor a .partial file, is reported by
+    get_failures(), and a later run writes it."""
+    input_head_dir, output_head_dir = simple_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+    assert ts_collection.get_failures() == []
+
+    _fail_reads_of(monkeypatch, "VAR2")
+    ts_collection.execute()
+
+    failures = ts_collection.get_failures()
+    assert len(failures) == 1
+    assert "VAR2" in failures[0]["primary_vars"]
+    assert "simulated read failure on VAR2" in failures[0]["error"]
+    assert not [path for path in find_files(output_head_dir, "*") if ".VAR2." in path.name]
+    assert not list(Path(output_head_dir).rglob("*.partial"))
+    for path in find_files(output_head_dir, "*.nc"):
+        assert check_timeseries_integrity(str(path))
+
+    monkeypatch.undo()
+    ts_collection.execute()
+    assert ts_collection.get_failures() == []
+    assert len(find_files(output_head_dir, "*.nc")) == SIMPLE_NUM_VARS
+
+
+def test_failed_overwrite_keeps_previous_file(simple_case, monkeypatch):
+    """With overwrite, a failed rewrite leaves the previous complete file in place."""
+    input_head_dir, output_head_dir = simple_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+    ts_collection.execute()
+    (previous,) = [path for path in find_files(output_head_dir, "*.nc") if ".VAR2." in path.name]
+    before = previous.read_bytes()
+
+    _fail_reads_of(monkeypatch, "VAR2")
+    ts_collection.apply_overwrite("*").execute()
+
+    assert previous.read_bytes() == before
+    assert not list(Path(output_head_dir).rglob("*.partial"))
+
+
+@pytest.mark.parametrize("num_processes", [1, 2])
+def test_written_metadata_matches_a_fresh_read(simple_case, num_processes):
+    """Metadata the writer builds from the open file equals reading the finished file, stat included; files skipped
+    as complete on a later run are not reported."""
+    from gents.tsinventory import get_ts_meta_from_path
+    input_head_dir, output_head_dir = simple_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir), num_processes=num_processes)
+    ts_collection.execute()
+
+    written = ts_collection.get_written_metadata()
+    assert sorted(written) == sorted(find_files(output_head_dir, "*.nc"))
+    for path, meta in written.items():
+        assert meta.to_dict() == get_ts_meta_from_path(str(path)).to_dict()
+        state = meta.to_dict()  # bounds not kept: nothing reads them, and they dominate long files
+        assert state["load_time_bounds"] is False and state["time_bnds_vals"] is None
+
+    ts_collection.execute()
+    assert ts_collection.get_written_metadata() == {}
+
+
+def test_metadata_failure_does_not_fail_the_write(simple_case, monkeypatch):
+    """If the writer can't build a file's metadata, the file is still written and the run is not a failure."""
+    import gents.timeseries
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("simulated metadata failure")
+    monkeypatch.setattr(gents.timeseries, "build_ts_meta", fail)
+    input_head_dir, output_head_dir = simple_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+    ts_collection.execute()
+
+    assert ts_collection.get_failures() == []
+    assert ts_collection.get_written_metadata() == {}
+    paths = find_files(output_head_dir, "*.nc")
+    assert len(paths) == SIMPLE_NUM_VARS
+    assert all(check_timeseries_integrity(str(path)) for path in paths)

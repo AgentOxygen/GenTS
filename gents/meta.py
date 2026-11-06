@@ -5,6 +5,7 @@ Per-file netCDF metadata: variable classification, cached header contents, and b
 Developer: Cameron Cummins
 Contact: cameron.cummins@utexas.edu
 """
+import base64
 import gzip
 import json
 import logging
@@ -22,7 +23,7 @@ from gents.utils import ProgressBar
 
 logger = logging.getLogger(__name__)
 
-MANIFEST_VERSION = 2
+MANIFEST_VERSION = 3
 MANIFEST_COMPRESSION_LEVEL = 3  # manifests are written often and read once; favour speed
 
 
@@ -139,19 +140,26 @@ def _encode(value):
     Converts an attribute or array value into something :mod:`json` can write.
 
     ``str``, ``int``, ``float``, ``bool`` and ``None`` pass through so the file
-    stays readable; numpy values become ``{"nd": dtype, "v": data}`` (plus
-    ``"scalar"`` if 0-d). Values widen exactly to Python numbers and
-    :func:`_decode` casts back to ``dtype``, so e.g. a ``float32`` returns as one.
-    Masks are dropped. Lists, tuples and dicts are converted element-wise.
+    stays readable, and numpy scalars become ``{"nd": dtype, "v": value,
+    "scalar": True}``: values widen exactly to Python numbers and :func:`_decode`
+    casts back to ``dtype``, so e.g. a ``float32`` returns as one. Numpy arrays
+    become ``{"nd": dtype, "shape": shape, "b64": raw bytes}``; as JSON lists,
+    every element would be a separate Python object, which made saving and loading
+    long time axes several times slower and larger in memory than the arrays
+    themselves. Object arrays keep the list form (``"v"``). Masks are dropped.
+    Lists, tuples and dicts are converted element-wise.
 
     :param value: Value to encode.
     :returns: A JSON-serialisable object.
     """
-    if isinstance(value, (np.ndarray, np.generic)):
-        encoded = {"nd": np.asarray(value).dtype.str, "v": np.ma.getdata(value).tolist()}
-        if isinstance(value, np.generic):
-            encoded["scalar"] = True
-        return encoded
+    if isinstance(value, np.generic):
+        return {"nd": value.dtype.str, "v": value.tolist(), "scalar": True}
+    if isinstance(value, np.ndarray):
+        data = np.asarray(np.ma.getdata(value))
+        if data.dtype.hasobject:
+            return {"nd": data.dtype.str, "v": data.tolist()}
+        raw = base64.b64encode(data.tobytes()).decode("ascii")
+        return {"nd": data.dtype.str, "shape": list(data.shape), "b64": raw}
     if isinstance(value, (list, tuple)):
         return [_encode(item) for item in value]
     if isinstance(value, dict):
@@ -169,7 +177,11 @@ def _decode(value):
     """
     if isinstance(value, dict):
         if "nd" in value:
-            array = np.array(value["v"], dtype=value["nd"])
+            if "b64" in value:
+                raw = base64.b64decode(value["b64"])
+                array = np.frombuffer(raw, dtype=value["nd"]).reshape(value["shape"]).copy()
+            else:
+                array = np.array(value["v"], dtype=value["nd"])
             return array[()] if value.get("scalar") else array
         return {key: _decode(item) for key, item in value.items()}
     if isinstance(value, list):
@@ -626,11 +638,11 @@ class netCDFMeta:
             "stat": self.__stat,
             "attrs": _encode(self.__attrs),
             "time_name": self.__time_eqv,
-            "time_vals": self.__time_vals.tolist(),
+            "time_vals": _encode(self.__time_vals),
             "time_units": self.__time_units,
             "time_calendar": self.__time_calendar,
             "time_bnds_name": self.__time_bnds_eqv,
-            "time_bnds_vals": None if self.__time_bounds_vals is None else self.__time_bounds_vals.tolist(),
+            "time_bnds_vals": None if self.__time_bounds_vals is None else _encode(self.__time_bounds_vals),
             "time_bnds_units": self.__time_bounds_units,
             "time_bnds_calendar": self.__time_bounds_calendar,
             "load_time_bounds": self.__load_time_bounds,
@@ -669,12 +681,12 @@ class netCDFMeta:
         meta.__stat = state["stat"]
         meta.__attrs = _decode(state["attrs"])
         meta.__time_eqv = state["time_name"]
-        meta.__time_vals = np.asarray(state["time_vals"], dtype=np.float64)
+        meta.__time_vals = np.asarray(_decode(state["time_vals"]), dtype=np.float64)
         meta.__time_units = state["time_units"]
         meta.__time_calendar = state["time_calendar"]
         meta.__time_bnds_eqv = state["time_bnds_name"]
         meta.__time_bounds_vals = (
-            None if state["time_bnds_vals"] is None else np.asarray(state["time_bnds_vals"], dtype=np.float64)
+            None if state["time_bnds_vals"] is None else np.asarray(_decode(state["time_bnds_vals"]), dtype=np.float64)
         )
         meta.__time_bounds_units = state["time_bnds_units"]
         meta.__time_bounds_calendar = state["time_bnds_calendar"]
