@@ -1008,3 +1008,25 @@ def test_fragmented_output_named_like_unfragmented(spatial_fragment_case):
     assert len(names) == SIMPLE_NUM_VARS
     for name in names:
         assert re.fullmatch(r"testing\.hf\.VAR\d+\.\d{6}-\d{6}\.nc", name), name
+
+
+def test_frequency_filter(mixed_timestep_case):
+    """freq_glob keeps or drops orders by frequency label; the default leaves the collection alone."""
+    input_head_dir, output_head_dir = mixed_timestep_case
+    ts_collection = TSCollection(HFCollection(input_head_dir), str(output_head_dir))
+
+    def frequencies(collection):
+        return sorted({collection.get_order_frequency(order) for order in collection})
+
+    assert frequencies(ts_collection) == ["day_1", "hour_1", "month_1", "year_1"]
+    assert len(ts_collection.include()) == len(ts_collection.exclude(freq_glob="none")) == len(ts_collection)
+
+    day = ts_collection.include(freq_glob="day_1")
+    assert frequencies(day) == ["day_1"]
+    assert all(".hf1." in order["hf_paths"][0].name for order in day)
+    assert len(day) == len(ts_collection) // 4
+
+    assert frequencies(ts_collection.include(freq_glob=["month_1", "year_*"])) == ["month_1", "year_1"]
+    assert frequencies(ts_collection.exclude(freq_glob="hour_*")) == ["day_1", "month_1", "year_1"]
+    assert frequencies(ts_collection.include(var_glob="VAR0", freq_glob="day_1")) == ["day_1"]
+    assert len(ts_collection.include(var_glob="VAR0", freq_glob="day_1")) == 1

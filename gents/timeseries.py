@@ -669,12 +669,24 @@ class TSCollection:
             hf_collection=hf_collection, output_dir=output_dir, ts_orders=ts_orders, num_processes=num_processes
         )
 
-    def include(self, path_glob, var_glob="*"):
+    def get_order_frequency(self, order_dict):
         """
-        Returns a new collection holding only orders that match both filters.
+        Returns an order's frequency label (``'hour_6'``, ``'month_1'``, ...), as
+        used for the directories of :meth:`append_timestep_dirs`.
 
-        An order is kept if any of its source paths matches ``path_glob`` and its
-        primary variable matches ``var_glob``.
+        :param order_dict: One of this collection's orders.
+        :type order_dict: dict
+        :rtype: str
+        """
+        return get_timestep_label(self.__hf_collection.get_timestep_delta(order_dict["hf_paths"][0]))
+
+    def include(self, path_glob="*", var_glob="*", freq_glob="*"):
+        """
+        Returns a new collection holding only orders that match every filter.
+
+        An order is kept if any of its source paths matches ``path_glob``, its
+        primary variable matches ``var_glob``, and its frequency (see
+        :meth:`get_order_frequency`) matches ``freq_glob``.
 
         :param path_glob: One or more ``fnmatch`` globs applied to source history
             file paths; a single string is also accepted.
@@ -682,23 +694,29 @@ class TSCollection:
         :param var_glob: One or more ``fnmatch`` globs applied to primary variable
             names; a single string is also accepted.
         :type var_glob: list[str] or str
+        :param freq_glob: One or more ``fnmatch`` globs applied to frequency labels
+            such as ``'month_1'`` or ``'day_*'``; a single string is also accepted.
+        :type freq_glob: list[str] or str
         :rtype: TSCollection
         """
         filtered_orders = []
         for order_dict in copy.deepcopy(self.__orders):
             path_matched = any(_matches_any(str(path), path_glob) for path in order_dict["hf_paths"])
 
-            if path_matched and _matches_any(order_dict["primary_var"], var_glob):
+            if (path_matched and _matches_any(order_dict["primary_var"], var_glob)
+                    and _matches_any(self.get_order_frequency(order_dict), freq_glob)):
                 filtered_orders.append(order_dict)
-        logger.debug("Inclusive filter(s) applied: '%s' to history files matching '%s'", var_glob, path_glob)
+        logger.debug("Inclusive filter(s) applied: '%s' at frequencies '%s' to history files matching '%s'",
+                     var_glob, freq_glob, path_glob)
         return self.copy(ts_orders=filtered_orders)
 
-    def exclude(self, path_glob, var_glob="*"):
+    def exclude(self, path_glob="*", var_glob="*", freq_glob="*"):
         """
-        Returns a new collection with orders matching both filters removed.
+        Returns a new collection with orders matching every filter removed.
 
-        An order is dropped if any of its source paths matches ``path_glob`` and
-        its primary variable matches ``var_glob``. Both must match, so the
+        An order is dropped if any of its source paths matches ``path_glob``, its
+        primary variable matches ``var_glob``, and its frequency (see
+        :meth:`get_order_frequency`) matches ``freq_glob``. All must match, so the
         one-argument form drops every order under ``path_glob``.
 
         :param path_glob: One or more ``fnmatch`` globs applied to source history
@@ -707,15 +725,20 @@ class TSCollection:
         :param var_glob: One or more ``fnmatch`` globs applied to primary variable
             names; a single string is also accepted.
         :type var_glob: list[str] or str
+        :param freq_glob: One or more ``fnmatch`` globs applied to frequency labels
+            such as ``'month_1'`` or ``'day_*'``; a single string is also accepted.
+        :type freq_glob: list[str] or str
         :rtype: TSCollection
         """
         filtered_orders = []
         for order_dict in copy.deepcopy(self.__orders):
             path_matched = any(_matches_any(str(path), path_glob) for path in order_dict["hf_paths"])
 
-            if not (path_matched and _matches_any(order_dict["primary_var"], var_glob)):
+            if not (path_matched and _matches_any(order_dict["primary_var"], var_glob)
+                    and _matches_any(self.get_order_frequency(order_dict), freq_glob)):
                 filtered_orders.append(order_dict)
-        logger.debug("Exclusive filter(s) applied: '%s' to history files matching '%s'", var_glob, path_glob)
+        logger.debug("Exclusive filter(s) applied: '%s' at frequencies '%s' to history files matching '%s'",
+                     var_glob, freq_glob, path_glob)
         return self.copy(ts_orders=filtered_orders)
 
     def add_args(self, path_glob="*", var_glob="*", level=None, alg=None, overwrite=None, chunk_target_bytes=None):
@@ -957,9 +980,7 @@ class TSCollection:
         new_orders = []
         for order_dict in copy.deepcopy(self.__orders):
             if _matches_any(order_dict["primary_var"], var_glob):
-                dt = self.__hf_collection.get_timestep_delta(order_dict["hf_paths"][0])
-                timestep_label = get_timestep_label(dt)
-
+                timestep_label = self.get_order_frequency(order_dict)
                 template = Path(order_dict["ts_path_template"])
                 order_dict["ts_path_template"] = str(template.parent) + f"/{timestep_label}/" + template.name
 
